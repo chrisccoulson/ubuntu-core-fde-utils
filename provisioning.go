@@ -1,4 +1,6 @@
-package fdeutils
+// +build !arm64
+
+package fdeutil
 
 import (
 	"errors"
