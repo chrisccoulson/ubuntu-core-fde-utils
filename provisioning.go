@@ -44,12 +44,12 @@ var (
 func ProvisionTPM(lockoutAuth []byte) error {
 	rw, err := tpm2.OpenTPM(tpmPath)
 	if err != nil {
-		return fmt.Errorf("failed to open TPM device: %v", err)
+		return fmt.Errorf("cannot open TPM device: %v", err)
 	}
 
 	c, _, err := tpm2.GetCapability(rw, tpm2.CapabilityTPMProperties, 1, permanentProps)
 	if err != nil {
-		return fmt.Errorf("failed to request permanent properties: %v", err)
+		return fmt.Errorf("cannot request permanent properties: %v", err)
 	}
 
 	p := c[0].(tpm2.TaggedProperty).Value
@@ -58,28 +58,28 @@ func ProvisionTPM(lockoutAuth []byte) error {
 	}
 
 	if err := tpm2.Clear(rw, tpm2.HandleLockout, ""); err != nil {
-		return fmt.Errorf("failed to clear the TPM: %v", err)
+		return fmt.Errorf("cannot clear the TPM: %v", err)
 	}
 
 	h, _, err := tpm2.CreatePrimary(rw, tpm2.HandleOwner, tpm2.PCRSelection{}, "", "", srkTemplate)
 	if err != nil {
-		return fmt.Errorf("failed to create storage root key: %v", err)
+		return fmt.Errorf("cannot create storage root key: %v", err)
 	}
 
 	if err := tpm2.EvictControl(rw, "", tpm2.HandleOwner, h, srkHandle); err != nil {
-		return fmt.Errorf("failed to make storage root key persistent: %v", err)
+		return fmt.Errorf("cannot make storage root key persistent: %v", err)
 	}
 
 	if err := tpm2.SetDictionaryAttackParameters(rw, 32, 7200, 86400, ""); err != nil {
-		return fmt.Errorf("failed to configure DA parameters: %v", err)
+		return fmt.Errorf("cannot configure DA parameters: %v", err)
 	}
 
 	if err := tpm2.DisableOwnerClear(rw, ""); err != nil {
-		return fmt.Errorf("failed to disable owner clear: %v", err)
+		return fmt.Errorf("cannot disable owner clear: %v", err)
 	}
 
 	if err := tpm2.HierarchyChangeAuth(rw, tpm2.HandleLockout, "", string(lockoutAuth)); err != nil {
-		return fmt.Errorf("failed to set the lockout hierarchy authorization value: %v", err)
+		return fmt.Errorf("cannot set the lockout hierarchy authorization value: %v", err)
 	}
 
 	return nil
@@ -88,12 +88,12 @@ func ProvisionTPM(lockoutAuth []byte) error {
 func RequestTPMClearUsingPPI() error {
 	f, err := os.OpenFile(ppiPath, os.O_WRONLY, 0)
 	if err != nil {
-		return fmt.Errorf("failed to open request handle: %v", err)
+		return fmt.Errorf("cannot open request handle: %v", err)
 	}
 	defer f.Close()
 
 	if _, err := f.WriteString(clearPPIRequest); err != nil {
-		return fmt.Errorf("failed to submit request: %v", err)
+		return fmt.Errorf("cannot submit request: %v", err)
 	}
 
 	return nil
