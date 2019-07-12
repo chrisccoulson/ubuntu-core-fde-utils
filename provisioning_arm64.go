@@ -1,4 +1,4 @@
-package fdeutils
+package fdeutil
 
 import (
 	"fmt"
