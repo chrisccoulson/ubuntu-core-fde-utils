@@ -76,7 +76,7 @@ func ProvisionTPM(lockoutAuth []byte) error {
 		return fmt.Errorf("cannot configure DA parameters: %v", err)
 	}
 
-	if err := tpm2.DisableOwnerClear(rw, ""); err != nil {
+	if err := tpm2.ClearControl(rw, tpm2.HandleLockout, true, ""); err != nil {
 		return fmt.Errorf("cannot disable owner clear: %v", err)
 	}
 
