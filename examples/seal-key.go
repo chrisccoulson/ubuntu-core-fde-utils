@@ -33,11 +33,12 @@ func main() {
 	if clearKeyPath == "-" {
 		in = os.Stdin
 	} else {
-		in, err := os.Open(clearKeyPath)
+		f, err := os.Open(clearKeyPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Cannot open key file: %v\n", err)
 			os.Exit(1)
 		}
+		in = f
 		defer in.Close()
 	}
 
@@ -51,11 +52,12 @@ func main() {
 	if outPath == "-" {
 		out = os.Stdout
 	} else {
-		out, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE, 0600)
+		f, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE, 0600)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Cannot open output file: %v\n", err)
 			os.Exit(1)
 		}
+		out = f
 		defer out.Close()
 	}
 
