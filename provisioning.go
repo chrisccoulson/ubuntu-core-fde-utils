@@ -67,6 +67,7 @@ func ProvisionTPM(lockoutAuth []byte) error {
 	if err != nil {
 		return fmt.Errorf("cannot create storage root key: %v", err)
 	}
+	defer tpm2.FlushContext(rw, h)
 
 	if err := tpm2.EvictControl(rw, "", tpm2.HandleOwner, h, srkHandle); err != nil {
 		return fmt.Errorf("cannot make storage root key persistent: %v", err)
