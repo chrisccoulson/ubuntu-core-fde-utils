@@ -8,13 +8,9 @@ import (
 	"os"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/google/go-tpm/tpmutil"
 )
 
 const (
-	srkHandle tpmutil.Handle = 0x81000000
-
-	tpmPath string = "/dev/tpm0"
 	ppiPath string = "/sys/class/tpm/tpm0/ppi/request"
 
 	permanentProps uint32 = 0x00000200
