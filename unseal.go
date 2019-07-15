@@ -24,7 +24,7 @@ func UnsealKeyFromTPM(buf io.Reader) ([]byte, error) {
 	readSealedDataObjectPart := func(label string) ([]byte, error) {
 		var size uint32
 		if err := binary.Read(buf, binary.LittleEndian, &size); err != nil {
-			return nil, fmt.Errorf("cannot read size of sealed data object %s part from input " +
+			return nil, fmt.Errorf("cannot read size of sealed data object %s part from input "+
 				"buffer: %v", label, err)
 		}
 		out := make([]byte, size)
@@ -34,7 +34,7 @@ func UnsealKeyFromTPM(buf io.Reader) ([]byte, error) {
 				label, err)
 		}
 		if n < int(size) {
-			return nil, fmt.Errorf("cannot read sealed data object %s part from input buffer: " +
+			return nil, fmt.Errorf("cannot read sealed data object %s part from input buffer: "+
 				"insufficient number of bytes read", label)
 		}
 		return out, nil
