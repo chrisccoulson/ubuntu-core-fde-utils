@@ -48,6 +48,7 @@ func ProvisionTPM(lockoutAuth []byte) error {
 	if err != nil {
 		return fmt.Errorf("cannot open TPM device: %v", err)
 	}
+	defer rw.Close()
 
 	c, _, err := tpm2.GetCapability(rw, tpm2.CapabilityTPMProperties, 1, permanentProps)
 	if err != nil {
