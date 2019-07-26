@@ -12,8 +12,6 @@ const (
 	currentVersion uint32 = 0
 )
 
-var ()
-
 // TODO: This function prototype will be extended to take policy inputs and a buffer containing a separate PIN
 // object that will be used to calculate a policy digest
 func SealKeyToTPM(buf io.Writer, key []byte) error {
