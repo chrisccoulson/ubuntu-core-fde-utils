@@ -2,11 +2,10 @@ package fdeutil
 
 import (
 	"crypto/rand"
-	"encoding/binary"
 	"fmt"
 	"io"
 
-	"github.com/google/go-tpm/tpm2"
+	"github.com/chrisccoulson/go-tpm2"
 )
 
 const (
@@ -31,11 +30,24 @@ func SealKeyToTPM(buf io.Writer, key []byte) error {
 	authPolicy := make([]byte, 32)
 
 	// 4) Seal the key to the TPM with the calculated policy digest
-	rw, err := tpm2.OpenTPM(tpmPath)
+	tcti, err := tpm2.OpenTPMDevice(tpmPath)
 	if err != nil {
 		return fmt.Errorf("cannot open TPM device: %v", err)
 	}
-	defer rw.Close()
+	tpm, err := tpm2.NewTPMContext(tcti)
+	if err != nil {
+		return fmt.Errorf("cannot create new TPM context: %v", err)
+	}
+	defer tpm.Close()
+
+	template := tpm2.Public{
+		Type:       tpm2.AlgorithmKeyedHash,
+		NameAlg:    tpm2.AlgorithmSHA256,
+		Attrs:      tpm2.AttrFixedTPM | tpm2.AttrFixedParent,
+		AuthPolicy: authPolicy,
+		Params: tpm2.PublicParamsU{
+			KeyedHashDetail: &tpm2.KeyedHashParams{
+				Scheme: tpm2.KeyedHashScheme{Scheme: tpm2.AlgorithmNull}}}}
 
 	// The object doesn't have the userWithAuth attribute set, so the auth value can only be used
 	// for actions that require the admin role. There aren't any of those that we need, so set it to a
@@ -46,34 +58,22 @@ func SealKeyToTPM(buf io.Writer, key []byte) error {
 		return fmt.Errorf("cannot obtain random bytes for auth value: %v", err)
 	}
 
-	priv, pub, err := tpm2.Seal(rw, srkHandle, "", string(authValue), authPolicy, key)
+	sensitive := tpm2.SensitiveCreate{Data: key, UserAuth: authValue}
+
+	srkContext, err := tpm.WrapHandle(srkHandle)
 	if err != nil {
-		fmt.Errorf("cannot create sealed data object for key: %v", err)
+		return fmt.Errorf("cannot create context for SRK handle: %v", err)
+	}
+
+	priv, pub, _, _, _, err := tpm.Create(srkContext, &sensitive, &template, nil, nil, nil)
+	if err != nil {
+		return fmt.Errorf("cannot create sealed data object for key: %v", err)
 	}
 
 	// 5) Marshal the sealed key and auxilliary data to the supplied buf
-	if err := binary.Write(buf, binary.LittleEndian, currentVersion); err != nil {
-		return fmt.Errorf("cannot write version identifier to output buffer: %v", err)
+	if err := tpm2.MarshalToWriter(buf, currentVersion, priv, pub); err != nil {
+		return fmt.Errorf("cannot marshal sealed data object to output buffer: %v", err)
 	}
 
-	writeSealedDataObjectPart := func(data []byte, label string) error {
-		if err := binary.Write(buf, binary.LittleEndian, uint32(len(data))); err != nil {
-			return fmt.Errorf("cannot write length of sealed data object %s part to output buffer: %v",
-				label, err)
-		}
-		_, err := buf.Write(data)
-		if err != nil {
-			return fmt.Errorf("cannot write sealed data object %s part to output buffer: %v",
-				label, err)
-		}
-		return nil
-	}
-
-	if err := writeSealedDataObjectPart(priv, "private"); err != nil {
-		return err
-	}
-	if err := writeSealedDataObjectPart(pub, "public"); err != nil {
-		return err
-	}
 	return nil
 }
