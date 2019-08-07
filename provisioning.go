@@ -156,18 +156,8 @@ func checkForValidSRK(tpm tpm2.TPMContext) (bool, error) {
 	return true, nil
 }
 
-func ProvisionStatus() (ProvisionStatusAttributes, error) {
+func ProvisionStatus(tpm tpm2.TPMContext) (ProvisionStatusAttributes, error) {
 	var out ProvisionStatusAttributes
-
-	tcti, err := tpm2.OpenTPMDevice(tpmPath)
-	if err != nil {
-		return 0, fmt.Errorf("cannot open TPM device: %v", err)
-	}
-	tpm, err := tpm2.NewTPMContext(tcti)
-	if err != nil {
-		return 0, fmt.Errorf("cannot create new TPM context: %v", err)
-	}
-	defer tpm.Close()
 
 	if valid, err := checkForValidSRK(tpm); err != nil {
 		return 0, fmt.Errorf("cannot check for valid SRK: %v", err)
