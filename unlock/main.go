@@ -43,7 +43,14 @@ func main() {
 	}
 	defer keyFile.Close()
 
-	key, err := fdeutil.UnsealKeyFromTPM(keyFile)
+	tpm, err := fdeutil.ConnectToDefaultTPM()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot acquire TPM context: %v", err)
+		os.Exit(1)
+	}
+	defer tpm.Close()
+
+	key, err := fdeutil.UnsealKeyFromTPM(tpm, keyFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: error unsealing key:: %v\n", devicePath, err)
 		os.Exit(1)

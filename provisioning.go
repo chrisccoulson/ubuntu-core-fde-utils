@@ -50,17 +50,7 @@ var (
 				Exponent: 0}}}
 )
 
-func ProvisionTPM(lockoutAuth []byte) error {
-	tcti, err := tpm2.OpenTPMDevice(tpmPath)
-	if err != nil {
-		return fmt.Errorf("cannot open TPM device: %v", err)
-	}
-	tpm, err := tpm2.NewTPMContext(tcti)
-	if err != nil {
-		return fmt.Errorf("cannot create new TPM context: %v", err)
-	}
-	defer tpm.Close()
-
+func ProvisionTPM(tpm tpm2.TPMContext, lockoutAuth []byte) error {
 	props, err := tpm.GetCapabilityTPMProperties(tpm2.PropertyPermanent, 1)
 	if err != nil {
 		return fmt.Errorf("cannot request permanent properties: %v", err)
@@ -166,18 +156,8 @@ func checkForValidSRK(tpm tpm2.TPMContext) (bool, error) {
 	return true, nil
 }
 
-func ProvisionStatus() (ProvisionStatusAttributes, error) {
+func ProvisionStatus(tpm tpm2.TPMContext) (ProvisionStatusAttributes, error) {
 	var out ProvisionStatusAttributes
-
-	tcti, err := tpm2.OpenTPMDevice(tpmPath)
-	if err != nil {
-		return 0, fmt.Errorf("cannot open TPM device: %v", err)
-	}
-	tpm, err := tpm2.NewTPMContext(tcti)
-	if err != nil {
-		return 0, fmt.Errorf("cannot create new TPM context: %v", err)
-	}
-	defer tpm.Close()
 
 	if valid, err := checkForValidSRK(tpm); err != nil {
 		return 0, fmt.Errorf("cannot check for valid SRK: %v", err)

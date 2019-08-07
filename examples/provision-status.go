@@ -8,7 +8,14 @@ import (
 )
 
 func main() {
-	status, err := fdeutil.ProvisionStatus()
+	tpm, err := fdeutil.ConnectToDefaultTPM()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot acquire TPM context: %v", err)
+		os.Exit(1)
+	}
+	defer tpm.Close()
+
+	status, err := fdeutil.ProvisionStatus(tpm)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot determine status: %v\n", err)
 		os.Exit(1)

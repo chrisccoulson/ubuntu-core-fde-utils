@@ -54,7 +54,14 @@ func main() {
 		defer out.Close()
 	}
 
-	key, err := fdeutil.UnsealKeyFromTPM(in)
+	tpm, err := fdeutil.ConnectToDefaultTPM()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot acquire TPM context: %v", err)
+		os.Exit(1)
+	}
+	defer tpm.Close()
+
+	key, err := fdeutil.UnsealKeyFromTPM(tpm, in)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot unseal key: %v\n", err)
 		os.Exit(1)

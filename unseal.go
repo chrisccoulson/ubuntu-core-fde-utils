@@ -9,7 +9,7 @@ import (
 
 // This function prototype will be extended to take a buffer containing a separate PIN object, and a PIN if one
 // is required by the policy
-func UnsealKeyFromTPM(buf io.Reader) ([]byte, error) {
+func UnsealKeyFromTPM(tpm tpm2.TPMContext, buf io.Reader) ([]byte, error) {
 	// 1) Unmarshal the sealed data object and auxilliary data
 	var version uint32
 	var priv tpm2.Private
@@ -23,16 +23,6 @@ func UnsealKeyFromTPM(buf io.Reader) ([]byte, error) {
 	}
 
 	// 2) Load objects in to TPM
-	tcti, err := tpm2.OpenTPMDevice(tpmPath)
-	if err != nil {
-		return nil, fmt.Errorf("cannot open TPM device: %v", err)
-	}
-	tpm, err := tpm2.NewTPMContext(tcti)
-	if err != nil {
-		return nil, fmt.Errorf("cannot create new TPM context: %v", err)
-	}
-	defer tpm.Close()
-
 	srkContext, err := tpm.WrapHandle(srkHandle)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create context for SRK handle: %v", err)
