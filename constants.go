@@ -7,3 +7,10 @@ import (
 const (
 	srkHandle tpm2.Handle = 0x81000000
 )
+
+var (
+	paramEncryptAlg = tpm2.SymDef{
+		Algorithm: tpm2.AlgorithmAES,
+		KeyBits:   tpm2.SymKeyBitsU{Sym: 128},
+		Mode:      tpm2.SymModeU{Sym: tpm2.AlgorithmCFB}}
+)

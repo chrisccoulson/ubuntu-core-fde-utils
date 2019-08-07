@@ -84,7 +84,16 @@ func ProvisionTPM(tpm tpm2.TPMContext, lockoutAuth []byte) error {
 		return fmt.Errorf("cannot disable owner clear: %v", err)
 	}
 
-	if err := tpm.HierarchyChangeAuth(tpm2.HandleLockout, tpm2.Auth(lockoutAuth), nil); err != nil {
+	sessionContext, err :=
+		tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypeHMAC, &paramEncryptAlg, tpm2.AlgorithmSHA256,
+			nil)
+	if err != nil {
+		return fmt.Errorf("cannot start session for command parameter encryption: %v", err)
+	}
+	defer tpm.FlushContext(sessionContext)
+
+	session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrCommandEncrypt}
+	if err := tpm.HierarchyChangeAuth(tpm2.HandleLockout, tpm2.Auth(lockoutAuth), nil, &session); err != nil {
 		return fmt.Errorf("cannot set the lockout hierarchy authorization value: %v", err)
 	}
 

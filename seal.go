@@ -55,7 +55,17 @@ func SealKeyToTPM(tpm tpm2.TPMContext, buf io.Writer, key []byte) error {
 		return fmt.Errorf("cannot create context for SRK handle: %v", err)
 	}
 
-	priv, pub, _, _, _, err := tpm.Create(srkContext, &sensitive, &template, nil, nil, nil)
+	// Create a session for command parameter encryption
+	sessionContext, err := tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypeHMAC, &paramEncryptAlg,
+		tpm2.AlgorithmSHA256, nil)
+	if err != nil {
+		return fmt.Errorf("cannot create session for encryption: %v", err)
+	}
+	defer tpm.FlushContext(sessionContext)
+
+	// Now create the sealed data object
+	session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrCommandEncrypt}
+	priv, pub, _, _, _, err := tpm.Create(srkContext, &sensitive, &template, nil, nil, nil, &session)
 	if err != nil {
 		return fmt.Errorf("cannot create sealed data object for key: %v", err)
 	}
