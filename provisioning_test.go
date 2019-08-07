@@ -142,3 +142,120 @@ func TestProvisionAlreadyProvisioned(t *testing.T) {
 		t.Errorf("Unexpected error returned from ProvisionTPM: %v", err)
 	}
 }
+
+func TestProvisionStatus(t *testing.T) {
+	tpm, _ := openTPMSimulatorForTesting(t)
+	defer closeTPM(t, tpm)
+
+	clearTPM(t, tpm)
+
+	status, err := ProvisionStatus(tpm)
+	if err != nil {
+		t.Errorf("ProvisionStatus failed: %v", err)
+	}
+	if status != 0 {
+		t.Errorf("Unexpected status")
+	}
+
+	lockoutAuth := []byte("1234")
+
+	if err := ProvisionTPM(tpm, lockoutAuth); err != nil {
+		t.Fatalf("ProvisionTPM failed: %v", err)
+	}
+	defer clearTPM(t, tpm)
+
+	status, err = ProvisionStatus(tpm)
+	if err != nil {
+		t.Errorf("ProvisionStatus failed: %v", err)
+	}
+	expected := AttrValidSRK|AttrDAParamsOK|AttrOwnerClearDisabled|AttrLockoutAuthSet
+	if status != expected {
+		t.Errorf("Unexpected status")
+	}
+
+	if err := tpm.HierarchyChangeAuth(tpm2.HandleLockout, nil, lockoutAuth); err != nil {
+		t.Errorf("HierarchyChangeAuth failed: %v", err)
+	}
+
+	status, err = ProvisionStatus(tpm)
+	if err != nil {
+		t.Errorf("ProvisionStatus failed: %v", err)
+	}
+	expected = AttrValidSRK|AttrDAParamsOK|AttrOwnerClearDisabled
+	if status != expected {
+		t.Errorf("Unexpected status")
+	}
+
+	if err := tpm.ClearControl(tpm2.HandlePlatform, false, nil); err != nil {
+		t.Errorf("ClearControl failed: %v", err)
+	}
+
+	status, err = ProvisionStatus(tpm)
+	if err != nil {
+		t.Errorf("ProvisionStatus failed: %v", err)
+	}
+	expected = AttrValidSRK|AttrDAParamsOK
+	if status != expected {
+		t.Errorf("Unexpected status")
+	}
+
+	if err := tpm.DictionaryAttackParameters(tpm2.HandleLockout, 3, 0, 0, nil); err != nil {
+		t.Errorf("DictionaryAttackParameters failed: %v", err)
+	}
+
+	status, err = ProvisionStatus(tpm)
+	if err != nil {
+		t.Errorf("ProvisionStatus failed: %v", err)
+	}
+	expected = AttrValidSRK
+	if status != expected {
+		t.Errorf("Unexpected status")
+	}
+
+	srkContext, err := tpm.WrapHandle(srkHandle)
+	if err != nil {
+		t.Fatalf("WrapHandle failed: %v", err)
+	}
+
+	if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkContext.Handle(), nil); err != nil {
+		t.Errorf("EvictControl failed: %v", err)
+	}
+
+	status, err = ProvisionStatus(tpm)
+	if err != nil {
+		t.Errorf("ProvisionStatus failed: %v", err)
+	}
+	expected = 0
+	if status != expected {
+		t.Errorf("Unexpected status")
+	}
+
+	primary, _, _, _, _, _, err := tpm.CreatePrimary(tpm2.HandleOwner, nil, &srkTemplate, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreatePrimary failed: %v", err)
+	}
+	defer tpm.FlushContext(primary)
+
+	priv, pub, _, _, _, err := tpm.Create(primary, nil, &srkTemplate, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	context, _, err := tpm.Load(primary, priv, pub, nil)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if _, err := tpm.EvictControl(tpm2.HandleOwner, context, srkHandle, nil); err != nil {
+		t.Errorf("EvictControl failed: %v", err)
+	}
+
+	status, err = ProvisionStatus(tpm)
+	if err != nil {
+		t.Errorf("ProvisionStatus failed: %v", err)
+	}
+	expected = 0
+	if status != expected {
+		t.Errorf("Unexpected status")
+	}
+}
