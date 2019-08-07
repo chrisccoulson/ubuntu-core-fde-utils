@@ -8,12 +8,12 @@ import (
 )
 
 var (
-	useTpm = flag.Bool("use-tpm", false, "")
+	useTpm         = flag.Bool("use-tpm", false, "")
 	tpmPathForTest = flag.String("tpm-path", "/dev/tpm0", "")
 
-	useMssim = flag.Bool("use-mssim", false, "")
-	mssimHost = flag.String("mssim-host", "localhost", "")
-	mssimTpmPort = flag.Uint("mssim-tpm-port", 2321, "")
+	useMssim          = flag.Bool("use-mssim", false, "")
+	mssimHost         = flag.String("mssim-host", "localhost", "")
+	mssimTpmPort      = flag.Uint("mssim-tpm-port", 2321, "")
 	mssimPlatformPort = flag.Uint("mssim-platform-port", 2322, "")
 )
 

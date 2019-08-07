@@ -36,8 +36,8 @@ func TestProvisionTPM(t *testing.T) {
 	if pub.NameAlg != tpm2.AlgorithmSHA256 {
 		t.Errorf("SRK has unexpected name algorithm")
 	}
-	if pub.Attrs != tpm2.AttrFixedTPM | tpm2.AttrFixedParent | tpm2.AttrSensitiveDataOrigin |
-		tpm2.AttrUserWithAuth | tpm2.AttrRestricted | tpm2.AttrDecrypt {
+	if pub.Attrs != tpm2.AttrFixedTPM|tpm2.AttrFixedParent|tpm2.AttrSensitiveDataOrigin|
+		tpm2.AttrUserWithAuth|tpm2.AttrRestricted|tpm2.AttrDecrypt {
 		t.Errorf("SRK has unexpected attributes")
 	}
 	if pub.Params.RSADetail == nil {
@@ -61,7 +61,7 @@ func TestProvisionTPM(t *testing.T) {
 	if pub.Params.RSADetail.Exponent != 0 {
 		t.Errorf("SRK has an unexpected non-default public exponent")
 	}
-	if len(pub.Unique.RSA) != 2048 / 8 {
+	if len(pub.Unique.RSA) != 2048/8 {
 		t.Errorf("SRK has an unexpected RSA public modulus length")
 	}
 
@@ -155,7 +155,7 @@ func TestProvisionStatus(t *testing.T) {
 	if err != nil {
 		t.Errorf("ProvisionStatus failed: %v", err)
 	}
-	expected := AttrValidSRK|AttrDAParamsOK|AttrOwnerClearDisabled|AttrLockoutAuthSet
+	expected := AttrValidSRK | AttrDAParamsOK | AttrOwnerClearDisabled | AttrLockoutAuthSet
 	if status != expected {
 		t.Errorf("Unexpected status")
 	}
@@ -168,7 +168,7 @@ func TestProvisionStatus(t *testing.T) {
 	if err != nil {
 		t.Errorf("ProvisionStatus failed: %v", err)
 	}
-	expected = AttrValidSRK|AttrDAParamsOK|AttrOwnerClearDisabled
+	expected = AttrValidSRK | AttrDAParamsOK | AttrOwnerClearDisabled
 	if status != expected {
 		t.Errorf("Unexpected status")
 	}
@@ -181,7 +181,7 @@ func TestProvisionStatus(t *testing.T) {
 	if err != nil {
 		t.Errorf("ProvisionStatus failed: %v", err)
 	}
-	expected = AttrValidSRK|AttrDAParamsOK
+	expected = AttrValidSRK | AttrDAParamsOK
 	if status != expected {
 		t.Errorf("Unexpected status")
 	}
