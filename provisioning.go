@@ -19,8 +19,8 @@ const (
 
 	clearPPIRequest string = "5"
 
-	maxTries uint32 = 32
-	recoveryTime uint32 = 7200
+	maxTries        uint32 = 32
+	recoveryTime    uint32 = 7200
 	lockoutRecovery uint32 = 86400
 )
 
