@@ -6,6 +6,4 @@ import (
 
 const (
 	srkHandle tpm2.Handle = 0x81000000
-
-	tpmPath string = "/dev/tpm0"
 )

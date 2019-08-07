@@ -50,17 +50,7 @@ var (
 				Exponent: 0}}}
 )
 
-func ProvisionTPM(lockoutAuth []byte) error {
-	tcti, err := tpm2.OpenTPMDevice(tpmPath)
-	if err != nil {
-		return fmt.Errorf("cannot open TPM device: %v", err)
-	}
-	tpm, err := tpm2.NewTPMContext(tcti)
-	if err != nil {
-		return fmt.Errorf("cannot create new TPM context: %v", err)
-	}
-	defer tpm.Close()
-
+func ProvisionTPM(tpm tpm2.TPMContext, lockoutAuth []byte) error {
 	props, err := tpm.GetCapabilityTPMProperties(tpm2.PropertyPermanent, 1)
 	if err != nil {
 		return fmt.Errorf("cannot request permanent properties: %v", err)

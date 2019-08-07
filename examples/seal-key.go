@@ -61,7 +61,14 @@ func main() {
 		defer out.Close()
 	}
 
-	if err := fdeutil.SealKeyToTPM(out, key); err != nil {
+	tpm, err := fdeutil.ConnectToDefaultTPM()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot acquire TPM context: %v", err)
+		os.Exit(1)
+	}
+	defer tpm.Close()
+
+	if err := fdeutil.SealKeyToTPM(tpm, out, key); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot seal key to TPM: %v\n", err)
 		os.Exit(1)
 	}

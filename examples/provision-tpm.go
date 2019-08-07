@@ -34,7 +34,14 @@ func main() {
 		lockoutAuth = args[0]
 	}
 
-	if err := fdeutil.ProvisionTPM([]byte(lockoutAuth)); err != nil {
+	tpm, err := fdeutil.ConnectToDefaultTPM()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot acquire TPM context: %v", err)
+		os.Exit(1)
+	}
+	defer tpm.Close()
+
+	if err := fdeutil.ProvisionTPM(tpm, []byte(lockoutAuth)); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to provision the TPM: %v\n", err)
 		os.Exit(1)
 	}
