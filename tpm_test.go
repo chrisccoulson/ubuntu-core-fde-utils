@@ -8,6 +8,9 @@ import (
 )
 
 var (
+	useTpm = flag.Bool("use-tpm", false, "")
+	tpmPathForTest = flag.String("tpm-path", "/dev/tpm0", "")
+
 	useMssim = flag.Bool("use-mssim", false, "")
 	mssimHost = flag.String("mssim-host", "localhost", "")
 	mssimTpmPort = flag.Uint("mssim-tpm-port", 2321, "")
@@ -17,6 +20,10 @@ var (
 func openTPMSimulatorForTesting(t *testing.T) (tpm2.TPMContext, *tpm2.TctiMssim) {
 	if !*useMssim {
 		t.SkipNow()
+	}
+
+	if *useTpm && *useMssim {
+		t.Fatalf("Cannot specify both -use-tpm and -use-mssim")
 	}
 
 	tcti, err := tpm2.OpenTPMMssim(*mssimHost, *mssimTpmPort, *mssimPlatformPort)
@@ -33,6 +40,35 @@ func openTPMSimulatorForTesting(t *testing.T) (tpm2.TPMContext, *tpm2.TctiMssim)
 	}
 
 	return tpm, tcti
+}
+
+func openTPMForTesting(t *testing.T) tpm2.TPMContext {
+	if !*useTpm {
+		tpm, _ := openTPMSimulatorForTesting(t)
+		return tpm
+	}
+
+	if *useTpm && *useMssim {
+		t.Fatalf("Cannot specify both -use-tpm and -use-mssim")
+	}
+
+	tcti, err := tpm2.OpenTPMDevice(*tpmPathForTest)
+	if err != nil {
+		t.Fatalf("Failed to open the TPM device: %v", err)
+	}
+
+	tpm, _ := tpm2.NewTPMContext(tcti)
+	return tpm
+}
+
+// clearTPM clears the TPM with platform hierarchy authorization - something that we can only do on the simulator
+func clearTPMWithPlatformAuth(t *testing.T, tpm tpm2.TPMContext) {
+	if err := tpm.ClearControl(tpm2.HandlePlatform, false, nil); err != nil {
+		t.Fatalf("ClearControl failed: %v", err)
+	}
+	if err := tpm.Clear(tpm2.HandlePlatform, nil); err != nil {
+		t.Fatalf("Clear failed: %v", err)
+	}
 }
 
 func resetTPMSimulator(t *testing.T, tpm tpm2.TPMContext, tcti *tpm2.TctiMssim) {

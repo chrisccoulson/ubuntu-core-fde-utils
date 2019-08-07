@@ -6,29 +6,18 @@ import (
 	"github.com/chrisccoulson/go-tpm2"
 )
 
-// clearTPM clears the TPM with platform hierarchy authorization - something that we can only do on the simulator
-func clearTPM(t *testing.T, tpm tpm2.TPMContext) {
-	if err := tpm.ClearControl(tpm2.HandlePlatform, false, nil); err != nil {
-		t.Fatalf("ClearControl failed: %v", err)
-	}
-	if err := tpm.Clear(tpm2.HandlePlatform, nil); err != nil {
-		t.Fatalf("Clear failed: %v", err)
-	}
-}
-
 func TestProvisionTPM(t *testing.T) {
 	tpm, tcti := openTPMSimulatorForTesting(t)
 	defer closeTPM(t, tpm)
 
 	resetTPMSimulator(t, tpm, tcti)
-	clearTPM(t, tpm)
+	clearTPMWithPlatformAuth(t, tpm)
 
 	lockoutAuth := []byte("1234")
 
 	if err := ProvisionTPM(tpm, lockoutAuth); err != nil {
 		t.Fatalf("ProvisionTPM failed: %v", err)
 	}
-	defer clearTPM(t, tpm)
 
 	srkContext, err := tpm.WrapHandle(srkHandle)
 	if err != nil {
@@ -128,11 +117,10 @@ func TestProvisionAlreadyProvisioned(t *testing.T) {
 	tpm, _ := openTPMSimulatorForTesting(t)
 	defer closeTPM(t, tpm)
 
-	clearTPM(t, tpm)
+	clearTPMWithPlatformAuth(t, tpm)
 	if err := ProvisionTPM(tpm, nil); err != nil {
 		t.Fatalf("ProvisionTPM failed: %v", err)
 	}
-	defer clearTPM(t, tpm)
 
 	err := ProvisionTPM(tpm, nil)
 	if err == nil {
@@ -147,7 +135,7 @@ func TestProvisionStatus(t *testing.T) {
 	tpm, _ := openTPMSimulatorForTesting(t)
 	defer closeTPM(t, tpm)
 
-	clearTPM(t, tpm)
+	clearTPMWithPlatformAuth(t, tpm)
 
 	status, err := ProvisionStatus(tpm)
 	if err != nil {
@@ -162,7 +150,6 @@ func TestProvisionStatus(t *testing.T) {
 	if err := ProvisionTPM(tpm, lockoutAuth); err != nil {
 		t.Fatalf("ProvisionTPM failed: %v", err)
 	}
-	defer clearTPM(t, tpm)
 
 	status, err = ProvisionStatus(tpm)
 	if err != nil {
