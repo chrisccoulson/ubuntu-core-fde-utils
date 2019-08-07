@@ -1,7 +1,6 @@
 package fdeutil
 
 import (
-	"crypto/rand"
 	"fmt"
 	"io"
 
@@ -39,16 +38,7 @@ func SealKeyToTPM(tpm tpm2.TPMContext, buf io.Writer, key []byte) error {
 			KeyedHashDetail: &tpm2.KeyedHashParams{
 				Scheme: tpm2.KeyedHashScheme{Scheme: tpm2.AlgorithmNull}}}}
 
-	// The object doesn't have the userWithAuth attribute set, so the auth value can only be used
-	// for actions that require the admin role. There aren't any of those that we need, so set it to a
-	// random 128-bit value and forget it.
-	authValue := make([]byte, 16)
-	_, err := rand.Read(authValue)
-	if err != nil {
-		return fmt.Errorf("cannot obtain random bytes for auth value: %v", err)
-	}
-
-	sensitive := tpm2.SensitiveCreate{Data: key, UserAuth: authValue}
+	sensitive := tpm2.SensitiveCreate{Data: key}
 
 	srkContext, err := tpm.WrapHandle(srkHandle)
 	if err != nil {

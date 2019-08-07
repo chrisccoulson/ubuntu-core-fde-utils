@@ -45,7 +45,8 @@ func UnsealKeyFromTPM(tpm tpm2.TPMContext, buf io.Reader) ([]byte, error) {
 	defer tpm.FlushContext(sessionContext)
 
 	// 4) Unseal
-	key, err := tpm.Unseal(keyContext, &tpm2.Session{Context: sessionContext})
+	session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrResponseEncrypt}
+	key, err := tpm.Unseal(keyContext, &session)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unseal key: %v", err)
 	}
