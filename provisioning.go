@@ -12,7 +12,7 @@ import (
 	"github.com/chrisccoulson/go-tpm2"
 )
 
-type StatusAttributes int
+type ProvisionStatusAttributes int
 
 const (
 	ppiPath string = "/sys/class/tpm/tpm0/ppi/request"
@@ -25,7 +25,7 @@ const (
 )
 
 const (
-	AttrValidSRK StatusAttributes = 1 << iota
+	AttrValidSRK ProvisionStatusAttributes = 1 << iota
 	AttrDAParamsOK
 	AttrOwnerClearDisabled
 	AttrLockoutAuthSet
@@ -166,8 +166,8 @@ func checkForValidSRK(tpm tpm2.TPMContext) (bool, error) {
 	return true, nil
 }
 
-func ProvisionStatus() (StatusAttributes, error) {
-	var out StatusAttributes
+func ProvisionStatus() (ProvisionStatusAttributes, error) {
+	var out ProvisionStatusAttributes
 
 	tcti, err := tpm2.OpenTPMDevice(tpmPath)
 	if err != nil {
