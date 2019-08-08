@@ -67,7 +67,7 @@ func SealKeyToTPM(tpm tpm2.TPMContext, dest string, mode SealMode, key []byte) e
 	// Use event digests, the event log and GRUB data to generate PCR digests
 	//  TODO: Use policy inputs rather than the current PCR values
 	//  TODO: Generate digests for other PCRs
-	_, _, digests, err := tpm.PCRRead(tpm2.PCRSelectionList{
+	_, digests, err := tpm.PCRRead(tpm2.PCRSelectionList{
 		tpm2.PCRSelection{Hash: tpm2.AlgorithmSHA256, Select: tpm2.PCRSelectionData{7}}})
 	if err != nil {
 		return fmt.Errorf("cannot read PCR values: %v", err)
