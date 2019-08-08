@@ -9,31 +9,33 @@ import (
 	"github.com/chrisccoulson/ubuntu-core-fde-utils"
 )
 
-var clearKeyPath string
-var outPath string
+var update bool
+var masterKeyFile string
+var keyFile string
 
 func init() {
-	flag.StringVar(&clearKeyPath, "clear-key-path", "", "")
-	flag.StringVar(&outPath, "out-path", "", "")
+	flag.BoolVar(&update, "update", false, "")
+	flag.StringVar(&masterKeyFile, "master-key-file", "", "")
+	flag.StringVar(&keyFile, "key-file", "", "")
 }
 
 func main() {
 	flag.Parse()
 
-	if clearKeyPath == "" {
-		fmt.Fprintf(os.Stderr, "Missing clear-key-path\n")
+	if masterKeyFile == "" {
+		fmt.Fprintf(os.Stderr, "Missing -master-key-file\n")
 		os.Exit(1)
 	}
-	if outPath == "" {
-		fmt.Fprintf(os.Stderr, "Missing out-path\n")
+	if keyFile == "" {
+		fmt.Fprintf(os.Stderr, "Missing -key-file\n")
 		os.Exit(1)
 	}
 
 	var in *os.File
-	if clearKeyPath == "-" {
+	if masterKeyFile == "-" {
 		in = os.Stdin
 	} else {
-		f, err := os.Open(clearKeyPath)
+		f, err := os.Open(masterKeyFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Cannot open key file: %v\n", err)
 			os.Exit(1)
@@ -48,17 +50,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	var out *os.File
-	if outPath == "-" {
-		out = os.Stdout
-	} else {
-		f, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE, 0600)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Cannot open output file: %v\n", err)
-			os.Exit(1)
-		}
-		out = f
-		defer out.Close()
+	mode := fdeutil.Create
+	if update {
+		mode = fdeutil.Update
 	}
 
 	tpm, err := fdeutil.ConnectToDefaultTPM()
@@ -68,7 +62,7 @@ func main() {
 	}
 	defer tpm.Close()
 
-	if err := fdeutil.SealKeyToTPM(tpm, out, key); err != nil {
+	if err := fdeutil.SealKeyToTPM(tpm, keyFile, mode, key); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot seal key to TPM: %v\n", err)
 		os.Exit(1)
 	}

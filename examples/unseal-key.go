@@ -8,33 +8,35 @@ import (
 	"github.com/chrisccoulson/ubuntu-core-fde-utils"
 )
 
-var sealedKeyPath string
-var outPath string
+var keyFile string
+var outFile string
+var pin string
 
 func init() {
-	flag.StringVar(&sealedKeyPath, "sealed-key-path", "", "")
-	flag.StringVar(&outPath, "out-path", "", "")
+	flag.StringVar(&keyFile, "key-file", "", "")
+	flag.StringVar(&outFile, "out-file", "", "")
+	flag.StringVar(&pin, "pin", "", "")
 }
 
 func main() {
 	flag.Parse()
 
-	if sealedKeyPath == "" {
-		fmt.Fprintf(os.Stderr, "Missing sealed-key-path\n")
+	if keyFile == "" {
+		fmt.Fprintf(os.Stderr, "Missing -key-file\n")
 		os.Exit(1)
 	}
-	if outPath == "" {
-		fmt.Fprintf(os.Stderr, "Missing out-path\n")
+	if outFile == "" {
+		fmt.Fprintf(os.Stderr, "Missing -out-file\n")
 		os.Exit(1)
 	}
 
 	var in *os.File
-	if sealedKeyPath == "-" {
+	if keyFile == "-" {
 		in = os.Stdin
 	} else {
-		f, err := os.Open(sealedKeyPath)
+		f, err := os.Open(keyFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Cannot open sealed key file: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Cannot open input file: %v\n", err)
 			os.Exit(1)
 		}
 		in = f
@@ -42,10 +44,10 @@ func main() {
 	}
 
 	var out *os.File
-	if outPath == "-" {
+	if outFile == "-" {
 		out = os.Stdout
 	} else {
-		f, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE, 0600)
+		f, err := os.OpenFile(outFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Cannot open output file: %v\n", err)
 			os.Exit(1)
@@ -61,7 +63,7 @@ func main() {
 	}
 	defer tpm.Close()
 
-	key, err := fdeutil.UnsealKeyFromTPM(tpm, in)
+	key, err := fdeutil.UnsealKeyFromTPM(tpm, in, pin)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot unseal key: %v\n", err)
 		os.Exit(1)

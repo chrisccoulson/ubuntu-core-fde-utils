@@ -6,6 +6,8 @@ import (
 
 const (
 	srkHandle tpm2.Handle = 0x81000000
+
+	pinSetHint uint8 = 1 << 0
 )
 
 var (
