@@ -39,7 +39,7 @@ func (e policySecretError) Error() string {
 	return fmt.Sprintf("cannot execute PolicySecret command: %v", e.err)
 }
 
-type subPolicyInput struct {
+type subPolicyComputeInput struct {
 	secureBootPCRAlg tpm2.AlgorithmId
 	grubPCRAlg       tpm2.AlgorithmId
 	snapModelPCRAlg  tpm2.AlgorithmId
@@ -49,8 +49,8 @@ type subPolicyInput struct {
 	snapModelPCRDigests  tpm2.DigestList
 }
 
-type policyInput struct {
-	subPolicies   []subPolicyInput
+type policyComputeInput struct {
+	subPolicies   []subPolicyComputeInput
 	pinObjectName tpm2.Name
 }
 
@@ -157,7 +157,7 @@ func trialPolicySecret(alg tpm2.AlgorithmId, currentDigest tpm2.Digest, name tpm
 	return h.Sum(nil)
 }
 
-func generateSubPolicy(alg tpm2.AlgorithmId, input subPolicyInput) (*subPolicyData, tpm2.Digest, error) {
+func computeSubPolicy(alg tpm2.AlgorithmId, input *subPolicyComputeInput) (*subPolicyData, tpm2.Digest, error) {
 	if len(input.secureBootPCRDigests) == 0 {
 		return nil, nil, fmt.Errorf("cannot generate sub-policy digest: no secure-boot digests provided")
 	}
@@ -244,7 +244,7 @@ func generateSubPolicy(alg tpm2.AlgorithmId, input subPolicyInput) (*subPolicyDa
 		SnapModelORDigests:  snapModelORDigests}, policy, nil
 }
 
-func generatePolicy(alg tpm2.AlgorithmId, input *policyInput) (*policyData, tpm2.Digest, error) {
+func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData, tpm2.Digest, error) {
 	if len(input.subPolicies) == 0 {
 		return nil, nil, fmt.Errorf("cannot generate policy: no sub-policies provided")
 	}
@@ -252,7 +252,7 @@ func generatePolicy(alg tpm2.AlgorithmId, input *policyInput) (*policyData, tpm2
 	subPolicyDatas := make([]subPolicyData, 0)
 	subPolicyORDigests := make(tpm2.DigestList, 0)
 	for _, policy := range input.subPolicies {
-		out, digest, err := generateSubPolicy(alg, policy)
+		out, digest, err := computeSubPolicy(alg, &policy)
 		if err != nil {
 			return nil, nil, err
 		}

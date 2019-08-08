@@ -73,7 +73,7 @@ func SealKeyToTPM(tpm tpm2.TPMContext, dest string, mode SealMode, key []byte) e
 		return fmt.Errorf("cannot read PCR values: %v", err)
 	}
 
-	subPolicy := subPolicyInput{
+	subPolicyComputeIn := subPolicyComputeInput{
 		secureBootPCRAlg: tpm2.AlgorithmSHA256,
 		grubPCRAlg:       tpm2.AlgorithmSHA256,
 		snapModelPCRAlg:  tpm2.AlgorithmSHA256,
@@ -88,11 +88,11 @@ func SealKeyToTPM(tpm tpm2.TPMContext, dest string, mode SealMode, key []byte) e
 		return fmt.Errorf("cannot determine PIN object name: %v", err)
 	}
 
-	policyDataIn := policyInput{
-		subPolicies:   []subPolicyInput{subPolicy},
+	policyComputeIn := policyComputeInput{
+		subPolicies:   []subPolicyComputeInput{subPolicyComputeIn},
 		pinObjectName: pinObjectName}
 
-	policyData, authPolicy, err := generatePolicy(tpm2.AlgorithmSHA256, &policyDataIn)
+	policyData, authPolicy, err := computePolicy(tpm2.AlgorithmSHA256, &policyComputeIn)
 
 	// Define the template for the sealed key object, using the calculated policy digest
 	template := tpm2.Public{
