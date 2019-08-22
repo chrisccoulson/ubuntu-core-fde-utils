@@ -73,21 +73,21 @@ type policyData struct {
 func hashAlgToGoHash(hashAlg tpm2.AlgorithmId) hash.Hash {
 	knownDigest, isKnown := knownDigests[hashAlg]
 	if !isKnown {
-		return nil
+		panic("Unknown digest algorithm")
 	}
 	return knownDigest.constructor()
 }
 
-func getDigestSize(alg tpm2.AlgorithmId) (uint, error) {
+func getDigestSize(alg tpm2.AlgorithmId) uint {
 	known, isKnown := knownDigests[alg]
 	if !isKnown {
-		return 0, fmt.Errorf("unknown digest algorithm: %v", alg)
+		panic("Unknown digest algorithm")
 	}
-	return uint(known.size), nil
+	return uint(known.size)
 }
 
 func initTrialPolicyDigest(alg tpm2.AlgorithmId) tpm2.Digest {
-	digestSize, _ := getDigestSize(alg)
+	digestSize := getDigestSize(alg)
 	return make(tpm2.Digest, digestSize)
 }
 

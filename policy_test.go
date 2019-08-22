@@ -187,7 +187,7 @@ func TestComputePolicy(t *testing.T) {
 					t.Errorf("Unexpected snap model PCR algorithm %v for index %d",
 						dataout.SubPolicyData[i].SnapModelPCRAlg, i)
 				}
-				digestSize, _ := getDigestSize(data.alg)
+				digestSize := getDigestSize(data.alg)
 				for _, l := range []tpm2.DigestList{dataout.SubPolicyData[i].SecureBootORDigests,
 					dataout.SubPolicyData[i].GrubORDigests,
 					dataout.SubPolicyData[i].SnapModelORDigests} {
@@ -241,7 +241,7 @@ func TestExecutePolicy(t *testing.T) {
 			hasher.Write([]byte(data))
 			dataDigest := hasher.Sum(nil)
 
-			digestSize, _ := getDigestSize(alg)
+			digestSize := getDigestSize(alg)
 
 			hasher = hashAlgToGoHash(alg)
 			hasher.Write(make([]byte, digestSize))
