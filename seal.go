@@ -68,15 +68,15 @@ func SealKeyToTPM(tpm tpm2.TPMContext, dest string, mode SealMode, key []byte) e
 	//  TODO: Use policy inputs rather than the current PCR values
 	//  TODO: Generate digests for other PCRs
 	_, digests, err := tpm.PCRRead(tpm2.PCRSelectionList{
-		tpm2.PCRSelection{Hash: tpm2.AlgorithmSHA256, Select: tpm2.PCRSelectionData{7}}})
+		tpm2.PCRSelection{Hash: defaultHashAlgorithm, Select: tpm2.PCRSelectionData{7}}})
 	if err != nil {
 		return fmt.Errorf("cannot read PCR values: %v", err)
 	}
 
 	subPolicyComputeIn := subPolicyComputeInput{
-		secureBootPCRAlg: tpm2.AlgorithmSHA256,
-		grubPCRAlg:       tpm2.AlgorithmSHA256,
-		snapModelPCRAlg:  tpm2.AlgorithmSHA256,
+		secureBootPCRAlg: defaultHashAlgorithm,
+		grubPCRAlg:       defaultHashAlgorithm,
+		snapModelPCRAlg:  defaultHashAlgorithm,
 
 		secureBootPCRDigests: digests,
 		grubPCRDigests:       tpm2.DigestList{make(tpm2.Digest, 32)},
@@ -92,7 +92,7 @@ func SealKeyToTPM(tpm tpm2.TPMContext, dest string, mode SealMode, key []byte) e
 		subPolicies:   []subPolicyComputeInput{subPolicyComputeIn},
 		pinObjectName: pinObjectName}
 
-	policyData, authPolicy, err := computePolicy(tpm2.AlgorithmSHA256, &policyComputeIn)
+	policyData, authPolicy, err := computePolicy(defaultHashAlgorithm, &policyComputeIn)
 
 	// Define the template for the sealed key object, using the calculated policy digest
 	template := tpm2.Public{
@@ -121,7 +121,7 @@ func SealKeyToTPM(tpm tpm2.TPMContext, dest string, mode SealMode, key []byte) e
 
 	// Create a session for command parameter encryption
 	sessionContext, err := tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypeHMAC, &paramEncryptAlg,
-		tpm2.AlgorithmSHA256, nil)
+		defaultHashAlgorithm, nil)
 	if err != nil {
 		return fmt.Errorf("cannot create session for encryption: %v", err)
 	}

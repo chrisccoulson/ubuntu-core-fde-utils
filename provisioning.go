@@ -85,7 +85,7 @@ func ProvisionTPM(tpm tpm2.TPMContext, lockoutAuth []byte) error {
 	}
 
 	sessionContext, err :=
-		tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypeHMAC, &paramEncryptAlg, tpm2.AlgorithmSHA256,
+		tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypeHMAC, &paramEncryptAlg, defaultHashAlgorithm,
 			nil)
 	if err != nil {
 		return fmt.Errorf("cannot start session for command parameter encryption: %v", err)
