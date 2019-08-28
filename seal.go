@@ -73,14 +73,12 @@ func SealKeyToTPM(tpm tpm2.TPMContext, dest string, mode SealMode, key []byte) e
 		return fmt.Errorf("cannot read PCR values: %v", err)
 	}
 
-	subPolicyComputeIn := subPolicyComputeInput{
+	compoundSbPolicyComputeIn := compoundSbPolicyComputeInput{
 		secureBootPCRAlg: defaultHashAlgorithm,
 		grubPCRAlg:       defaultHashAlgorithm,
-		snapModelPCRAlg:  defaultHashAlgorithm,
 
 		secureBootPCRDigests: digests,
-		grubPCRDigests:       tpm2.DigestList{make(tpm2.Digest, 32)},
-		snapModelPCRDigests:  tpm2.DigestList{make(tpm2.Digest, 32)}}
+		grubPCRDigests:       tpm2.DigestList{make(tpm2.Digest, 32)}}
 
 	// Use the PCR digests and PIN object to generate a single policy digest
 	pinObjectName, err := pinPublic.Name()
@@ -89,8 +87,10 @@ func SealKeyToTPM(tpm tpm2.TPMContext, dest string, mode SealMode, key []byte) e
 	}
 
 	policyComputeIn := policyComputeInput{
-		subPolicies:   []subPolicyComputeInput{subPolicyComputeIn},
-		pinObjectName: pinObjectName}
+		compoundSbPolicies:  []compoundSbPolicyComputeInput{compoundSbPolicyComputeIn},
+		snapModelPCRAlg:     defaultHashAlgorithm,
+		snapModelPCRDigests: tpm2.DigestList{make(tpm2.Digest, 32)},
+		pinObjectName:       pinObjectName}
 
 	policyData, authPolicy, err := computePolicy(defaultHashAlgorithm, &policyComputeIn)
 

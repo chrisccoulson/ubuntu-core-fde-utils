@@ -39,35 +39,33 @@ func (e policySecretError) Error() string {
 	return fmt.Sprintf("cannot execute PolicySecret command: %v", e.err)
 }
 
-type subPolicyComputeInput struct {
-	secureBootPCRAlg tpm2.AlgorithmId
-	grubPCRAlg       tpm2.AlgorithmId
-	snapModelPCRAlg  tpm2.AlgorithmId
-
+type compoundSbPolicyComputeInput struct {
+	secureBootPCRAlg     tpm2.AlgorithmId
+	grubPCRAlg           tpm2.AlgorithmId
 	secureBootPCRDigests tpm2.DigestList
 	grubPCRDigests       tpm2.DigestList
-	snapModelPCRDigests  tpm2.DigestList
 }
 
 type policyComputeInput struct {
-	subPolicies   []subPolicyComputeInput
-	pinObjectName tpm2.Name
+	compoundSbPolicies  []compoundSbPolicyComputeInput
+	snapModelPCRAlg     tpm2.AlgorithmId
+	snapModelPCRDigests tpm2.DigestList
+	pinObjectName       tpm2.Name
 }
 
-type subPolicyData struct {
-	SecureBootPCRAlg tpm2.AlgorithmId
-	GrubPCRAlg       tpm2.AlgorithmId
-	SnapModelPCRAlg  tpm2.AlgorithmId
-
+type compoundSbPolicyData struct {
+	SecureBootPCRAlg    tpm2.AlgorithmId
+	GrubPCRAlg          tpm2.AlgorithmId
 	SecureBootORDigests tpm2.DigestList
 	GrubORDigests       tpm2.DigestList
-	SnapModelORDigests  tpm2.DigestList
 }
 
 type policyData struct {
 	Algorithm          tpm2.AlgorithmId
-	SubPolicyData      []subPolicyData
-	SubPolicyORDigests tpm2.DigestList
+	SbPolicyData       []compoundSbPolicyData
+	SbPolicyORDigests  tpm2.DigestList
+	SnapModelPCRAlg    tpm2.AlgorithmId
+	SnapModelORDigests tpm2.DigestList
 }
 
 func hashAlgToGoHash(hashAlg tpm2.AlgorithmId) hash.Hash {
@@ -168,103 +166,108 @@ func trialPolicySecret(alg tpm2.AlgorithmId, currentDigest tpm2.Digest, name tpm
 	return h.Sum(nil)
 }
 
-func computeSubPolicy(alg tpm2.AlgorithmId, input *subPolicyComputeInput) (*subPolicyData, tpm2.Digest, error) {
+func computeCompoundSbPolicy(alg tpm2.AlgorithmId, input *compoundSbPolicyComputeInput) (*compoundSbPolicyData,
+	tpm2.Digest, error) {
 	if len(input.secureBootPCRDigests) == 0 {
-		return nil, nil, fmt.Errorf("cannot generate sub-policy digest: no secure-boot digests provided")
+		return nil, nil, errors.New("no secure-boot digests provided")
 	}
 	secureBootORDigests := make(tpm2.DigestList, 0)
-	for _, digest := range input.secureBootPCRDigests {
+	for i, digest := range input.secureBootPCRDigests {
 		policyDigest := initTrialPolicyDigest(alg)
 		pcrs := makePCRSelectionList(input.secureBootPCRAlg, secureBootPCR)
 		pcrDigest := computePCRDigest(alg, pcrs, tpm2.DigestList{digest})
 		policyDigest, err := trialPolicyPCR(alg, policyDigest, pcrs, pcrDigest)
 		if err != nil {
-			return nil, nil, fmt.Errorf("cannot generate sub-policy digest: %v", err)
+			return nil, nil, fmt.Errorf("cannot execute PolicyPCR with secure-boot digest at index "+
+				"%d: %v", i, err)
 		}
 		secureBootORDigests = append(secureBootORDigests, policyDigest)
 	}
 
 	if len(input.grubPCRDigests) == 0 {
-		return nil, nil, fmt.Errorf("cannot generate sub-policy digest: no grub digests provided")
+		return nil, nil, fmt.Errorf("no grub digests provided")
 	}
 	grubORDigests := make(tpm2.DigestList, 0)
-	for _, digest := range input.grubPCRDigests {
+	for i, digest := range input.grubPCRDigests {
 		policyDigest := initTrialPolicyDigest(alg)
 		policyDigest, err := trialPolicyOR(alg, ensureSufficientORDigests(secureBootORDigests))
 		if err != nil {
-			return nil, nil, fmt.Errorf("cannot generate sub-policy digest: %v", err)
+			return nil, nil, fmt.Errorf("cannot execute PolicyOR of secure-boot policy digests: %v",
+				err)
 		}
 		pcrs := makePCRSelectionList(input.grubPCRAlg, grubPCR)
 		pcrDigest := computePCRDigest(alg, pcrs, tpm2.DigestList{digest})
 		policyDigest, err = trialPolicyPCR(alg, policyDigest, pcrs, pcrDigest)
 		if err != nil {
-			return nil, nil, fmt.Errorf("cannot generate sub-policy digest: %v", err)
+			return nil, nil, fmt.Errorf("cannot execute PolicyPCR with grub digest at index "+
+				"%d: %v", i, err)
 		}
 		grubORDigests = append(grubORDigests, policyDigest)
 	}
 
-	if len(input.snapModelPCRDigests) == 0 {
-		return nil, nil, fmt.Errorf("cannot generate sub-policy digest: no snap model digests provided")
+	policy := initTrialPolicyDigest(alg)
+	policy, err := trialPolicyOR(alg, ensureSufficientORDigests(grubORDigests))
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot execute PolicyOR of grub policy digests: %v", err)
 	}
-	snapModelORDigests := make(tpm2.DigestList, 0)
-	for _, digest := range input.snapModelPCRDigests {
-		policyDigest := initTrialPolicyDigest(alg)
-		policyDigest, err := trialPolicyOR(alg, ensureSufficientORDigests(grubORDigests))
+
+	return &compoundSbPolicyData{
+		SecureBootPCRAlg:    input.secureBootPCRAlg,
+		GrubPCRAlg:          input.grubPCRAlg,
+		SecureBootORDigests: secureBootORDigests,
+		GrubORDigests:       grubORDigests}, policy, nil
+}
+
+func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData, tpm2.Digest, error) {
+	if len(input.compoundSbPolicies) == 0 {
+		return nil, nil, fmt.Errorf("cannot generate policy: no compound secure-boot policies provided")
+	}
+
+	sbPolicyDatas := make([]compoundSbPolicyData, 0)
+	sbPolicyORDigests := make(tpm2.DigestList, 0)
+	for i, policy := range input.compoundSbPolicies {
+		out, digest, err := computeCompoundSbPolicy(alg, &policy)
 		if err != nil {
-			return nil, nil, fmt.Errorf("cannot generate sub-policy digest: %v", err)
+			return nil, nil, fmt.Errorf("cannot compute compound secure-boot policy at index "+
+				"%d: %v", i, err)
+		}
+		sbPolicyDatas = append(sbPolicyDatas, *out)
+		sbPolicyORDigests = append(sbPolicyORDigests, digest)
+	}
+
+	snapModelORDigests := make(tpm2.DigestList, 0)
+	for i, digest := range input.snapModelPCRDigests {
+		policyDigest := initTrialPolicyDigest(alg)
+		policyDigest, err := trialPolicyOR(alg, ensureSufficientORDigests(sbPolicyORDigests))
+		if err != nil {
+			return nil, nil, fmt.Errorf("cannot execute PolicyOR of compound secure-boot policy "+
+				"digests: %v", err)
 		}
 		pcrs := makePCRSelectionList(input.snapModelPCRAlg, snapModelPCR)
 		pcrDigest := computePCRDigest(alg, pcrs, tpm2.DigestList{digest})
 		policyDigest, err = trialPolicyPCR(alg, policyDigest, pcrs, pcrDigest)
 		if err != nil {
-			return nil, nil, fmt.Errorf("cannot generate sub-policy digest: %v", err)
+			return nil, nil, fmt.Errorf("cannot execute PolicyPCR with snap model digest at index "+
+				"%d: %v", i, err)
 		}
 		snapModelORDigests = append(snapModelORDigests, policyDigest)
 	}
 
-	policy := initTrialPolicyDigest(alg)
 	policy, err := trialPolicyOR(alg, ensureSufficientORDigests(snapModelORDigests))
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot generate final sub-policy digest: %v", err)
-	}
-
-	return &subPolicyData{
-		SecureBootPCRAlg:    input.secureBootPCRAlg,
-		GrubPCRAlg:          input.grubPCRAlg,
-		SnapModelPCRAlg:     input.snapModelPCRAlg,
-		SecureBootORDigests: secureBootORDigests,
-		GrubORDigests:       grubORDigests,
-		SnapModelORDigests:  snapModelORDigests}, policy, nil
-}
-
-func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData, tpm2.Digest, error) {
-	if len(input.subPolicies) == 0 {
-		return nil, nil, fmt.Errorf("cannot generate policy: no sub-policies provided")
-	}
-
-	subPolicyDatas := make([]subPolicyData, 0)
-	subPolicyORDigests := make(tpm2.DigestList, 0)
-	for _, policy := range input.subPolicies {
-		out, digest, err := computeSubPolicy(alg, &policy)
-		if err != nil {
-			return nil, nil, err
-		}
-		subPolicyDatas = append(subPolicyDatas, *out)
-		subPolicyORDigests = append(subPolicyORDigests, digest)
-	}
-
-	policy, err := trialPolicyOR(alg, ensureSufficientORDigests(subPolicyORDigests))
-	if err != nil {
-		return nil, nil, fmt.Errorf("cannot generate final policy digest: %v", err)
+		return nil, nil, fmt.Errorf("cannot execute PolicyOR of snap model digests: %v", err)
 	}
 	policy = trialPolicySecret(alg, policy, input.pinObjectName, nil)
 
 	return &policyData{Algorithm: alg,
-		SubPolicyData:      subPolicyDatas,
-		SubPolicyORDigests: subPolicyORDigests}, policy, nil
+		SbPolicyData:       sbPolicyDatas,
+		SbPolicyORDigests:  sbPolicyORDigests,
+		SnapModelPCRAlg:    input.snapModelPCRAlg,
+		SnapModelORDigests: snapModelORDigests}, policy, nil
 }
 
-func tryExecSubPolicy(tpm tpm2.TPMContext, sessionContext tpm2.ResourceContext, input *subPolicyData) error {
+func tryExecCompoundSbPolicy(tpm tpm2.TPMContext, sessionContext tpm2.ResourceContext,
+	input *compoundSbPolicyData) error {
 	if err := tpm.PolicyPCR(sessionContext, nil, makePCRSelectionList(input.SecureBootPCRAlg,
 		secureBootPCR)); err != nil {
 		return err
@@ -278,27 +281,31 @@ func tryExecSubPolicy(tpm tpm2.TPMContext, sessionContext tpm2.ResourceContext, 
 	if err := tpm.PolicyOR(sessionContext, ensureSufficientORDigests(input.GrubORDigests)); err != nil {
 		return err
 	}
-	if err := tpm.PolicyPCR(sessionContext, nil, makePCRSelectionList(input.SnapModelPCRAlg,
-		snapModelPCR)); err != nil {
-		return err
-	}
-	if err := tpm.PolicyOR(sessionContext, ensureSufficientORDigests(input.SnapModelORDigests)); err != nil {
-		return err
-	}
 	return nil
 }
 
 func executePolicySession(tpm tpm2.TPMContext, sessionContext, pinContext tpm2.ResourceContext, input *policyData,
 	pin string) error {
-	for _, policy := range input.SubPolicyData {
-		if err := tryExecSubPolicy(tpm, sessionContext, &policy); err == nil {
+	for _, policy := range input.SbPolicyData {
+		if err := tryExecCompoundSbPolicy(tpm, sessionContext, &policy); err == nil {
 			if err := tpm.PolicyOR(sessionContext,
-				ensureSufficientORDigests(input.SubPolicyORDigests)); err == nil {
+				ensureSufficientORDigests(input.SbPolicyORDigests)); err == nil {
 				break
 			}
 		}
 		if err := tpm.PolicyRestart(sessionContext); err != nil {
 			return fmt.Errorf("unable to restart after a failed sub-policy attempt: %v", err)
+		}
+	}
+
+	if err := tpm.PolicyPCR(sessionContext, nil, makePCRSelectionList(input.SnapModelPCRAlg,
+		snapModelPCR)); err != nil {
+		return fmt.Errorf("cannot execute PolicyPCR with snap model register: %v", err)
+	}
+	if err := tpm.PolicyOR(sessionContext, ensureSufficientORDigests(input.SnapModelORDigests)); err != nil {
+		paramErr, isParamErr := err.(tpm2.TPMParameterError)
+		if !isParamErr || paramErr.Code != tpm2.ErrorValue {
+			return fmt.Errorf("cannot execute PolicyOR with snap model policy digests: %v", err)
 		}
 	}
 
