@@ -29,149 +29,71 @@ func TestComputePolicy(t *testing.T) {
 		output tpm2.Digest
 	}{
 		{
-			desc: "SingleCompoundSecureBootPolicy",
+			desc: "Single",
 			alg:  tpm2.AlgorithmSHA256,
 			input: policyComputeInput{
-				compoundSbPolicies: []compoundSbPolicyComputeInput{
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][0]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][1]},
-					},
-				},
-				snapModelPCRAlg:     tpm2.AlgorithmSHA256,
-				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
-				pinObjectName:       pinName,
+				secureBootPCRAlg:     tpm2.AlgorithmSHA256,
+				grubPCRAlg:           tpm2.AlgorithmSHA256,
+				snapModelPCRAlg:      tpm2.AlgorithmSHA256,
+				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][0]},
+				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][1]},
+				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
+				pinObjectName:        pinName,
 			},
-			output: tpm2.Digest{0xd1, 0xaa, 0x73, 0x0a, 0xbb, 0xe7, 0x8a, 0xef, 0x69, 0x84, 0x2e, 0x74,
-				0x3b, 0xe8, 0x01, 0x12, 0x5a, 0xdd, 0xb0, 0xb5, 0x77, 0x8d, 0x87, 0x63, 0x1e, 0x7f,
-				0x23, 0xfc, 0x78, 0x11, 0x57, 0xff},
+			output: tpm2.Digest{0x7c, 0x53, 0x87, 0x2b, 0x7f, 0x16, 0x47, 0xdb, 0x80, 0x46, 0x83, 0x6e,
+				0x25, 0xc3, 0xa6, 0x66, 0x42, 0x1b, 0x9b, 0x9b, 0x98, 0xe9, 0x5b, 0x14, 0x8d, 0x63,
+				0xc4, 0x5d, 0x56, 0xa8, 0xc3, 0x5e},
 		},
 		{
 			desc: "SHA1Session",
 			alg:  tpm2.AlgorithmSHA1,
 			input: policyComputeInput{
-				compoundSbPolicies: []compoundSbPolicyComputeInput{
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][0]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][1]},
-					},
-				},
-				snapModelPCRAlg:     tpm2.AlgorithmSHA256,
-				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
-				pinObjectName:       pinName,
+				secureBootPCRAlg:     tpm2.AlgorithmSHA256,
+				grubPCRAlg:           tpm2.AlgorithmSHA256,
+				snapModelPCRAlg:      tpm2.AlgorithmSHA256,
+				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][0]},
+				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][1]},
+				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
+				pinObjectName:        pinName,
 			},
-			output: tpm2.Digest{0x91, 0x0a, 0x90, 0x04, 0xc5, 0x18, 0xf5, 0xd7, 0xe6, 0xf1, 0x1a, 0x9b,
-				0x29, 0xc4, 0x65, 0xf4, 0xf3, 0xfd, 0x1b, 0x36},
+			output: tpm2.Digest{0x93, 0x21, 0x88, 0x6a, 0xbf, 0xbf, 0xa5, 0x1a, 0x90, 0x13, 0x9a, 0x47,
+				0xb9, 0x43, 0xdf, 0x09, 0xed, 0xed, 0x9e, 0x19},
 		},
 		{
 			desc: "SHA256SessionWithSHA512PCRs",
 			alg:  tpm2.AlgorithmSHA256,
 			input: policyComputeInput{
-				compoundSbPolicies: []compoundSbPolicyComputeInput{
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA512,
-						grubPCRAlg:       tpm2.AlgorithmSHA512,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA512][0]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA512][1]},
-					},
-				},
-				snapModelPCRAlg:     tpm2.AlgorithmSHA512,
+				secureBootPCRAlg:     tpm2.AlgorithmSHA512,
+				grubPCRAlg:           tpm2.AlgorithmSHA512,
+				snapModelPCRAlg:      tpm2.AlgorithmSHA512,
+				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA512][0]},
+				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA512][1]},
+				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA512][2]},
+				pinObjectName:        pinName,
+			},
+			output: tpm2.Digest{0xa4, 0x6f, 0x82, 0x03, 0xc3, 0x32, 0x8b, 0xab, 0x22, 0x81, 0xcc, 0xc3,
+				0x4a, 0x08, 0x9f, 0x9b, 0x9c, 0x23, 0xa2, 0xfc, 0xe3, 0x06, 0xaf, 0xbe, 0xf4, 0x4b,
+				0x3f, 0x1a, 0x85, 0xae, 0xc7, 0x00},
+		},
+		{
+			desc: "MultiplePCRValues",
+			alg:  tpm2.AlgorithmSHA256,
+			input: policyComputeInput{
+				secureBootPCRAlg: tpm2.AlgorithmSHA256,
+				grubPCRAlg:       tpm2.AlgorithmSHA256,
+				snapModelPCRAlg:  tpm2.AlgorithmSHA512,
+				secureBootPCRDigests: tpm2.DigestList{
+					digestMatrix[tpm2.AlgorithmSHA256][0],
+					digestMatrix[tpm2.AlgorithmSHA256][1]},
+				grubPCRDigests: tpm2.DigestList{
+					digestMatrix[tpm2.AlgorithmSHA256][3],
+					digestMatrix[tpm2.AlgorithmSHA256][2]},
 				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA512][2]},
 				pinObjectName:       pinName,
 			},
-			output: tpm2.Digest{0xdc, 0x50, 0xbc, 0x6c, 0x83, 0x52, 0x86, 0x7f, 0x43, 0x6d, 0x46, 0xab,
-				0xb5, 0x76, 0x86, 0xa6, 0x44, 0xf9, 0xfb, 0xc2, 0xdf, 0x92, 0xff, 0x80, 0x05, 0xc7,
-				0xe0, 0x17, 0x2d, 0xbc, 0x39, 0x38},
-		},
-		{
-			desc: "SingleCompoundSecureBootPolicyWithMultiplePCRValues",
-			alg:  tpm2.AlgorithmSHA256,
-			input: policyComputeInput{
-				compoundSbPolicies: []compoundSbPolicyComputeInput{
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][0],
-							digestMatrix[tpm2.AlgorithmSHA256][1]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][3],
-							digestMatrix[tpm2.AlgorithmSHA256][2]},
-					},
-				},
-				snapModelPCRAlg:     tpm2.AlgorithmSHA512,
-				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA512][2]},
-				pinObjectName:       pinName,
-			},
-			output: tpm2.Digest{0xb5, 0x39, 0x06, 0xc9, 0x79, 0x71, 0x74, 0xf2, 0x4e, 0x82, 0x4e, 0xbe,
-				0xe9, 0x15, 0x8e, 0xfa, 0x5c, 0x8b, 0x2c, 0xd5, 0x52, 0x6d, 0xd1, 0x3b, 0x56, 0xf1,
-				0x25, 0x21, 0x15, 0x72, 0xc0, 0x78},
-		},
-		{
-			desc: "MultipleCompoundSecureBootPolicies",
-			alg:  tpm2.AlgorithmSHA256,
-			input: policyComputeInput{
-				compoundSbPolicies: []compoundSbPolicyComputeInput{
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][0]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][1],
-							digestMatrix[tpm2.AlgorithmSHA256][2]},
-					},
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][1]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][2],
-							digestMatrix[tpm2.AlgorithmSHA256][3]},
-					},
-				},
-				snapModelPCRAlg:     tpm2.AlgorithmSHA256,
-				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
-				pinObjectName:       pinName,
-			},
-			output: tpm2.Digest{0x0f, 0x22, 0x4b, 0xe9, 0x22, 0xb8, 0xc1, 0xa6, 0x54, 0x2d, 0x4b, 0xed,
-				0x17, 0x6c, 0xff, 0x84, 0x25, 0xc1, 0x96, 0x27, 0x99, 0xf4, 0xfe, 0x78, 0x20, 0x1d,
-				0x70, 0x08, 0x05, 0x8a, 0xdd, 0x8c},
-		},
-		{
-			desc: "MultipleSnapModels",
-			alg:  tpm2.AlgorithmSHA256,
-			input: policyComputeInput{
-				compoundSbPolicies: []compoundSbPolicyComputeInput{
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][0]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][1]},
-					},
-				},
-				snapModelPCRAlg: tpm2.AlgorithmSHA256,
-				snapModelPCRDigests: tpm2.DigestList{
-					digestMatrix[tpm2.AlgorithmSHA256][2],
-					digestMatrix[tpm2.AlgorithmSHA256][3]},
-				pinObjectName: pinName,
-			},
-			output: tpm2.Digest{0x25, 0xc6, 0xaa, 0x3f, 0x05, 0xdd, 0xc0, 0x52, 0x60, 0x2d, 0x1f, 0x97,
-				0xf5, 0x80, 0x5e, 0xf9, 0x04, 0xfd, 0x13, 0x32, 0xe2, 0x34, 0x96, 0x06, 0xb4, 0x4c,
-				0x93, 0xd8, 0x98, 0xd6, 0x9c, 0xd8},
+			output: tpm2.Digest{0x6c, 0xa6, 0x19, 0x30, 0x5b, 0x63, 0x1a, 0xaa, 0xc9, 0x14, 0x47, 0x1d,
+				0x49, 0xbe, 0x49, 0x21, 0xa6, 0x8d, 0x85, 0xde, 0xe8, 0xfb, 0x36, 0xcc, 0xaa, 0xe3,
+				0x16, 0x7c, 0x61, 0x10, 0xf7, 0x79},
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {
@@ -182,47 +104,32 @@ func TestComputePolicy(t *testing.T) {
 			if dataout.Algorithm != data.alg {
 				t.Errorf("Unexpected session algorithm %v", dataout.Algorithm)
 			}
-			if len(dataout.SbPolicyORDigests) != len(data.input.compoundSbPolicies) {
-				t.Errorf("Unexpected number of compound secure-boot policy OR digests")
+			if dataout.SecureBootPCRAlg != data.input.secureBootPCRAlg {
+				t.Errorf("Unexpected secure boot PCR algorithm %v", dataout.SecureBootPCRAlg)
 			}
-			if len(dataout.SbPolicyData) != len(data.input.compoundSbPolicies) {
-				t.Fatalf("Unexpected number of compound secure-boot policy data structures")
+			if dataout.GrubPCRAlg != data.input.grubPCRAlg {
+				t.Errorf("Unexpected grub PCR algorithm %v", dataout.GrubPCRAlg)
 			}
+			if dataout.SnapModelPCRAlg != data.input.snapModelPCRAlg {
+				t.Errorf("Unexpected secure snap model PCR algorithm %v", dataout.SnapModelPCRAlg)
+			}
+			if len(dataout.SecureBootORDigests) != len(data.input.secureBootPCRDigests) {
+				t.Errorf("Unexpected number of secure boot OR digests")
+			}
+			if len(dataout.GrubORDigests) != len(data.input.grubPCRDigests) {
+				t.Errorf("Unexpected number of grub OR digests")
+			}
+			if len(dataout.SnapModelORDigests) != len(data.input.snapModelPCRDigests) {
+				t.Errorf("Unexpected number of snap model OR digests")
+			}
+
 			digestSize := getDigestSize(data.alg)
-			for i := 0; i < len(data.input.compoundSbPolicies); i++ {
-				if dataout.SbPolicyData[i].SecureBootPCRAlg !=
-					data.input.compoundSbPolicies[i].secureBootPCRAlg {
-					t.Errorf("Unexpected secure boot PCR algorithm %v for index %d",
-						dataout.SbPolicyData[i].SecureBootPCRAlg, i)
-				}
-				if dataout.SbPolicyData[i].GrubPCRAlg !=
-					data.input.compoundSbPolicies[i].grubPCRAlg {
-					t.Errorf("Unexpected grub PCR algorithm %v for index %d",
-						dataout.SbPolicyData[i].GrubPCRAlg, i)
-				}
-				for _, l := range []tpm2.DigestList{dataout.SbPolicyData[i].SecureBootORDigests,
-					dataout.SbPolicyData[i].GrubORDigests} {
-					for _, digest := range l {
-						if len(digest) != int(digestSize) {
-							t.Errorf("Unexpected digest size")
-						}
-					}
-				}
-				for _, digest := range dataout.SbPolicyORDigests {
+			for _, l := range []tpm2.DigestList{dataout.SecureBootORDigests,
+				dataout.GrubORDigests, dataout.SnapModelORDigests} {
+				for _, digest := range l {
 					if len(digest) != int(digestSize) {
 						t.Errorf("Unexpected digest size")
 					}
-				}
-			}
-			if dataout.SnapModelPCRAlg != data.input.snapModelPCRAlg {
-				t.Errorf("Unexpected snap model PCR algorithm %v", dataout.SnapModelPCRAlg)
-			}
-			if len(dataout.SnapModelORDigests) != len(data.input.snapModelPCRDigests) {
-				t.Errorf("Unexpected number of snap model policy OR digests")
-			}
-			for _, digest := range dataout.SnapModelORDigests {
-				if len(digest) != int(digestSize) {
-					t.Errorf("Unexpected digest size")
 				}
 			}
 
@@ -279,32 +186,25 @@ func TestExecutePolicy(t *testing.T) {
 	}
 
 	for _, data := range []struct {
-		desc      string
-		alg       tpm2.AlgorithmId
-		input     policyComputeInput
-		pcrEvents []pcrEvent
-		pinDefine string
-		pinInput  string
-		errMsg    string
-		match     bool
+		desc        string
+		alg         tpm2.AlgorithmId
+		input       policyComputeInput
+		pcrEvents   []pcrEvent
+		pinDefine   string
+		pinInput    string
+		policyMatch bool
 	}{
 		{
-			desc: "SingleCompoundSecureBootPolicy",
+			desc: "Single",
 			alg:  tpm2.AlgorithmSHA256,
 			input: policyComputeInput{
-				compoundSbPolicies: []compoundSbPolicyComputeInput{
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][0]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][1]},
-					},
-				},
-				snapModelPCRAlg:     tpm2.AlgorithmSHA256,
-				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
-				pinObjectName:       pinName,
+				secureBootPCRAlg:     tpm2.AlgorithmSHA256,
+				grubPCRAlg:           tpm2.AlgorithmSHA256,
+				snapModelPCRAlg:      tpm2.AlgorithmSHA256,
+				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][0]},
+				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][1]},
+				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
+				pinObjectName:        pinName,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -320,25 +220,19 @@ func TestExecutePolicy(t *testing.T) {
 					data:  "xyz",
 				},
 			},
-			match: true,
+			policyMatch: true,
 		},
 		{
 			desc: "SHA1SessionWithSHA256PCRs",
 			alg:  tpm2.AlgorithmSHA1,
 			input: policyComputeInput{
-				compoundSbPolicies: []compoundSbPolicyComputeInput{
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][0]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][1]},
-					},
-				},
-				snapModelPCRAlg:     tpm2.AlgorithmSHA256,
-				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
-				pinObjectName:       pinName,
+				secureBootPCRAlg:     tpm2.AlgorithmSHA256,
+				grubPCRAlg:           tpm2.AlgorithmSHA256,
+				snapModelPCRAlg:      tpm2.AlgorithmSHA256,
+				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][0]},
+				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][1]},
+				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
+				pinObjectName:        pinName,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -354,25 +248,19 @@ func TestExecutePolicy(t *testing.T) {
 					data:  "xyz",
 				},
 			},
-			match: true,
+			policyMatch: true,
 		},
 		{
 			desc: "SHA1Session",
 			alg:  tpm2.AlgorithmSHA1,
 			input: policyComputeInput{
-				compoundSbPolicies: []compoundSbPolicyComputeInput{
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA1,
-						grubPCRAlg:       tpm2.AlgorithmSHA1,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA1][0]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA1][1]},
-					},
-				},
-				snapModelPCRAlg:     tpm2.AlgorithmSHA1,
-				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA1][2]},
-				pinObjectName:       pinName,
+				secureBootPCRAlg:     tpm2.AlgorithmSHA1,
+				grubPCRAlg:           tpm2.AlgorithmSHA1,
+				snapModelPCRAlg:      tpm2.AlgorithmSHA1,
+				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA1][0]},
+				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA1][1]},
+				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA1][2]},
+				pinObjectName:        pinName,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -388,25 +276,19 @@ func TestExecutePolicy(t *testing.T) {
 					data:  "xyz",
 				},
 			},
-			match: true,
+			policyMatch: true,
 		},
 		{
 			desc: "WithPIN",
 			alg:  tpm2.AlgorithmSHA256,
 			input: policyComputeInput{
-				compoundSbPolicies: []compoundSbPolicyComputeInput{
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][0]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][1]},
-					},
-				},
-				snapModelPCRAlg:     tpm2.AlgorithmSHA256,
-				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
-				pinObjectName:       pinName,
+				secureBootPCRAlg:     tpm2.AlgorithmSHA256,
+				grubPCRAlg:           tpm2.AlgorithmSHA256,
+				snapModelPCRAlg:      tpm2.AlgorithmSHA256,
+				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][0]},
+				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][1]},
+				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
+				pinObjectName:        pinName,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -422,27 +304,21 @@ func TestExecutePolicy(t *testing.T) {
 					data:  "xyz",
 				},
 			},
-			pinDefine: "1234",
-			pinInput:  "1234",
-			match:     true,
+			pinDefine:   "1234",
+			pinInput:    "1234",
+			policyMatch: true,
 		},
 		{
 			desc: "WithIncorrectPIN",
 			alg:  tpm2.AlgorithmSHA256,
 			input: policyComputeInput{
-				compoundSbPolicies: []compoundSbPolicyComputeInput{
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][0]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][1]},
-					},
-				},
-				snapModelPCRAlg:     tpm2.AlgorithmSHA256,
-				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
-				pinObjectName:       pinName,
+				secureBootPCRAlg:     tpm2.AlgorithmSHA256,
+				grubPCRAlg:           tpm2.AlgorithmSHA256,
+				snapModelPCRAlg:      tpm2.AlgorithmSHA256,
+				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][0]},
+				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][1]},
+				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
+				pinObjectName:        pinName,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -458,28 +334,21 @@ func TestExecutePolicy(t *testing.T) {
 					data:  "xyz",
 				},
 			},
-			pinDefine: "1234",
-			pinInput:  "12345",
-			errMsg: "cannot execute PolicySecret command: TPM returned an error for session 1 " +
-				"whilst executing command TPM_CC_PolicySecret: TPM_RC_AUTH_FAIL (the " +
-				"authorization HMAC check failed and DA counter incremented)",
-			match: false,
+			pinDefine:   "1234",
+			pinInput:    "12345",
+			policyMatch: true,
 		},
 		{
-			desc: "SingleCompoundSecureBootPolicyNoMatch",
+			desc: "NoMatch",
 			alg:  tpm2.AlgorithmSHA256,
 			input: policyComputeInput{
-				compoundSbPolicies: []compoundSbPolicyComputeInput{
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][0]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][1]},
-					},
-				},
-				snapModelPCRAlg:     tpm2.AlgorithmSHA256,
+				secureBootPCRAlg: tpm2.AlgorithmSHA256,
+				grubPCRAlg:       tpm2.AlgorithmSHA256,
+				snapModelPCRAlg:  tpm2.AlgorithmSHA256,
+				secureBootPCRDigests: tpm2.DigestList{
+					digestMatrix[tpm2.AlgorithmSHA256][0]},
+				grubPCRDigests: tpm2.DigestList{
+					digestMatrix[tpm2.AlgorithmSHA256][1]},
 				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
 				pinObjectName:       pinName,
 			},
@@ -497,223 +366,23 @@ func TestExecutePolicy(t *testing.T) {
 					data:  "xyz",
 				},
 			},
-			match: false,
+			policyMatch: false,
 		},
 		{
-			desc: "SingleCompoundSecureBootPolicyWithMultiplePCRValues1",
+			desc: "MultiplePCRValues1",
 			alg:  tpm2.AlgorithmSHA256,
 			input: policyComputeInput{
-				compoundSbPolicies: []compoundSbPolicyComputeInput{
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][0]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][1],
-							digestMatrix[tpm2.AlgorithmSHA256][3]},
-					},
-				},
-				snapModelPCRAlg:     tpm2.AlgorithmSHA256,
-				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
-				pinObjectName:       pinName,
-			},
-			pcrEvents: []pcrEvent{
-				{
-					index: secureBootPCR,
-					data:  "foo",
-				},
-				{
-					index: grubPCR,
-					data:  "bar",
-				},
-				{
-					index: snapModelPCR,
-					data:  "xyz",
-				},
-			},
-			match: true,
-		},
-		{
-			desc: "SingleCompoundSecureBootPolicyWithMultiplePCRValues2",
-			alg:  tpm2.AlgorithmSHA256,
-			input: policyComputeInput{
-				compoundSbPolicies: []compoundSbPolicyComputeInput{
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][0]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][1],
-							digestMatrix[tpm2.AlgorithmSHA256][3]},
-					},
-				},
-				snapModelPCRAlg:     tpm2.AlgorithmSHA256,
-				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
-				pinObjectName:       pinName,
-			},
-			pcrEvents: []pcrEvent{
-				{
-					index: secureBootPCR,
-					data:  "foo",
-				},
-				{
-					index: grubPCR,
-					data:  "1234",
-				},
-				{
-					index: snapModelPCR,
-					data:  "xyz",
-				},
-			},
-			match: true,
-		},
-		{
-			desc: "MultipleCompoundSecureBootPolicies1",
-			alg:  tpm2.AlgorithmSHA256,
-			input: policyComputeInput{
-				compoundSbPolicies: []compoundSbPolicyComputeInput{
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][0]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][3]},
-					},
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][4]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][1]},
-					},
-				},
-				snapModelPCRAlg:     tpm2.AlgorithmSHA256,
-				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][4]},
-				pinObjectName:       pinName,
-			},
-			pcrEvents: []pcrEvent{
-				{
-					index: secureBootPCR,
-					data:  "foo",
-				},
-				{
-					index: grubPCR,
-					data:  "1234",
-				},
-				{
-					index: snapModelPCR,
-					data:  "5678",
-				},
-			},
-			match: true,
-		},
-		{
-			desc: "MultipleCompoundSecureBootPolicies2",
-			alg:  tpm2.AlgorithmSHA256,
-			input: policyComputeInput{
-				compoundSbPolicies: []compoundSbPolicyComputeInput{
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][0]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][3]},
-					},
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][4]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][1]},
-					},
-				},
-				snapModelPCRAlg:     tpm2.AlgorithmSHA256,
-				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][4]},
-				pinObjectName:       pinName,
-			},
-			pcrEvents: []pcrEvent{
-				{
-					index: secureBootPCR,
-					data:  "5678",
-				},
-				{
-					index: grubPCR,
-					data:  "bar",
-				},
-				{
-					index: snapModelPCR,
-					data:  "5678",
-				},
-			},
-			match: true,
-		},
-		{
-			desc: "MultipleCompoundSecureBootPoliciesNoMatch",
-			alg:  tpm2.AlgorithmSHA256,
-			input: policyComputeInput{
-				compoundSbPolicies: []compoundSbPolicyComputeInput{
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][0]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][3]},
-					},
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][4]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][1]},
-					},
-				},
-				snapModelPCRAlg:     tpm2.AlgorithmSHA256,
-				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][4]},
-				pinObjectName:       pinName,
-			},
-			pcrEvents: []pcrEvent{
-				{
-					index: secureBootPCR,
-					data:  "foo",
-				},
-				{
-					index: grubPCR,
-					data:  "bar",
-				},
-				{
-					index: snapModelPCR,
-					data:  "5678",
-				},
-			},
-			match: false,
-		},
-		{
-			desc: "MultipleSnapModels",
-			alg:  tpm2.AlgorithmSHA256,
-			input: policyComputeInput{
-				compoundSbPolicies: []compoundSbPolicyComputeInput{
-					{
-						secureBootPCRAlg: tpm2.AlgorithmSHA256,
-						grubPCRAlg:       tpm2.AlgorithmSHA256,
-						secureBootPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][0]},
-						grubPCRDigests: tpm2.DigestList{
-							digestMatrix[tpm2.AlgorithmSHA256][1]},
-					},
-				},
-				snapModelPCRAlg: tpm2.AlgorithmSHA256,
-				snapModelPCRDigests: tpm2.DigestList{
-					digestMatrix[tpm2.AlgorithmSHA256][2],
+				secureBootPCRAlg: tpm2.AlgorithmSHA256,
+				grubPCRAlg:       tpm2.AlgorithmSHA256,
+				snapModelPCRAlg:  tpm2.AlgorithmSHA256,
+				secureBootPCRDigests: tpm2.DigestList{
+					digestMatrix[tpm2.AlgorithmSHA256][0],
 					digestMatrix[tpm2.AlgorithmSHA256][4]},
-				pinObjectName: pinName,
+				grubPCRDigests: tpm2.DigestList{
+					digestMatrix[tpm2.AlgorithmSHA256][1],
+					digestMatrix[tpm2.AlgorithmSHA256][3]},
+				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
+				pinObjectName:       pinName,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -726,10 +395,74 @@ func TestExecutePolicy(t *testing.T) {
 				},
 				{
 					index: snapModelPCR,
-					data:  "5678",
+					data:  "xyz",
 				},
 			},
-			match: true,
+			policyMatch: true,
+		},
+		{
+			desc: "MultiplePCRValues2",
+			alg:  tpm2.AlgorithmSHA256,
+			input: policyComputeInput{
+				secureBootPCRAlg: tpm2.AlgorithmSHA256,
+				grubPCRAlg:       tpm2.AlgorithmSHA256,
+				snapModelPCRAlg:  tpm2.AlgorithmSHA256,
+				secureBootPCRDigests: tpm2.DigestList{
+					digestMatrix[tpm2.AlgorithmSHA256][0],
+					digestMatrix[tpm2.AlgorithmSHA256][4]},
+				grubPCRDigests: tpm2.DigestList{
+					digestMatrix[tpm2.AlgorithmSHA256][1],
+					digestMatrix[tpm2.AlgorithmSHA256][3]},
+				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
+				pinObjectName:       pinName,
+			},
+			pcrEvents: []pcrEvent{
+				{
+					index: secureBootPCR,
+					data:  "foo",
+				},
+				{
+					index: grubPCR,
+					data:  "1234",
+				},
+				{
+					index: snapModelPCR,
+					data:  "xyz",
+				},
+			},
+			policyMatch: true,
+		},
+		{
+			desc: "MultiplePCRValuesNoMatch",
+			alg:  tpm2.AlgorithmSHA256,
+			input: policyComputeInput{
+				secureBootPCRAlg: tpm2.AlgorithmSHA256,
+				grubPCRAlg:       tpm2.AlgorithmSHA256,
+				snapModelPCRAlg:  tpm2.AlgorithmSHA256,
+				secureBootPCRDigests: tpm2.DigestList{
+					digestMatrix[tpm2.AlgorithmSHA256][0],
+					digestMatrix[tpm2.AlgorithmSHA256][4]},
+				grubPCRDigests: tpm2.DigestList{
+					digestMatrix[tpm2.AlgorithmSHA256][1],
+					digestMatrix[tpm2.AlgorithmSHA256][3]},
+				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
+				pinObjectName:       pinName,
+			},
+			pcrEvents: []pcrEvent{
+				{
+					index: secureBootPCR,
+					data:  "bar",
+				},
+				{
+					index: grubPCR,
+					data:  "1234",
+				},
+				{
+					index: snapModelPCR,
+					data:  "xyz",
+				},
+			},
+			policyMatch: false,
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {
@@ -779,17 +512,15 @@ func TestExecutePolicy(t *testing.T) {
 			defer flushContext(t, tpm, sessionContext)
 
 			err = executePolicySession(tpm, sessionContext, pinContext, policyData, data.pinInput)
-			if data.errMsg == "" {
-				if err != nil {
-					t.Errorf("Failed to execute policy session: %v", err)
-				}
-			} else {
+			if data.pinInput != data.pinDefine {
 				if err == nil {
 					t.Fatalf("Expected an error")
 				}
-				if err.Error() != data.errMsg {
-					t.Errorf("Unexpected error message: %v", err)
+				if err != policySecretAuthFailError {
+					t.Errorf("Unexpected error: %v", err)
 				}
+			} else if err != nil {
+				t.Errorf("Failed to execute policy session: %v", err)
 			}
 
 			digest, err := tpm.PolicyGetDigest(sessionContext)
@@ -798,7 +529,7 @@ func TestExecutePolicy(t *testing.T) {
 			}
 
 			match := bytes.Equal(digest, policy)
-			if data.match {
+			if data.policyMatch && data.pinInput == data.pinDefine {
 				if !match {
 					t.Errorf("Session digest didn't match policy digest")
 				}
