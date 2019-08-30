@@ -17,6 +17,12 @@ var (
 	mssimPlatformPort = flag.Uint("mssim-platform-port", 2322, "")
 )
 
+func flushContext(t *testing.T, tpm tpm2.TPMContext, context tpm2.ResourceContext) {
+	if err := tpm.FlushContext(context); err != nil {
+		t.Errorf("FlushContext failed: %v", err)
+	}
+}
+
 func openTPMSimulatorForTesting(t *testing.T) (tpm2.TPMContext, *tpm2.TctiMssim) {
 	if !*useMssim {
 		t.SkipNow()
