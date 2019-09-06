@@ -1,12 +1,25 @@
 {
 	"comment": "",
-	"ignore": "",
+	"ignore": "test",
 	"package": [
 		{
 			"checksumSHA1": "G5b4mSiqhTHSZW7W8aNKTrqe1xU=",
 			"path": "github.com/chrisccoulson/go-tpm2",
 			"revision": "b12e8f6b8cd13815acd487e6f02984e418dd8f7b",
 			"revisionTime": "2019-09-11T23:50:26Z"
+		},
+		{
+			"checksumSHA1": "MmX/Dir9rLV3rkn82Dp4hrnt+HQ=",
+			"path": "github.com/chrisccoulson/tcglog-parser",
+			"revision": "0d6bdfa5effaee845318404da5ee7d77167c9280",
+			"revisionTime": "2019-09-12T00:06:51Z"
+		},
+		{
+			"checksumSHA1": "wHGa5uteRxMMSHJLQZtcBpIIUcw=",
+			"origin": "github.com/chrisccoulson/pkcs7",
+			"path": "github.com/fullsailor/pkcs7",
+			"revision": "9d98ea9f9bc8b4feee8f0d7c5ef8179f85f0e237",
+			"revisionTime": "2019-09-06T18:49:57Z"
 		},
 		{
 			"checksumSHA1": "89YJCAgJAXBIjqzqeXiiO4cEuVo=",

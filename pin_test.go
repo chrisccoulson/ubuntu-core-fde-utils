@@ -54,7 +54,7 @@ func TestChangePIN(t *testing.T) {
 
 	dest := tmpDir + "/keydata"
 
-	if err := SealKeyToTPM(tpm, dest, Create, key); err != nil {
+	if err := SealKeyToTPM(tpm, dest, Create, nil, key); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
 

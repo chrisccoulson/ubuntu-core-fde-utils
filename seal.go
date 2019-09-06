@@ -35,6 +35,16 @@ const (
 	Update
 )
 
+type SnapFile interface {
+	GetBytes() ([]byte, error)
+}
+
+type PolicyInputData struct {
+	ShimExecutables []SnapFile
+	GrubExecutables []SnapFile
+	Kernels   []SnapFile
+}
+
 // SealKeyToTPM seals the provided disk encryption key to the storage hierarchy of a TPM. The caller is required
 // to provide a connection to the TPM. The sealed key object and associated metadata (creation data and ticket
 // for sealed key object, PIN object and auxiliary policy data) are all written to the file specified by dest. If
@@ -43,7 +53,7 @@ const (
 // the location specified by dest. In this case, this function will preserve the PIN object (and therefore the PIN
 // object auth value) from the original file, and the original file will be updated atomically.
 // TODO: This function prototype will be extended to take policy inputs
-func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, mode SealMode, key []byte) error {
+func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, mode SealMode, policy *PolicyInputData, key []byte) error {
 	// Check that the key is the correct length
 	if len(key) != 64 {
 		return fmt.Errorf("expected a key length of 512 bits (got %d)", len(key)*8)
@@ -80,16 +90,21 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, mode SealMode, key []byte) 
 		pinFlags = existing.PinFlags
 	}
 
-	// Convert policy inputs in to individual event digests
-	//  TODO
-
-	// Use event digests, the event log and GRUB data to generate PCR digests
-	//  TODO: Use policy inputs rather than the current PCR values
-	//  TODO: Generate digests for other PCRs
-	_, digests, err := tpm.PCRRead(tpm2.PCRSelectionList{
-		tpm2.PCRSelection{Hash: defaultHashAlgorithm, Select: tpm2.PCRSelectionData{7}}})
-	if err != nil {
-		return fmt.Errorf("cannot read PCR values: %v", err)
+	var secureBootDigests tpm2.DigestList
+	if policy != nil {
+		var err error
+		secureBootDigests, err = computeSecureBootPolicyDigests(tpm, policy)
+		if err != nil {
+			return fmt.Errorf("cannot compute secure boot policy digests: %v", err)
+		}
+	} else {
+		var err error
+		_, secureBootDigests, err = tpm.PCRRead(tpm2.PCRSelectionList{
+			tpm2.PCRSelection{Hash: defaultHashAlgorithm,
+				Select: tpm2.PCRSelectionData{secureBootPCR}}})
+		if err != nil {
+			return fmt.Errorf("cannot read secure boot PCR value: %v", err)
+		}
 	}
 
 	// Use the PCR digests and PIN object to generate a single policy digest
@@ -102,7 +117,7 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, mode SealMode, key []byte) 
 		secureBootPCRAlg:     defaultHashAlgorithm,
 		grubPCRAlg:           defaultHashAlgorithm,
 		snapModelPCRAlg:      defaultHashAlgorithm,
-		secureBootPCRDigests: digests,
+		secureBootPCRDigests: secureBootDigests,
 		grubPCRDigests:       tpm2.DigestList{make(tpm2.Digest, 32)},
 		snapModelPCRDigests:  tpm2.DigestList{make(tpm2.Digest, 32)},
 		pinObjectName:        pinObjectName}

@@ -20,6 +20,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -28,14 +29,51 @@ import (
 	"github.com/chrisccoulson/ubuntu-core-fde-utils"
 )
 
+type pathList []string
+
+func (l *pathList) String() string {
+	var builder bytes.Buffer
+	for i, path := range *l {
+		if i > 0 {
+			builder.WriteString(", ")
+		}
+		builder.WriteString(path)
+	}
+	return builder.String()
+}
+
+func (l *pathList) Set(value string) error {
+	*l = append(*l, value)
+	return nil
+}
+
+type file struct {
+	path string
+}
+
+func (c *file) GetBytes() ([]byte, error) {
+	f, err := os.Open(c.path)
+	if err != nil {
+		return nil, err
+	}
+	return ioutil.ReadAll(f)
+}
+
 var update bool
 var masterKeyFile string
 var keyFile string
+var kernels pathList
+var grubs pathList
+var shims pathList
 
 func init() {
 	flag.BoolVar(&update, "update", false, "")
 	flag.StringVar(&masterKeyFile, "master-key-file", "", "")
 	flag.StringVar(&keyFile, "key-file", "", "")
+
+	flag.Var(&kernels, "with-kernel", "")
+	flag.Var(&grubs, "with-grub", "")
+	flag.Var(&shims, "with-shim", "")
 }
 
 func main() {
@@ -81,7 +119,21 @@ func main() {
 	}
 	defer tpm.Close()
 
-	if err := fdeutil.SealKeyToTPM(tpm, keyFile, mode, key); err != nil {
+	var policy *fdeutil.PolicyInputData
+	if len(shims) > 0 || len(grubs) > 0 || len(kernels) > 0 {
+		policy = &fdeutil.PolicyInputData{}
+	}
+	for _, shim := range shims {
+		policy.ShimExecutables = append(policy.ShimExecutables, &file{shim})
+	}
+	for _, grub := range grubs {
+		policy.GrubExecutables = append(policy.GrubExecutables, &file{grub})
+	}
+	for _, kernel := range kernels {
+		policy.Kernels = append(policy.Kernels, &file{kernel})
+	}
+
+	if err := fdeutil.SealKeyToTPM(tpm, keyFile, mode, policy, key); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot seal key to TPM: %v\n", err)
 		os.Exit(1)
 	}
