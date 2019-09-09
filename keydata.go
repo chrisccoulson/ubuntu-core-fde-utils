@@ -27,7 +27,9 @@ import (
 	"io"
 
 	"github.com/chrisccoulson/go-tpm2"
-	"github.com/google/renameio"
+
+	"github.com/snapcore/snapd/osutil"
+	"github.com/snapcore/snapd/osutil/sys"
 )
 
 const (
@@ -150,21 +152,17 @@ func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm tpm2.TPMContext,
 }
 
 func (d *keyData) writeToFile(dest string) error {
-	f, err := renameio.TempFile("", dest)
+	f, err := osutil.NewAtomicFile(dest, 0600, 0, sys.UserID(osutil.NoChown), sys.GroupID(osutil.NoChown))
 	if err != nil {
-		return fmt.Errorf("cannot open temporary file: %v", err)
+		return err
 	}
-	defer f.Cleanup()
-
-	if err := f.Chmod(0600); err != nil {
-		return fmt.Errorf("cannot set permissions on temporary file: %v", err)
-	}
+	defer f.Cancel()
 
 	if err := tpm2.MarshalToWriter(f, currentVersion, d); err != nil {
 		return fmt.Errorf("cannot marshal key data to temporary file: %v", err)
 	}
 
-	if err := f.CloseAtomicallyReplace(); err != nil {
+	if err := f.Commit(); err != nil {
 		return fmt.Errorf("cannot atomically replace file: %v", err)
 	}
 
