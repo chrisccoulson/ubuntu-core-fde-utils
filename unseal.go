@@ -61,21 +61,15 @@ func UnsealKeyFromTPM(tpm tpm2.TPMContext, buf io.Reader, pin string) ([]byte, e
 
 	sessionContext, err :=
 		tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypePolicy, &paramEncryptAlg,
-			tpm2.AlgorithmSHA256, nil)
+			defaultHashAlgorithm, nil)
 	if err != nil {
 		return nil, fmt.Errorf("cannot start policy session: %v", err)
 	}
 	defer tpm.FlushContext(sessionContext)
 
 	if err := executePolicySession(tpm, sessionContext, pinContext, data.AuxData.PolicyData, pin); err != nil {
-		switch e := err.(type) {
-		case policySecretError:
-			switch e := e.err.(type) {
-			case tpm2.TPMSessionError:
-				if e.Code == tpm2.ErrorAuthFail {
-					return nil, ErrPinFail
-				}
-			}
+		if err == policySecretAuthFailError {
+			return nil, ErrPinFail
 		}
 		return nil, fmt.Errorf("cannot complete execution of policy session: %v", err)
 	}

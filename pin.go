@@ -73,7 +73,7 @@ func ChangePIN(tpm tpm2.TPMContext, path string, oldAuth, newAuth string) error 
 	}
 
 	sessionContext, err := tpm.StartAuthSession(srkContext, pinContext, tpm2.SessionTypeHMAC, &paramEncryptAlg,
-		tpm2.AlgorithmSHA256, []byte(oldAuth))
+		defaultHashAlgorithm, []byte(oldAuth))
 	if err != nil {
 		return fmt.Errorf("cannot start auth session: %v", err)
 	}
