@@ -29,7 +29,7 @@ const (
 	tpmPath string = "/dev/tpm0"
 )
 
-func ConnectToDefaultTPM() (tpm2.TPMContext, error) {
+func ConnectToDefaultTPM() (*tpm2.TPMContext, error) {
 	tcti, err := tpm2.OpenTPMDevice(tpmPath)
 	if err != nil {
 		return nil, fmt.Errorf("cannot open TPM device: %v", err)

@@ -1,0 +1,91 @@
+{
+	"comment": "",
+	"ignore": "",
+	"package": [
+		{
+			"checksumSHA1": "G5b4mSiqhTHSZW7W8aNKTrqe1xU=",
+			"path": "github.com/chrisccoulson/go-tpm2",
+			"revision": "b12e8f6b8cd13815acd487e6f02984e418dd8f7b",
+			"revisionTime": "2019-09-11T23:50:26Z"
+		},
+		{
+			"checksumSHA1": "89YJCAgJAXBIjqzqeXiiO4cEuVo=",
+			"path": "github.com/godbus/dbus",
+			"revision": "6eb4cf171088115fc4f087cb8a302859c601a546",
+			"revisionTime": "2019-07-26T03:53:44Z"
+		},
+		{
+			"checksumSHA1": "3anxpq/J8MUCJO7to/W4frpA35Y=",
+			"path": "github.com/snapcore/snapd/dirs",
+			"revision": "c1cd87df460bee8cdcc1f77786c9bd30e27e7ea2",
+			"revisionTime": "2019-09-11T18:46:24Z"
+		},
+		{
+			"checksumSHA1": "hWWybnDfJluajBFiZeLRFUGZxd0=",
+			"path": "github.com/snapcore/snapd/osutil",
+			"revision": "c1cd87df460bee8cdcc1f77786c9bd30e27e7ea2",
+			"revisionTime": "2019-09-11T18:46:24Z"
+		},
+		{
+			"checksumSHA1": "EYRtD9fNCHSSnWkkZSNTAB63IhQ=",
+			"path": "github.com/snapcore/snapd/osutil/sys",
+			"revision": "c1cd87df460bee8cdcc1f77786c9bd30e27e7ea2",
+			"revisionTime": "2019-09-11T18:46:24Z"
+		},
+		{
+			"checksumSHA1": "qOmpG+ohztWk8ggoiR28QYJk3aA=",
+			"path": "github.com/snapcore/snapd/release",
+			"revision": "c1cd87df460bee8cdcc1f77786c9bd30e27e7ea2",
+			"revisionTime": "2019-09-11T18:46:24Z"
+		},
+		{
+			"checksumSHA1": "cUiSTzeGoirYK0Q1UPvMZqz2Mvg=",
+			"path": "github.com/snapcore/snapd/selinux",
+			"revision": "c1cd87df460bee8cdcc1f77786c9bd30e27e7ea2",
+			"revisionTime": "2019-09-11T18:46:24Z"
+		},
+		{
+			"checksumSHA1": "zfSheMKpwsr6LsxpTy9RQvuoehM=",
+			"path": "github.com/snapcore/snapd/strutil",
+			"revision": "c1cd87df460bee8cdcc1f77786c9bd30e27e7ea2",
+			"revisionTime": "2019-09-11T18:46:24Z"
+		},
+		{
+			"checksumSHA1": "fL1WN8qr9Y9Ns/AlhhZJW1gAKro=",
+			"path": "github.com/snapcore/snapd/testutil",
+			"revision": "c1cd87df460bee8cdcc1f77786c9bd30e27e7ea2",
+			"revisionTime": "2019-09-11T18:46:24Z"
+		},
+		{
+			"checksumSHA1": "wRLo86qqt/7IwI8X43IjXLvveU0=",
+			"path": "golang.org/x/net/context",
+			"revision": "a7b16738d86b947dd0fadb08ca2c2342b51958b6",
+			"revisionTime": "2019-09-08T16:12:21Z"
+		},
+		{
+			"checksumSHA1": "Iq1P5ZE0krASxqe/+FcJgiNNspE=",
+			"path": "golang.org/x/sys/unix",
+			"revision": "dd2ff4accc098aceecb86b36eaa7829b2a17b1c9",
+			"revisionTime": "2018-03-01T08:23:35Z"
+		},
+		{
+			"checksumSHA1": "538I8ghUdvZa25NxgMUDpq14Qic=",
+			"path": "gopkg.in/check.v1",
+			"revision": "20d25e2804050c1cd24a7eea1e7a6447dd0e74ec",
+			"revisionTime": "2016-12-08T18:13:25Z"
+		},
+		{
+			"checksumSHA1": "c+Uweyg73+WJ+p0CecOLPgTEbKc=",
+			"path": "gopkg.in/tomb.v2",
+			"revision": "d5d1b5820637886def9eef33e03a27a9f166942c",
+			"revisionTime": "2016-12-08T15:16:19Z"
+		},
+		{
+			"checksumSHA1": "xldGnHk44I4mgAwYKfsu7TqBPqM=",
+			"path": "gopkg.in/yaml.v2",
+			"revision": "51d6538a90f86fe93ac480b35f37b2be17fef232",
+			"revisionTime": "2018-11-15T11:05:04Z"
+		}
+	],
+	"rootPath": "github.com/chrisccoulson/ubuntu-core-fde-utils"
+}

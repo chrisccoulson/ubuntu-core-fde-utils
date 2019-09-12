@@ -32,11 +32,10 @@ var (
 		NameAlg: tpm2.AlgorithmSHA256,
 		Attrs:   tpm2.AttrFixedTPM | tpm2.AttrFixedParent | tpm2.AttrUserWithAuth,
 		Params: tpm2.PublicParamsU{
-			KeyedHashDetail: &tpm2.KeyedHashParams{
-				Scheme: tpm2.KeyedHashScheme{Scheme: tpm2.AlgorithmNull}}}}
+			&tpm2.KeyedHashParams{Scheme: tpm2.KeyedHashScheme{Scheme: tpm2.AlgorithmNull}}}}
 )
 
-func createPINObject(tpm tpm2.TPMContext) (tpm2.Private, *tpm2.Public, error) {
+func createPINObject(tpm *tpm2.TPMContext) (tpm2.Private, *tpm2.Public, error) {
 	srkContext, err := tpm.WrapHandle(srkHandle)
 	if err != nil {
 		return nil, nil, fmt.Errorf("cannot create context for SRK handle: %v", err)
@@ -52,7 +51,7 @@ func createPINObject(tpm tpm2.TPMContext) (tpm2.Private, *tpm2.Public, error) {
 	return priv, pub, nil
 }
 
-func ChangePIN(tpm tpm2.TPMContext, path string, oldAuth, newAuth string) error {
+func ChangePIN(tpm *tpm2.TPMContext, path string, oldAuth, newAuth string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("cannot open key data file: %v", err)

@@ -59,17 +59,17 @@ var (
 		Attrs: tpm2.AttrFixedTPM | tpm2.AttrFixedParent | tpm2.AttrSensitiveDataOrigin |
 			tpm2.AttrUserWithAuth | tpm2.AttrRestricted | tpm2.AttrDecrypt,
 		Params: tpm2.PublicParamsU{
-			RSADetail: &tpm2.RSAParams{
+			&tpm2.RSAParams{
 				Symmetric: tpm2.SymDefObject{
 					Algorithm: tpm2.AlgorithmAES,
-					KeyBits:   tpm2.SymKeyBitsU{Sym: 128},
-					Mode:      tpm2.SymModeU{Sym: tpm2.AlgorithmCFB}},
+					KeyBits:   tpm2.SymKeyBitsU{uint16(128)},
+					Mode:      tpm2.SymModeU{tpm2.AlgorithmCFB}},
 				Scheme:   tpm2.RSAScheme{Scheme: tpm2.AlgorithmNull},
 				KeyBits:  2048,
 				Exponent: 0}}}
 )
 
-func ProvisionTPM(tpm tpm2.TPMContext, lockoutAuth []byte) error {
+func ProvisionTPM(tpm *tpm2.TPMContext, lockoutAuth []byte) error {
 	props, err := tpm.GetCapabilityTPMProperties(tpm2.PropertyPermanent, 1)
 	if err != nil {
 		return fmt.Errorf("cannot request permanent properties: %v", err)
@@ -133,7 +133,7 @@ func RequestTPMClearUsingPPI() error {
 	return nil
 }
 
-func checkForValidSRK(tpm tpm2.TPMContext) (bool, error) {
+func checkForValidSRK(tpm *tpm2.TPMContext) (bool, error) {
 	srkContext, err := tpm.WrapHandle(srkHandle)
 	if err != nil {
 		switch e := err.(type) {
@@ -184,7 +184,7 @@ func checkForValidSRK(tpm tpm2.TPMContext) (bool, error) {
 	return true, nil
 }
 
-func ProvisionStatus(tpm tpm2.TPMContext) (ProvisionStatusAttributes, error) {
+func ProvisionStatus(tpm *tpm2.TPMContext) (ProvisionStatusAttributes, error) {
 	var out ProvisionStatusAttributes
 
 	if valid, err := checkForValidSRK(tpm); err != nil {
