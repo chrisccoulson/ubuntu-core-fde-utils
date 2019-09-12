@@ -116,7 +116,7 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, mode SealMode, key []byte) 
 		Attrs:      tpm2.AttrFixedTPM | tpm2.AttrFixedParent,
 		AuthPolicy: authPolicy,
 		Params: tpm2.PublicParamsU{
-			&tpm2.KeyedHashParams{Scheme: tpm2.KeyedHashScheme{Scheme: tpm2.AlgorithmNull}}}}
+			Data: &tpm2.KeyedHashParams{Scheme: tpm2.KeyedHashScheme{Scheme: tpm2.AlgorithmNull}}}}
 
 	sensitive := tpm2.SensitiveCreate{Data: key}
 

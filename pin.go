@@ -32,7 +32,7 @@ var (
 		NameAlg: tpm2.AlgorithmSHA256,
 		Attrs:   tpm2.AttrFixedTPM | tpm2.AttrFixedParent | tpm2.AttrUserWithAuth,
 		Params: tpm2.PublicParamsU{
-			&tpm2.KeyedHashParams{Scheme: tpm2.KeyedHashScheme{Scheme: tpm2.AlgorithmNull}}}}
+			Data: &tpm2.KeyedHashParams{Scheme: tpm2.KeyedHashScheme{Scheme: tpm2.AlgorithmNull}}}}
 )
 
 func createPINObject(tpm *tpm2.TPMContext) (tpm2.Private, *tpm2.Public, error) {

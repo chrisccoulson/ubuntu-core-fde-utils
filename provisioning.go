@@ -59,11 +59,11 @@ var (
 		Attrs: tpm2.AttrFixedTPM | tpm2.AttrFixedParent | tpm2.AttrSensitiveDataOrigin |
 			tpm2.AttrUserWithAuth | tpm2.AttrRestricted | tpm2.AttrDecrypt,
 		Params: tpm2.PublicParamsU{
-			&tpm2.RSAParams{
+			Data: &tpm2.RSAParams{
 				Symmetric: tpm2.SymDefObject{
 					Algorithm: tpm2.AlgorithmAES,
-					KeyBits:   tpm2.SymKeyBitsU{uint16(128)},
-					Mode:      tpm2.SymModeU{tpm2.AlgorithmCFB}},
+					KeyBits:   tpm2.SymKeyBitsU{Data: uint16(128)},
+					Mode:      tpm2.SymModeU{Data: tpm2.AlgorithmCFB}},
 				Scheme:   tpm2.RSAScheme{Scheme: tpm2.AlgorithmNull},
 				KeyBits:  2048,
 				Exponent: 0}}}
