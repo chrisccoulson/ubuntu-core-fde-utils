@@ -32,7 +32,7 @@ var (
 	ErrPinFail = errors.New("the provided PIN is incorrect")
 )
 
-func UnsealKeyFromTPM(tpm tpm2.TPMContext, buf io.Reader, pin string) ([]byte, error) {
+func UnsealKeyFromTPM(tpm *tpm2.TPMContext, buf io.Reader, pin string) ([]byte, error) {
 	props, err := tpm.GetCapabilityTPMProperties(tpm2.PropertyPermanent, 1)
 	if err != nil {
 		return nil, fmt.Errorf("cannot fetch properties from TPM: %v", err)

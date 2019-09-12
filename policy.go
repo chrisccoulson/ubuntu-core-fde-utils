@@ -263,7 +263,7 @@ func wrapPolicyPCRError(err error, index int) error {
 	return fmt.Errorf("cannot execute PolicyPCR assertion against PCR%d: %v", index, err)
 }
 
-func executePolicySessionPCRAssertions(tpm tpm2.TPMContext, sessionContext tpm2.ResourceContext,
+func executePolicySessionPCRAssertions(tpm *tpm2.TPMContext, sessionContext tpm2.ResourceContext,
 	input *policyData) error {
 	if err := tpm.PolicyPCR(sessionContext, nil, makePCRSelectionList(input.SecureBootPCRAlg,
 		secureBootPCR)); err != nil {
@@ -291,7 +291,7 @@ func executePolicySessionPCRAssertions(tpm tpm2.TPMContext, sessionContext tpm2.
 	return nil
 }
 
-func executePolicySession(tpm tpm2.TPMContext, sessionContext, pinContext tpm2.ResourceContext, input *policyData,
+func executePolicySession(tpm *tpm2.TPMContext, sessionContext, pinContext tpm2.ResourceContext, input *policyData,
 	pin string) error {
 	if err := executePolicySessionPCRAssertions(tpm, sessionContext, input); err != nil {
 		return fmt.Errorf("cannot execute PCR assertions: %v", err)

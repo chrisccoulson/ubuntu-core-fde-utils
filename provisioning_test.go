@@ -59,28 +59,25 @@ func TestProvisionTPM(t *testing.T) {
 		tpm2.AttrUserWithAuth|tpm2.AttrRestricted|tpm2.AttrDecrypt {
 		t.Errorf("SRK has unexpected attributes")
 	}
-	if pub.Params.RSADetail == nil {
-		t.Fatalf("SRK public part has no RSA params")
-	}
-	if pub.Params.RSADetail.Symmetric.Algorithm != tpm2.AlgorithmAES {
+	if pub.Params.RSADetail().Symmetric.Algorithm != tpm2.AlgorithmAES {
 		t.Errorf("SRK has unexpected symmetric algorithm")
 	}
-	if pub.Params.RSADetail.Symmetric.KeyBits.Sym != 128 {
+	if pub.Params.RSADetail().Symmetric.KeyBits.Sym() != 128 {
 		t.Errorf("SRK has unexpected symmetric key length")
 	}
-	if pub.Params.RSADetail.Symmetric.Mode.Sym != tpm2.AlgorithmCFB {
+	if pub.Params.RSADetail().Symmetric.Mode.Sym() != tpm2.AlgorithmCFB {
 		t.Errorf("SRK has unexpected symmetric mode")
 	}
-	if pub.Params.RSADetail.Scheme.Scheme != tpm2.AlgorithmNull {
+	if pub.Params.RSADetail().Scheme.Scheme != tpm2.AlgorithmNull {
 		t.Errorf("SRK has unexpected RSA scheme")
 	}
-	if pub.Params.RSADetail.KeyBits != 2048 {
+	if pub.Params.RSADetail().KeyBits != 2048 {
 		t.Errorf("SRK has unexpected RSA public modulus length")
 	}
-	if pub.Params.RSADetail.Exponent != 0 {
+	if pub.Params.RSADetail().Exponent != 0 {
 		t.Errorf("SRK has an unexpected non-default public exponent")
 	}
-	if len(pub.Unique.RSA) != 2048/8 {
+	if len(pub.Unique.RSA()) != 2048/8 {
 		t.Errorf("SRK has an unexpected RSA public modulus length")
 	}
 
@@ -115,7 +112,7 @@ func TestProvisionTPM(t *testing.T) {
 	}
 
 	// Make sure ProvisionTPM didn't leak transient objects
-	handles, err := tpm.GetCapabilityHandles(tpm2.HandleTypeTransientObject, tpm2.CapabilityMaxHandles)
+	handles, err := tpm.GetCapabilityHandles(tpm2.HandleTypeTransientObject, tpm2.CapabilityMaxProperties)
 	if err != nil {
 		t.Fatalf("GetCapability failed: %v", err)
 	}
@@ -123,7 +120,7 @@ func TestProvisionTPM(t *testing.T) {
 		t.Errorf("ProvisionTPM leaked transient handles")
 	}
 
-	handles, err = tpm.GetCapabilityHandles(tpm2.HandleTypeLoadedSession, tpm2.CapabilityMaxHandles)
+	handles, err = tpm.GetCapabilityHandles(tpm2.HandleTypeLoadedSession, tpm2.CapabilityMaxProperties)
 	if err != nil {
 		t.Fatalf("GetCapability failed: %v", err)
 	}

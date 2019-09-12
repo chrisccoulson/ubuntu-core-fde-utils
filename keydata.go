@@ -52,7 +52,7 @@ type keyData struct {
 	AuxData           auxData
 }
 
-func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm tpm2.TPMContext,
+func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext,
 	flushObjects bool) (tpm2.ResourceContext, tpm2.ResourceContext, error) {
 	var version uint32
 	if err := tpm2.UnmarshalFromReader(buf, &version); err != nil {

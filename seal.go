@@ -43,7 +43,7 @@ const (
 // the location specified by dest. In this case, this function will preserve the PIN object (and therefore the PIN
 // object auth value) from the original file, and the original file will be updated atomically.
 // TODO: This function prototype will be extended to take policy inputs
-func SealKeyToTPM(tpm tpm2.TPMContext, dest string, mode SealMode, key []byte) error {
+func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, mode SealMode, key []byte) error {
 	// Check that the key is the correct length
 	if len(key) != 64 {
 		return fmt.Errorf("expected a key length of 512 bits (got %d)", len(key)*8)
@@ -116,8 +116,7 @@ func SealKeyToTPM(tpm tpm2.TPMContext, dest string, mode SealMode, key []byte) e
 		Attrs:      tpm2.AttrFixedTPM | tpm2.AttrFixedParent,
 		AuthPolicy: authPolicy,
 		Params: tpm2.PublicParamsU{
-			KeyedHashDetail: &tpm2.KeyedHashParams{
-				Scheme: tpm2.KeyedHashScheme{Scheme: tpm2.AlgorithmNull}}}}
+			Data: &tpm2.KeyedHashParams{Scheme: tpm2.KeyedHashScheme{Scheme: tpm2.AlgorithmNull}}}}
 
 	sensitive := tpm2.SensitiveCreate{Data: key}
 

@@ -29,7 +29,7 @@ import (
 func TestComputePolicy(t *testing.T) {
 	hasher := hashAlgToGoHash(tpm2.AlgorithmSHA256)
 	hasher.Write([]byte("PIN"))
-	pinName, _ := tpm2.MarshalToBytes(tpm2.AlgorithmSHA256, tpm2.RawSlice(hasher.Sum(nil)))
+	pinName, _ := tpm2.MarshalToBytes(tpm2.AlgorithmSHA256, tpm2.RawBytes(hasher.Sum(nil)))
 
 	digestMatrix := make(map[tpm2.AlgorithmId]tpm2.DigestList)
 

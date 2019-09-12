@@ -1,5 +1,9 @@
 language: go
 
+install:
+  - sudo snap install core core18
+  - sudo snap install --edge tpm2-simulator-chrisccoulson
+  - ./get-deps
 script:
-  - go test -v -race ./...
+  - ./run-tests --with-mssim
   - go vet ./...
