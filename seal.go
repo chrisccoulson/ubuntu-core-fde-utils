@@ -23,9 +23,11 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 
 	"github.com/chrisccoulson/go-tpm2"
+	"github.com/snapcore/snapd/snap"
 )
 
 type SealMode int
@@ -35,14 +37,33 @@ const (
 	Update
 )
 
-type SnapFile interface {
+type File interface {
 	GetBytes() ([]byte, error)
 }
 
+type SnapFile struct {
+	Container snap.Container
+	FileName string
+}
+
+func (f SnapFile) GetBytes() ([]byte, error) {
+	return f.Container.ReadFile(f.FileName)
+}
+
+type OsFile string
+
+func (p OsFile) GetBytes() ([]byte, error) {
+	f, err := os.Open(string(p))
+	if err != nil {
+		return nil, err
+	}
+	return ioutil.ReadAll(f)
+}
+
 type PolicyInputData struct {
-	ShimExecutables []SnapFile
-	GrubExecutables []SnapFile
-	Kernels   []SnapFile
+	ShimExecutables []File
+	GrubExecutables []File
+	Kernels   []File
 }
 
 // SealKeyToTPM seals the provided disk encryption key to the storage hierarchy of a TPM. The caller is required

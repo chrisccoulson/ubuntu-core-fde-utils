@@ -47,18 +47,6 @@ func (l *pathList) Set(value string) error {
 	return nil
 }
 
-type file struct {
-	path string
-}
-
-func (c *file) GetBytes() ([]byte, error) {
-	f, err := os.Open(c.path)
-	if err != nil {
-		return nil, err
-	}
-	return ioutil.ReadAll(f)
-}
-
 var update bool
 var masterKeyFile string
 var keyFile string
@@ -124,13 +112,13 @@ func main() {
 		policy = &fdeutil.PolicyInputData{}
 	}
 	for _, shim := range shims {
-		policy.ShimExecutables = append(policy.ShimExecutables, &file{shim})
+		policy.ShimExecutables = append(policy.ShimExecutables, fdeutil.OsFile(shim))
 	}
 	for _, grub := range grubs {
-		policy.GrubExecutables = append(policy.GrubExecutables, &file{grub})
+		policy.GrubExecutables = append(policy.GrubExecutables, fdeutil.OsFile(grub))
 	}
 	for _, kernel := range kernels {
-		policy.Kernels = append(policy.Kernels, &file{kernel})
+		policy.Kernels = append(policy.Kernels, fdeutil.OsFile(kernel))
 	}
 
 	if err := fdeutil.SealKeyToTPM(tpm, keyFile, mode, policy, key); err != nil {
