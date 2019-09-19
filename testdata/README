@@ -1,4 +1,12 @@
 - db1.bin is the UEFI database from a Dell Precision Workstation 7510, containing the 2 Microsoft CAs.
 - dbx1.bin is the UEFI forbidden signature database from the same machine, with MS-2016-08-08.bin applied.
-- eventlog1.bin is an event log from a QEMU instance running OVMF with test certificates enrolled in PK, KEK and the UEFI database (alongside Microsoft's UEFI CA certificate). The system was booted with a version of shim signed by the test UEFI key, Grub signed by Canonical's primary key (the issuer of which is shim's embedded vendor cert) and a custom kernel signed by the test UEFI key.
-- eventlog2.bin is an event log from the same QEMU instance but with with secure boot validation disabled in shim via MokSBState.
+- eventlog1.bin is an event log from a QEMU instance running OVMF with the following configuration:
+  - "Ubuntu OVMF Secure Boot (PK/KEK key)" enrolled in to PK.
+  - "Ubuntu OVMF Secure Boot (PK/KEK key)", "Microsoft Corporation KEK CA 2011" and test certificates enrolled in to
+    KEK.
+  - "Microsoft Windows Production PCA 2011", "Microsoft Corporation UEFI CA 2011" and test CA certificates enrolled
+    in to db.
+  - Booted with a version of shim signed by the test UEFI CA key, Grub signed by Canonical's primary key (the issuer
+    of which is shim's embedded vendor cert) and a custom kernel signed by the test UEFI CA key.
+- eventlog2.bin is an event log from the same QEMU instance but with with secure boot validation disabled in shim via
+  MokSBState.
