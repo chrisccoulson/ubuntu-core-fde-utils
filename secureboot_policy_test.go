@@ -2,12 +2,10 @@ package fdeutil
 
 import (
 	"bytes"
-	"io"
 	"io/ioutil"
 	"os"
 	"testing"
 
-	"github.com/chrisccoulson/go-tpm2"
 	"github.com/chrisccoulson/tcglog-parser"
 )
 
@@ -124,8 +122,8 @@ func TestDecodeSecureBootDb(t *testing.T) {
 }
 
 func TestClassifySecureBootEvents(t *testing.T) {
-	tpm, tcti := openTPMSimulatorForTesting(t)
-	defer closeTPM(t, tpm)
+	//tpm, tcti := openTPMSimulatorForTesting(t)
+	//defer closeTPM(t, tpm)
 
 	for _, data := range []struct{
 		desc string
@@ -154,43 +152,41 @@ func TestClassifySecureBootEvents(t *testing.T) {
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {
-			f, err := os.Open(data.logPath)
-			if err != nil {
-				t.Fatalf("Open failed: %v\n", err)
-			}
+			//f, err := os.Open(data.logPath)
+			//if err != nil {
+			//	t.Fatalf("Open failed: %v\n", err)
+			//}
 
 			// In order to test classifySecureBootEvents, we need to validate the log first. In order
 			// to validate the log, we need the TPM to be consistent with the log. This is why this
 			// test depends on the simulator, so we can reset it now and replay the log in to the TPM
-			resetTPMSimulator(t, tpm, tcti)
+			//resetTPMSimulator(t, tpm, tcti)
 
-			log, err := tcglog.NewLogFromFile(f, tcglog.LogOptions{})
+			//log, err := tcglog.NewLogFromFile(f, tcglog.LogOptions{})
+			//if err != nil {
+			//	t.Fatalf("NewLogFromFile failed: %v", err)
+			//}
+
+			//for {
+			//	event, err := log.NextEvent()
+			//	if err != nil {
+			//		if err == io.EOF {
+			//			break
+			//		}
+			//		t.Fatalf("NextEvent failed: %v", err)
+			//	}
+
+			//	digests := tpm2.TaggedHashList{
+			//		tpm2.TaggedHash{HashAlg: tpm2.AlgorithmSHA256,
+			//			Digest: event.Digests[tcglog.AlgorithmSha256]}}
+			//	if err := tpm.PCRExtend(tpm2.Handle(event.Index), digests, nil); err != nil {
+			//		t.Fatalf("PCRExtend failed: %v", err)
+			//	}
+			//}
+
+			validatedLog, err := tcglog.ReplayAndValidateLog(data.logPath, tcglog.LogOptions{})
 			if err != nil {
-				t.Fatalf("NewLogFromFile failed: %v", err)
-			}
-
-			for {
-				event, err := log.NextEvent()
-				if err != nil {
-					if err == io.EOF {
-						break
-					}
-					t.Fatalf("NextEvent failed: %v", err)
-				}
-
-				digests := tpm2.TaggedHashList{
-					tpm2.TaggedHash{HashAlg: tpm2.AlgorithmSHA256,
-						Digest: event.Digests[tcglog.AlgorithmSha256]}}
-				if err := tpm.PCRExtend(tpm2.Handle(event.Index), digests, nil); err != nil {
-					t.Fatalf("PCRExtend failed: %v", err)
-				}
-			}
-
-			validatedLog, err := tcglog.ValidateLogAgainstTPM(tpm, data.logPath,
-				tcglog.LogValidateOptions{PCRs: []tcglog.PCRIndex{secureBootPCR},
-					Algorithms: []tcglog.AlgorithmId{tcglog.AlgorithmSha256}})
-			if err != nil {
-				t.Fatalf("ValidateLogAgainstTPM failed: %v", err)
+				t.Fatalf("ReplayAndValidateLog failed: %v", err)
 			}
 
 			classifiedEvents, err := classifySecureBootEvents(validatedLog.ValidatedEvents)

@@ -73,7 +73,11 @@ func classifySecureBootEvents(events []*tcglog.ValidatedEvent) ([]classifiedEven
 	var out []classifiedEvent
 	// Populate the list of classified events, by iterating forwards over the log and identifying the db and
 	// dbx measurements in the process
-	for i, e := range events {
+	for _, e := range events {
+		if e.Event.PCRIndex != secureBootPCR {
+			continue
+		}
+
 		c := eventClassUnclassified
 		if e.Event.EventType == tcglog.EventTypeEFIVariableDriverConfig {
 			efiVarData, isEfiVar := e.Event.Data.(*tcglog.EFIVariableEventData)
@@ -84,7 +88,7 @@ func classifySecureBootEvents(events []*tcglog.ValidatedEvent) ([]classifiedEven
 			case efiGlobalVariableGuid:
 				if efiVarData.UnicodeName == "SecureBoot" {
 					switch {
-					case i > 0:
+					case len(out) > 0:
 						// The spec says that secure boot policy must be measured again
 						// if the system supports changing it before ExitBootServices
 						// without a reboot. But the policy we create won't make sense, so
@@ -778,19 +782,38 @@ func (g *secureBootPolicyGen) run(secureBootEvents []classifiedEvent) (tpm2.Dige
 }
 
 func computeSecureBootPolicyDigests(tpm *tpm2.TPMContext, data *PolicyInputData) (tpm2.DigestList, error) {
-	log, err := tcglog.ValidateLogAgainstTPM(tpm, eventLogPath,
-		tcglog.LogValidateOptions{PCRs: []tcglog.PCRIndex{secureBootPCR},
-			Algorithms: []tcglog.AlgorithmId{tcglog.AlgorithmId(defaultHashAlgorithm)}})
+	log, err := tcglog.ReplayAndValidateLog(eventLogPath, tcglog.LogOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("cannot parse and validate event log: %v", err)
 	}
-	if len(log.LogConsistencyErrors) > 0 {
-		return nil, errors.New("secure boot policy events from the event log are not consistent with "+
-			"the TPM's PCR values and cannot be used")
+	if _, exists := log.LogPCRValues[tcglog.PCRIndex(secureBootPCR)]; !exists {
+		return nil, errors.New("event log is missing secure boot policy events")
 	}
+	// TODO: Read this from the TPM during early boot and store the value somewhere, to allow other components
+	// to measure to this PCR without breaking our ability to detect if the log is sane
+	_, digests, err := tpm.PCRRead(tpm2.PCRSelectionList{
+		tpm2.PCRSelection{Hash: defaultHashAlgorithm, Select: []int{secureBootPCR}}})
+	if err != nil {
+		return nil, fmt.Errorf("cannot read current secure boot policy PCR value from TPM: %v", err)
+	}
+	if !bytes.Equal(digests[0],
+		log.LogPCRValues[tcglog.PCRIndex(secureBootPCR)][tcglog.AlgorithmId(defaultHashAlgorithm)]) {
+		return nil, errors.New("secure boot policy PCR value is not consistent with the events from the "+
+			"event log")
+	}
+
 	events, err := classifySecureBootEvents(log.ValidatedEvents)
 	if err != nil {
 		return nil, fmt.Errorf("cannot classify secure boot policy events from event log: %v", err)
+	}
+	for _, event := range events {
+		if event.class == eventClassUnclassified {
+			continue
+		}
+		if len(event.event.UnexpectedDigestValues) != 0 {
+			return nil, errors.New("digest for secure boot policy event is not consistent with the "+
+				"associated event data")
+		}
 	}
 
 	gen := &secureBootPolicyGen{input: data}
