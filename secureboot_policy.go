@@ -483,7 +483,7 @@ func (g *secureBootPolicyGen) processPeBinaryVerification(r io.ReaderAt, mode ve
 		return fmt.Errorf("cannot decode signature: %v", err)
 	}
 
-	// Grab the certificate of the signing authority
+	// Grab the certificate for the signing key
 	signer := p7.GetOnlySigner()
 	if signer == nil {
 		return errors.New("cannot obtain signer certificate from signature")
@@ -657,6 +657,9 @@ func (g *secureBootPolicyGen) processExecutable(r io.ReaderAt, secureBootEvents 
 
 func (g *secureBootPolicyGen) processGrubExecutable(r io.ReaderAt, secureBootEvents []classifiedEvent) error {
 	if len(g.shimMeasurementsExtraBytes) > 0 {
+		// We booted with an old version of Shim that measures extra zero bytes due to a padding error.
+		// Generate two sets of digests - one with the current Shim behaviour and one with the correct
+		// behaviour.
 		g.includeShimExtraBytes = false
 		if err := g.processExecutable(r, secureBootEvents); err != nil {
 			return fmt.Errorf("cannot process branch ignoring shim bug: %v", err)
@@ -779,6 +782,12 @@ func (g *secureBootPolicyGen) run(secureBootEvents []classifiedEvent) (tpm2.Dige
 	g.contextStack.push(&secureBootContext{})
 	defer g.contextStack.pop()
 
+	// The MOK db is mirrored by Shim from a variable that's only accessible to boot services, to a variable
+	// that's accessible at runtime. It also adds the vendor certificate to the mirrored variable. The problem
+	// is that we can't distinguish whether a certificate is really a MOK or whether it was the vendor cert
+	// for the Shim executable used during this boot, and we need to identify the source of a certificate as
+	// that forms part of the measurement. For now, just don't support FDE when booting with components that
+	// are signed with a MOK
 	//if f, err := os.Open(mokListPath); err != nil && !os.IsNotExist(err) {
 	//	return nil, fmt.Errorf("cannot open MokListRT from efivarfs: %v", err)
 	//} else if f != nil {
