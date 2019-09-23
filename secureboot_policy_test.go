@@ -357,8 +357,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 				"cannot process subsequent events from event log: cannot process shim " +
 				"executable at index 0: cannot process subsequent events from event log: " +
 				"cannot process GRUB executable at index 0: cannot compute measurement " +
-				"for PE binary verification: cannot compute measurement: no root " +
-				"certificate found",
+				"for PE binary verification: no root certificate found",
 		},
 		{
 			desc:    "KernelInvalidSigner",
@@ -376,8 +375,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 				"executable at index 0: cannot process subsequent events from event log: " +
 				"cannot process GRUB executable at index 0: cannot process subsequent " +
 				"events from event log: cannot process kernel at index 0: cannot " +
-				"compute measurement for PE binary verification: cannot compute " +
-				"measurement: no root certificate found",
+				"compute measurement for PE binary verification: no root certificate found",
 		},
 		{
 			desc:    "VerifyGrubAndKernelFromShimVendorCert",
@@ -503,6 +501,52 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 				tpm2.Digest{0x6f, 0xaf, 0x8b, 0xcd, 0x88, 0xb4, 0xcb, 0x47, 0x34, 0xc5, 0x73, 0x97,
 					0x46, 0x04, 0xbd, 0x43, 0xe7, 0x78, 0xa0, 0x82, 0x55, 0xe2, 0xc1, 0x06,
 					0x36, 0x05, 0x19, 0x88, 0x4d, 0xd4, 0x61, 0x23}},
+		},
+		{
+			desc:    "MissingShimVendorCertSection",
+			logPath: "testdata/eventlog1.bin",
+			dbPath:  "testdata/db2.bin",
+			dbxPath: "testdata/dbx2.bin",
+			policy: PolicyInputData{
+				ShimExecutables: []File{OsFile("testdata/mock.efi.signed.1")},
+				GrubExecutables: []File{OsFile("testdata/mock.efi.signed.1")},
+				Kernels:         []File{OsFile("testdata/mock.efi.signed.1")}},
+			err: "cannot process events from event log: cannot process db measurement event with " +
+				"current db contents: cannot process subsequent events from event log: cannot " +
+				"process dbx measurement event with current dbx contents: cannot process " +
+				"subsequent events from event log: cannot process shim executable at index 0: " +
+				"cannot extract vendor certificate from Shim: missing .vendor_cert section",
+		},
+		{
+			desc:    "NoShimVendorCert",
+			logPath: "testdata/eventlog1.bin",
+			dbPath:  "testdata/db2.bin",
+			dbxPath: "testdata/dbx2.bin",
+			policy: PolicyInputData{
+				ShimExecutables: []File{OsFile("testdata/mockshim.efi.signed.1")},
+				GrubExecutables: []File{OsFile("testdata/mock.efi.signed.1")},
+				Kernels:         []File{OsFile("testdata/mock.efi.signed.1")}},
+			digests: tpm2.DigestList{
+				tpm2.Digest{0x28, 0x41, 0x26, 0x06, 0x01, 0xdb, 0xbb, 0x6b, 0x08, 0x74, 0x03, 0x65,
+					0x92, 0x70, 0x90, 0x72, 0x6d, 0x20, 0x12, 0xa3, 0x3c, 0xef, 0xca, 0x67,
+					0x46, 0x5e, 0xeb, 0x2c, 0xce, 0x01, 0xcf, 0xa9}},
+		},
+		{
+			desc:    "NoShimVendorCert2",
+			logPath: "testdata/eventlog1.bin",
+			dbPath:  "testdata/db2.bin",
+			dbxPath: "testdata/dbx2.bin",
+			policy: PolicyInputData{
+				ShimExecutables: []File{OsFile("testdata/mockshim.efi.signed.1")},
+				GrubExecutables: []File{OsFile("testdata/mock.efi.signed.2")},
+				Kernels:         []File{OsFile("testdata/mock.efi.signed.2")}},
+			err: "cannot process events from event log: cannot process db measurement event with " +
+				"current db contents: cannot process subsequent events from event log: cannot " +
+				"process dbx measurement event with current dbx contents: cannot process " +
+				"subsequent events from event log: cannot process shim executable at index 0: " +
+				"cannot process subsequent events from event log: cannot process GRUB executable " +
+				"at index 0: cannot compute measurement for PE binary verification: no root " +
+				"certificate found",
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {

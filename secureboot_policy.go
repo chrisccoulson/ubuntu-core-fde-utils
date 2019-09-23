@@ -518,7 +518,7 @@ Outer:
 
 	if root == nil {
 		// XXX: Should this be an error, or should we just abort this branch?
-		return errors.New("cannot compute measurement: no root certificate found")
+		return errors.New("no root certificate found")
 	}
 
 	// Serialize authority certificate for measurement
@@ -554,6 +554,52 @@ Outer:
 	return nil
 }
 
+func (g *secureBootPolicyGen) readShimVendorCert(r io.ReaderAt) (*x509.Certificate, error) {
+	pefile, err := pe.NewFile(r)
+	if err != nil {
+		return nil, fmt.Errorf("cannot decode PE binary: %v", err)
+	}
+
+	// Shim's vendor certificate is in the .vendor_cert section.
+	section := pefile.Section(".vendor_cert")
+	if section == nil {
+		return nil, errors.New("missing .vendor_cert section")
+	}
+
+	// Shim's .vendor_cert section starts with a cert_table struct (see shim.c in the shim source)
+	sectionReader := io.NewSectionReader(section, 0, (1<<63)-1)
+	var certSize uint32
+	if err := binary.Read(sectionReader, binary.LittleEndian, &certSize); err != nil {
+		return nil, fmt.Errorf("cannot read vendor cert size: %v", err)
+	}
+
+	// A size of zero is valid
+	if certSize == 0 {
+		return nil, nil
+	}
+
+	if _, err := sectionReader.Seek(4, io.SeekCurrent); err != nil {
+		return nil, fmt.Errorf("cannot seek ahead to read vendor cert offset: %v", err)
+	}
+
+	var certOffset uint32
+	if err := binary.Read(sectionReader, binary.LittleEndian, &certOffset); err != nil {
+		return nil, fmt.Errorf("cannot read vendor cert offset: %v", err)
+	}
+
+	certReader := io.NewSectionReader(section, int64(certOffset), int64(certSize))
+	certData, err := ioutil.ReadAll(certReader)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read vendor cert data: %v", err)
+	}
+
+	vendorCert, err := x509.ParseCertificate(certData)
+	if err != nil {
+		return nil, fmt.Errorf("cannot decode vendor cert: %v", err)
+	}
+	return vendorCert, nil
+}
+
 func (g *secureBootPolicyGen) processShimExecutable(r io.ReaderAt, secureBootEvents []classifiedEvent) error {
 	// Push a copy of the current secure boot PCR digest on to the stack
 	current := g.pcrStack.peek()
@@ -571,42 +617,15 @@ func (g *secureBootPolicyGen) processShimExecutable(r io.ReaderAt, secureBootEve
 	defer g.contextStack.pop()
 
 	// Extract this shim's vendor cert and update the secure boot context
-	pefile, err := pe.NewFile(r)
+	vendorCert, err := g.readShimVendorCert(r)
 	if err != nil {
-		return fmt.Errorf("cannot decode PE binary: %v", err)
+		return fmt.Errorf("cannot extract vendor certificate from Shim: %v", err)
 	}
-
-	// Shim's vendor certificate is in the .vendor_cert section. This section starts with a cert_table struct
-	// (see shim.c in the shim source)
-	section := pefile.Section(".vendor_cert")
-	if section == nil {
-		return errors.New("missing .vendor_cert section")
+	if vendorCert != nil {
+		g.contextStack.peek().shimDb = secureBootDb{variableName: shimGuid,
+			unicodeName: shimName,
+			certs:       []*efiCertificateDataX509{&efiCertificateDataX509{cert: vendorCert}}}
 	}
-	sectionReader := io.NewSectionReader(section, 0, (1<<63)-1)
-	var certSize uint32
-	if err := binary.Read(sectionReader, binary.LittleEndian, &certSize); err != nil {
-		return fmt.Errorf("cannot read vendor cert size: %v", err)
-	}
-	if _, err := sectionReader.Seek(4, io.SeekCurrent); err != nil {
-		return fmt.Errorf("cannot seek ahead to read vendor cert offset: %v", err)
-	}
-	var certOffset uint32
-	if err := binary.Read(sectionReader, binary.LittleEndian, &certOffset); err != nil {
-		return fmt.Errorf("cannot read vendor cert offset: %v", err)
-	}
-
-	certReader := io.NewSectionReader(section, int64(certOffset), int64(certSize))
-	certData, err := ioutil.ReadAll(certReader)
-	if err != nil {
-		return fmt.Errorf("cannot read vendor cert data: %v", err)
-	}
-	vendorCert, err := x509.ParseCertificate(certData)
-	if err != nil {
-		return fmt.Errorf("cannot decode vendor cert: %v", err)
-	}
-	g.contextStack.peek().shimDb = secureBootDb{variableName: shimGuid,
-		unicodeName: shimName,
-		certs:       []*efiCertificateDataX509{&efiCertificateDataX509{cert: vendorCert}}}
 
 	// Continue replaying events
 	if err := g.processEvents(secureBootEvents); err != nil {

@@ -20,6 +20,7 @@
 - mock.efi.signed.1 is a mock EFI executable signed with the key from the test certificate in db2.bin.
 - mock.efi.signed.2 is the same as mock.efi.signed.1 but signed with the key from a certificate issued by the
   second test CA in db3.bin.
+
 - mockshim1.efi.signed.1 is a mock shim EFI executable signed with the key from the test certificate in db2.bin,
   and the same certificate embedded as the vendor cert.
 - mockshim1.efi.signed.2 is the same as mockshim1.efi.signed.1 but signed with the key from a certificate issued
@@ -28,3 +29,5 @@
   and the second test certificate from db3.bin embedded as the vendor cert.
 - mockshim2.efi.signed.2 is the same as mockshim2.efi.signed.1 but signed with the key from a certificate issued
   by the second test CA in db3.bin.
+- mockshim.efi.signed.1 is a mock shim EFI executable signed with the key from the test certificate in db2.bin,
+  with no vendor cert.
