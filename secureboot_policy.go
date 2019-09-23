@@ -554,7 +554,7 @@ Outer:
 	return nil
 }
 
-func (g *secureBootPolicyGen) readShimVendorCert(r io.ReaderAt) (*x509.Certificate, error) {
+func readShimVendorCert(r io.ReaderAt) (*x509.Certificate, error) {
 	pefile, err := pe.NewFile(r)
 	if err != nil {
 		return nil, fmt.Errorf("cannot decode PE binary: %v", err)
@@ -617,7 +617,7 @@ func (g *secureBootPolicyGen) processShimExecutable(r io.ReaderAt, secureBootEve
 	defer g.contextStack.pop()
 
 	// Extract this shim's vendor cert and update the secure boot context
-	vendorCert, err := g.readShimVendorCert(r)
+	vendorCert, err := readShimVendorCert(r)
 	if err != nil {
 		return fmt.Errorf("cannot extract vendor certificate from Shim: %v", err)
 	}
