@@ -192,7 +192,7 @@ func tryHarderToGetOptionalPeHeader(pefile *pe.File, r io.ReaderAt) (interface{}
 		base = int64(0)
 	}
 
-	sr := io.NewSectionReader(r, base + int64(binary.Size(pefile.FileHeader)),
+	sr := io.NewSectionReader(r, base+int64(binary.Size(pefile.FileHeader)),
 		int64(pefile.FileHeader.SizeOfOptionalHeader))
 	return readOptionalHeader(sr, pefile.FileHeader.SizeOfOptionalHeader)
 }

@@ -43,7 +43,7 @@ type File interface {
 
 type SnapFile struct {
 	Container snap.Container
-	FileName string
+	FileName  string
 }
 
 func (f SnapFile) GetBytes() ([]byte, error) {
@@ -63,7 +63,7 @@ func (p OsFile) GetBytes() ([]byte, error) {
 type PolicyInputData struct {
 	ShimExecutables []File
 	GrubExecutables []File
-	Kernels   []File
+	Kernels         []File
 }
 
 // SealKeyToTPM seals the provided disk encryption key to the storage hierarchy of a TPM. The caller is required

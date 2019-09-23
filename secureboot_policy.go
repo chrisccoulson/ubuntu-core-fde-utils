@@ -17,10 +17,6 @@ import (
 	"github.com/fullsailor/pkcs7"
 )
 
-const (
-	eventLogPath = "/sys/kernel/security/tpm0/binary_bios_measurements"
-)
-
 type eventClass int
 
 const (
@@ -37,6 +33,8 @@ const (
 	dbxName     string = "dbx"
 	mokListName string = "MokList"
 	shimName    string = "Shim"
+
+	eventLogPath = "/sys/kernel/security/tpm0/binary_bios_measurements"
 
 	dbPath      string = "/sys/firmware/efi/efivars/db-d719b2cb-3d3a-4596-a3bc-dad00e67656f"
 	dbxPath     string = "/sys/firmware/efi/efivars/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f"
@@ -55,6 +53,12 @@ var (
 
 	efiCertX509Guid = tcglog.EFIGUID{A: 0xa5c059a1, B: 0x94e4, C: 0x4aa7, D: 0x87b5,
 		E: [...]uint8{0xab, 0x15, 0x5c, 0x2b, 0xf0, 0x72}}
+)
+
+var (
+	dbPathForTesting       string
+	dbxPathForTesting      string
+	eventLogPathForTesting string
 )
 
 type verificationMode int
@@ -99,7 +103,7 @@ func classifySecureBootEvents(events []*tcglog.ValidatedEvent) ([]classifiedEven
 					case efiVarData.VariableData[0] == 0x00:
 						// This actually shouldn't happen - there's no event log when
 						// secure boot is disabled on the devices I've tested on
-						return nil, errors.New("this boot was performed with secure "+
+						return nil, errors.New("this boot was performed with secure " +
 							"boot disabled in firmware")
 					}
 				}
@@ -117,7 +121,7 @@ func classifySecureBootEvents(events []*tcglog.ValidatedEvent) ([]classifiedEven
 
 	// Go backwards until the separator event, classifying the kernel, grub and shim verification measurements
 	verifyEvents := []eventClass{eventClassShim, eventClassGrub, eventClassKernel}
-	Loop:
+Loop:
 	for i := len(out) - 1; i >= 0; i-- {
 		if len(verifyEvents) == 0 {
 			break
@@ -137,7 +141,7 @@ func classifySecureBootEvents(events []*tcglog.ValidatedEvent) ([]classifiedEven
 				if efiVarData.VariableData[0] == 0x01 {
 					// It doesn't make a lot of sense to create a policy if secure boot
 					// enforcement is disabled in shim
-					return nil, errors.New("this boot was performed with validation "+
+					return nil, errors.New("this boot was performed with validation " +
 						"disabled in Shim")
 				}
 				continue Loop
@@ -203,13 +207,13 @@ func (e *efiCertificateDataX509) encode(buf io.Writer) error {
 
 type secureBootDb struct {
 	variableName tcglog.EFIGUID
-	unicodeName string
-	certs []*efiCertificateDataX509
+	unicodeName  string
+	certs        []*efiCertificateDataX509
 }
 
 type secureBootContext struct {
-	uefiDb  secureBootDb
-	mokDb secureBootDb
+	uefiDb secureBootDb
+	mokDb  secureBootDb
 	shimDb secureBootDb
 }
 
@@ -339,6 +343,9 @@ type secureBootPolicyGen struct {
 
 	contextStack secureBootContextStack
 	pcrStack     digestStack
+
+	shimMeasurementsExtraBytes []byte
+	includeShimExtraBytes      bool
 
 	digests tpm2.DigestList
 }
@@ -491,7 +498,7 @@ func (g *secureBootPolicyGen) processPeBinaryVerification(r io.ReaderAt, mode ve
 
 	var root *efiCertificateDataX509
 	var rootDb *secureBootDb
-	Outer:
+Outer:
 	for _, db := range dbs {
 		for _, c := range db.certs {
 			if bytes.Equal(c.cert.Raw, signer.Raw) {
@@ -536,6 +543,11 @@ func (g *secureBootPolicyGen) processPeBinaryVerification(r io.ReaderAt, mode ve
 	hash := sha256.New()
 	if err := eventData.Encode(hash); err != nil {
 		return fmt.Errorf("cannot encode EFI_VARIABLE_DATA: %v", err)
+	}
+	if mode == verificationModeShim && g.includeShimExtraBytes {
+		if _, err := hash.Write(g.shimMeasurementsExtraBytes); err != nil {
+			return fmt.Errorf("cannot hash extra bytes: %v", err)
+		}
 	}
 	hashExtend(defaultHashAlgorithm, g.pcrStack.peek(), hash.Sum(nil))
 
@@ -594,7 +606,7 @@ func (g *secureBootPolicyGen) processShimExecutable(r io.ReaderAt, secureBootEve
 	}
 	g.contextStack.peek().shimDb = secureBootDb{variableName: shimGuid,
 		unicodeName: shimName,
-		certs: []*efiCertificateDataX509{&efiCertificateDataX509{cert: vendorCert}}}
+		certs:       []*efiCertificateDataX509{&efiCertificateDataX509{cert: vendorCert}}}
 
 	// Continue replaying events
 	if err := g.processEvents(secureBootEvents); err != nil {
@@ -604,17 +616,7 @@ func (g *secureBootPolicyGen) processShimExecutable(r io.ReaderAt, secureBootEve
 	return nil
 }
 
-func (g *secureBootPolicyGen) processExecutable(r io.ReaderAt, excessBytes []byte,
-	secureBootEvents []classifiedEvent) error {
-	if len(excessBytes) > 0 {
-		// Old versions of shim measured additional zero bytes due to a padding error. Whilst we mirror
-		// that behaviour when generating digests, also generate digests using the correct behaviour that
-		// will work with newer versions of shim. 
-		if err := g.processExecutable(r, nil, secureBootEvents); err != nil {
-			return err
-		}
-	}
-
+func (g *secureBootPolicyGen) processExecutable(r io.ReaderAt, secureBootEvents []classifiedEvent) error {
 	// Push a copy of the current secure boot PCR digest on to the stack
 	current := g.pcrStack.peek()
 	g.pcrStack.push(make(tpm2.Digest, len(current)))
@@ -634,6 +636,17 @@ func (g *secureBootPolicyGen) processExecutable(r io.ReaderAt, excessBytes []byt
 	return nil
 }
 
+func (g *secureBootPolicyGen) processGrubExecutable(r io.ReaderAt, secureBootEvents []classifiedEvent) error {
+	if len(g.shimMeasurementsExtraBytes) > 0 {
+		g.includeShimExtraBytes = false
+		if err := g.processExecutable(r, secureBootEvents); err != nil {
+			return fmt.Errorf("cannot process branch ignoring shim bug: %v", err)
+		}
+		g.includeShimExtraBytes = true
+	}
+	return g.processExecutable(r, secureBootEvents)
+}
+
 func (g *secureBootPolicyGen) processEvents(secureBootEvents []classifiedEvent) error {
 	for i, event := range secureBootEvents {
 		switch event.class {
@@ -642,8 +655,13 @@ func (g *secureBootPolicyGen) processEvents(secureBootEvents []classifiedEvent) 
 				tpm2.Digest(event.event.Event.Digests[tcglog.AlgorithmId(defaultHashAlgorithm)]))
 		case eventClassDb:
 			// Handle current db
+			path := dbPath
+			if dbPathForTesting != "" {
+				path = dbPathForTesting
+			}
+
 			var db []byte
-			if f, err := os.Open(dbPath); err != nil && !os.IsNotExist(err) {
+			if f, err := os.Open(path); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("cannot open db from efivarfs: %v", err)
 			} else if f != nil {
 				defer f.Close()
@@ -662,8 +680,13 @@ func (g *secureBootPolicyGen) processEvents(secureBootEvents []classifiedEvent) 
 			return nil
 		case eventClassDbx:
 			// Handle current dbx
+			path := dbxPath
+			if dbxPathForTesting != "" {
+				path = dbxPathForTesting
+			}
+
 			var dbx []byte
-			if f, err := os.Open(dbxPath); err != nil && !os.IsNotExist(err) {
+			if f, err := os.Open(path); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("cannot open dbx from efivarfs: %v", err)
 			} else if f != nil {
 				defer f.Close()
@@ -705,8 +728,7 @@ func (g *secureBootPolicyGen) processEvents(secureBootEvents []classifiedEvent) 
 					return fmt.Errorf("cannot read GRUB executable at index %d: %v", j, err)
 				}
 				r := bytes.NewReader(b)
-				if err := g.processExecutable(r, event.event.ExcessMeasuredBytes,
-					secureBootEvents[i+1:]); err != nil {
+				if err := g.processGrubExecutable(r, secureBootEvents[i+1:]); err != nil {
 					return fmt.Errorf("cannot process GRUB executable at index %d: %v", j, err)
 				}
 			}
@@ -721,8 +743,7 @@ func (g *secureBootPolicyGen) processEvents(secureBootEvents []classifiedEvent) 
 					return fmt.Errorf("cannot read kernel at index %d: %v", j, err)
 				}
 				r := bytes.NewReader(b)
-				if err := g.processExecutable(r, event.event.ExcessMeasuredBytes,
-					secureBootEvents[i+1:]); err != nil {
+				if err := g.processExecutable(r, secureBootEvents[i+1:]); err != nil {
 					return fmt.Errorf("cannot process kernel at index %d: %v", j, err)
 				}
 			}
@@ -757,9 +778,8 @@ func (g *secureBootPolicyGen) run(secureBootEvents []classifiedEvent) (tpm2.Dige
 	//}
 
 	g.pcrStack.push(make(tpm2.Digest, getDigestSize(defaultHashAlgorithm)))
-	defer g.pcrStack.pop()
-
 	defer func() {
+		g.pcrStack.pop()
 		g.digests = nil
 	}()
 
@@ -768,7 +788,7 @@ func (g *secureBootPolicyGen) run(secureBootEvents []classifiedEvent) (tpm2.Dige
 	}
 
 	var out tpm2.DigestList
-	Loop:
+Loop:
 	for _, digest := range g.digests {
 		for _, o := range out {
 			if bytes.Equal(o, digest) {
@@ -782,7 +802,12 @@ func (g *secureBootPolicyGen) run(secureBootEvents []classifiedEvent) (tpm2.Dige
 }
 
 func computeSecureBootPolicyDigests(tpm *tpm2.TPMContext, data *PolicyInputData) (tpm2.DigestList, error) {
-	log, err := tcglog.ReplayAndValidateLog(eventLogPath, tcglog.LogOptions{})
+	logPath := eventLogPath
+	if eventLogPathForTesting != "" {
+		logPath = eventLogPathForTesting
+	}
+
+	log, err := tcglog.ReplayAndValidateLog(logPath, tcglog.LogOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("cannot parse and validate event log: %v", err)
 	}
@@ -796,26 +821,64 @@ func computeSecureBootPolicyDigests(tpm *tpm2.TPMContext, data *PolicyInputData)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read current secure boot policy PCR value from TPM: %v", err)
 	}
-	if !bytes.Equal(digests[0],
-		log.LogPCRValues[tcglog.PCRIndex(secureBootPCR)][tcglog.AlgorithmId(defaultHashAlgorithm)]) {
-		return nil, errors.New("secure boot policy PCR value is not consistent with the events from the "+
-			"event log")
+	digestFromLog := log.LogPCRValues[tcglog.PCRIndex(secureBootPCR)][tcglog.AlgorithmId(defaultHashAlgorithm)]
+	if !bytes.Equal(digests[0], digestFromLog) {
+		return nil, fmt.Errorf("secure boot policy PCR value is not consistent with the events from the "+
+			"event log (TPM value: %x, value calculated from replaying log: %x)", digests[0],
+			digestFromLog)
 	}
 
 	events, err := classifySecureBootEvents(log.ValidatedEvents)
 	if err != nil {
 		return nil, fmt.Errorf("cannot classify secure boot policy events from event log: %v", err)
 	}
+	var shimMeasurementsExtraBytes []byte
 	for _, event := range events {
 		if event.class == eventClassUnclassified {
 			continue
 		}
 		if len(event.event.UnexpectedDigestValues) != 0 {
-			return nil, errors.New("digest for secure boot policy event is not consistent with the "+
-				"associated event data")
+			return nil, fmt.Errorf("digest for secure boot policy %s event at index %d is not "+
+				"consistent with the associated event data", event.event.Event.EventType,
+				event.event.Event.Index)
+		}
+		// Old versions of shim measured additional zero bytes due to a padding error. If the log says
+		// that we booted with a version of shim that does this, then we copy the same behaviour when
+		// generating digests. We also generate additional digests following the correct behaviour so that
+		// we end up with a policy that works if subsequent boots are performed with a version of shim
+		// that behaves correctly. Once we've booted with a vesion of shim that behaves correctly, we only
+		// generate digests for the correct behaviour.
+		if len(event.event.ExcessMeasuredBytes) > 0 {
+			switch event.class {
+			case eventClassGrub:
+			case eventClassKernel:
+			default:
+				// Bail out if the event is one from firmware
+				return nil, fmt.Errorf("digest for secure boot policy %s event at index %d "+
+					"measured by firmware contains unexpected extra measured bytes",
+					event.event.Event.EventType, event.event.Event.Index)
+			}
+			// The bytes should all be zero
+			for _, b := range event.event.ExcessMeasuredBytes {
+				if b != 0x00 {
+					return nil, fmt.Errorf("digest for secure boot policy "+
+						"EV_EFI_VARIABLE_AUTHORITY event at index %d contains extra "+
+						"measured bytes that aren't zero", event.event.Event.Index)
+				}
+			}
+		}
+		switch event.class {
+		case eventClassGrub:
+			shimMeasurementsExtraBytes = event.event.ExcessMeasuredBytes
+		case eventClassKernel:
+			// This shouldn't ever happen
+			if !bytes.Equal(shimMeasurementsExtraBytes, event.event.ExcessMeasuredBytes) {
+				return nil, errors.New("secure boot policy EV_EFI_VARIABLE_AUTHORITY " +
+					"events measured by Shim are inconsistent")
+			}
 		}
 	}
 
-	gen := &secureBootPolicyGen{input: data}
+	gen := &secureBootPolicyGen{input: data, shimMeasurementsExtraBytes: shimMeasurementsExtraBytes}
 	return gen.run(events)
 }
