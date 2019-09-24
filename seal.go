@@ -38,7 +38,7 @@ const (
 )
 
 type File interface {
-	GetBytes() ([]byte, error)
+	ReadAll() ([]byte, error)
 }
 
 type SnapFile struct {
@@ -46,13 +46,13 @@ type SnapFile struct {
 	FileName  string
 }
 
-func (f SnapFile) GetBytes() ([]byte, error) {
+func (f SnapFile) ReadAll() ([]byte, error) {
 	return f.Container.ReadFile(f.FileName)
 }
 
 type OsFile string
 
-func (p OsFile) GetBytes() ([]byte, error) {
+func (p OsFile) ReadAll() ([]byte, error) {
 	f, err := os.Open(string(p))
 	if err != nil {
 		return nil, err

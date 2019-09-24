@@ -730,7 +730,7 @@ func (g *secureBootPolicyGen) processEvents(secureBootEvents []classifiedEvent) 
 				return errors.New("no shim executables provided")
 			}
 			for j, shim := range g.input.ShimExecutables {
-				b, err := shim.GetBytes()
+				b, err := shim.ReadAll()
 				if err != nil {
 					return fmt.Errorf("cannot read shim executable at index %d: %v", j, err)
 				}
@@ -745,7 +745,7 @@ func (g *secureBootPolicyGen) processEvents(secureBootEvents []classifiedEvent) 
 				return errors.New("no GRUB executables provided")
 			}
 			for j, grub := range g.input.GrubExecutables {
-				b, err := grub.GetBytes()
+				b, err := grub.ReadAll()
 				if err != nil {
 					return fmt.Errorf("cannot read GRUB executable at index %d: %v", j, err)
 				}
@@ -760,7 +760,7 @@ func (g *secureBootPolicyGen) processEvents(secureBootEvents []classifiedEvent) 
 				return errors.New("no kernel images provided")
 			}
 			for j, kernel := range g.input.Kernels {
-				b, err := kernel.GetBytes()
+				b, err := kernel.ReadAll()
 				if err != nil {
 					return fmt.Errorf("cannot read kernel at index %d: %v", j, err)
 				}
