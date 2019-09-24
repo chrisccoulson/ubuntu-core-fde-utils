@@ -23,6 +23,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("Cannot open file: %v", err)
 	}
+	defer f.Close()
 
 	pefile, err := pe.NewFile(f)
 	if err != nil {
