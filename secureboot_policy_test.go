@@ -377,11 +377,10 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 				"current db contents: cannot process subsequent events from event log: cannot " +
 				"process dbx measurement event with current dbx contents: cannot process " +
 				"subsequent events from event log: cannot compute OS load events: cannot " +
-				"compute events for initial component: cannot compute events for component at " +
-				"index 0: cannot process Shim executable: cannot compute events for subsequent " +
-				"components: cannot compute events for component at index 0: cannot process " +
-				"executable: cannot compute measurement for PE binary verification: no root " +
-				"certificate found",
+				"compute events for component at index 0: cannot process Shim executable: " +
+				"cannot compute events for subsequent components: cannot compute events for " +
+				"component at index 0: cannot process executable: cannot compute measurement " +
+				"for PE binary verification: no root certificate found",
 		},
 		{
 			desc:    "NoKernelSignature",
@@ -405,12 +404,12 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 				"current db contents: cannot process subsequent events from event log: cannot " +
 				"process dbx measurement event with current dbx contents: cannot process " +
 				"subsequent events from event log: cannot compute OS load events: cannot " +
-				"compute events for initial component: cannot compute events for component at " +
-				"index 0: cannot process Shim executable: cannot compute events for subsequent " +
-				"components: cannot compute events for component at index 0: cannot process " +
-				"executable: cannot compute events for subsequent components: cannot compute " +
-				"events for component at index 0: cannot process executable: cannot compute " +
-				"measurement for PE binary verification: cannot read signature length: EOF",
+				"compute events for component at index 0: cannot process Shim executable: " +
+				"cannot compute events for subsequent components: cannot compute events for " +
+				"component at index 0: cannot process executable: cannot compute events for " +
+				"subsequent components: cannot compute events for component at index 0: cannot " +
+				"process executable: cannot compute measurement for PE binary verification: " +
+				"cannot read signature length: EOF",
 		},
 		{
 			desc:    "ShimVerificationDisabled",
@@ -579,14 +578,15 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 									&OSComponent{
 										LoadType: DirectLoadWithShimVerify,
 										Image:    FileOSComponent("testdata/mock.efi.signed.1")}}}}}}},
-			err: "cannot process events from event log: cannot process db measurement event with current " +
-				"db contents: cannot process subsequent events from event log: cannot process dbx " +
-				"measurement event with current dbx contents: cannot process subsequent events from " +
-				"event log: cannot compute OS load events: cannot compute events for initial component: " +
-				"cannot compute events for component at index 0: cannot process executable: cannot " +
-				"compute events for subsequent components: cannot compute events for component at " +
-				"index 0: cannot process executable: cannot compute measurement for PE binary " +
-				"verification: shim verification specified without being preceeded by a shim executable",
+			err: "cannot process events from event log: cannot process db measurement event with " +
+				"current db contents: cannot process subsequent events from event log: cannot " +
+				"process dbx measurement event with current dbx contents: cannot process " +
+				"subsequent events from event log: cannot compute OS load events: cannot " +
+				"compute events for component at index 0: cannot process executable: cannot " +
+				"compute events for subsequent components: cannot compute events for component " +
+				"at index 0: cannot process executable: cannot compute measurement for PE " +
+				"binary verification: shim verification specified without being preceeded by a " +
+				"shim executable",
 		},
 		{
 			desc:    "NoShimVendorCert",

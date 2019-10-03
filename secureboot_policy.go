@@ -127,30 +127,29 @@ func classifySecureBootEvents(events []*tcglog.ValidatedEvent) ([]classifiedEven
 				}
 			}
 		case secureBootPCR:
+			c := eventClassUnclassified
+
+			switch e.Event.EventType {
+			case tcglog.EventTypeEFIVariableDriverConfig:
+				efiVarData := e.Event.Data.(*tcglog.EFIVariableEventData)
+				if efiVarData.VariableName == efiImageSecurityDatabaseGuid {
+					switch efiVarData.UnicodeName {
+					case dbName:
+						c = eventClassDb
+					case dbxName:
+						c = eventClassDbx
+					}
+				}
+			case tcglog.EventTypeEFIVariableAuthority:
+				if seenInitialAppVerificationEvent {
+					c = eventClassAppVerification
+				}
+			}
+
+			out = append(out, classifiedEvent{class: c, event: e})
 		default:
 			continue
 		}
-
-		c := eventClassUnclassified
-
-		switch e.Event.EventType {
-		case tcglog.EventTypeEFIVariableDriverConfig:
-			efiVarData := e.Event.Data.(*tcglog.EFIVariableEventData)
-			if efiVarData.VariableName == efiImageSecurityDatabaseGuid {
-				switch efiVarData.UnicodeName {
-				case dbName:
-					c = eventClassDb
-				case dbxName:
-					c = eventClassDbx
-				}
-			}
-		case tcglog.EventTypeEFIVariableAuthority:
-			if seenInitialAppVerificationEvent {
-				c = eventClassAppVerification
-			}
-		}
-
-		out = append(out, classifiedEvent{class: c, event: e})
 	}
 
 	if !seenInitialAppVerificationEvent {
