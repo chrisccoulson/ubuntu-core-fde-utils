@@ -23,6 +23,7 @@ const (
 	eventClassDb
 	eventClassDbx
 	eventClassDriverVerification
+	eventClassDriverAndInitialAppVerification
 	eventClassInitialAppVerification
 	eventClassAppVerification
 )
@@ -44,6 +45,7 @@ const (
 
 	winCertTypePKCSSignedData uint16 = 2
 
+	uefiDriverPCR      = 2
 	bootManagerCodePCR = 4
 
 	returningFromEfiApplicationEvent string = "Returning from EFI Application from Boot Option"
@@ -80,7 +82,22 @@ func classifySecureBootEvents(events []*tcglog.ValidatedEvent) ([]classifiedEven
 	seenInitialAppVerificationEvent := false
 
 	for _, e := range events {
-		if e.Event.PCRIndex == bootManagerCodePCR {
+		switch e.Event.PCRIndex {
+		case uefiDriverPCR:
+			if e.Event.EventType == tcglog.EventTypeEFIBootServicesDriver ||
+				e.Event.EventType == tcglog.EventTypeEFIRuntimeServicesDriver {
+				if len(out) == 0 {
+					continue
+				}
+				prev := out[len(out)-1]
+				if prev.event.Event.EventType != tcglog.EventTypeEFIVariableAuthority {
+					continue
+				}
+				if prev.class == eventClassUnclassified {
+					out[len(out)-1].class = eventClassDriverVerification
+				}
+			}
+		case bootManagerCodePCR:
 			// Identify the event that corresponds to the verification of the initial EFI boot
 			// executable by looking for the EV_EFI_BOOT_SERVICES_APPLICATION event recorded to PCR4.
 			// This is recorded for every boot attempt after the verification event is recorded to
@@ -91,18 +108,26 @@ func classifySecureBootEvents(events []*tcglog.ValidatedEvent) ([]classifiedEven
 					return nil, fmt.Errorf("%s boot manager code event occurred without any "+
 						"secure boot policy events being recorded", e.Event.EventType)
 				}
-				prev := out[len(out)-1].event
-				if prev.Event.EventType != tcglog.EventTypeEFIVariableAuthority {
+				prev := out[len(out)-1]
+				if prev.event.Event.EventType != tcglog.EventTypeEFIVariableAuthority {
 					return nil, fmt.Errorf("%s boot manager code event wasn't preceeded by "+
 						"a %s secure boot policy event", e.Event.EventType,
 						tcglog.EventTypeEFIVariableAuthority)
 				}
 				seenInitialAppVerificationEvent = true
-				out[len(out)-1].class = eventClassInitialAppVerification
+				switch prev.class {
+				case eventClassUnclassified:
+					// The preceding verification event is exclusive to the initial EFI boot
+					// executable
+					out[len(out)-1].class = eventClassInitialAppVerification
+				case eventClassDriverVerification:
+					// The preceding verification event isn't exclusive to the initial EFI
+					// boot executable
+					out[len(out)-1].class = eventClassDriverAndInitialAppVerification
+				}
 			}
-		}
-
-		if e.Event.PCRIndex != secureBootPCR {
+		case secureBootPCR:
+		default:
 			continue
 		}
 
@@ -122,8 +147,6 @@ func classifySecureBootEvents(events []*tcglog.ValidatedEvent) ([]classifiedEven
 		case tcglog.EventTypeEFIVariableAuthority:
 			if seenInitialAppVerificationEvent {
 				c = eventClassAppVerification
-			} else {
-				c = eventClassDriverVerification
 			}
 		}
 
@@ -747,35 +770,6 @@ func (g *secureBootPolicyGen) continueComputingOSLoadEvents(next []*OSComponent)
 	return nil
 }
 
-func (g *secureBootPolicyGen) beginComputingOSLoadEvents(initialVerificationEvent *tcglog.Event,
-	events []classifiedEvent) error {
-	// Section 2.3.4.8 of "TCG PC Client Platform Firmware Profile Specification" says this about the
-	// certificate used to validate a EFI driver or boot application: "If it has been measured previously,
-	// it MUST NOT be measured again". The verification event logged before the initial EFI application starts
-	// corresponds to the validation of that application but we can't assume the event corresponds exclusively
-	// to that (it may have also been used to validate a EFI driver), so execute 2 paths here: one preceded
-	// with this event and one with it omitted.
-	if err := func() error {
-		g.enterMeasurementScope()
-		defer g.exitMeasurementScope()
-
-		g.extendVerificationMeasurement(
-			tpm2.Digest(initialVerificationEvent.Digests[tcglog.AlgorithmId(g.alg)]), FirmwareLoad)
-		if err := g.continueComputingOSLoadEvents(g.params.LoadPaths); err != nil {
-			return fmt.Errorf("cannot compute events for initial component: %v", err)
-		}
-		return nil
-	}(); err != nil {
-		return err
-	}
-
-	if err := g.continueComputingOSLoadEvents(g.params.LoadPaths); err != nil {
-		return fmt.Errorf("cannot compute events for initial component: %v", err)
-	}
-
-	return nil
-}
-
 func (g *secureBootPolicyGen) processEvents(events []classifiedEvent) error {
 Loop:
 	for i, event := range events {
@@ -843,8 +837,15 @@ Loop:
 		case eventClassDriverVerification:
 			g.extendVerificationMeasurement(
 				tpm2.Digest(event.event.Event.Digests[tcglog.AlgorithmId(g.alg)]), FirmwareLoad)
+		case eventClassDriverAndInitialAppVerification:
+			// The event corresponds to the verification of the initial EFI executable, but it's not
+			// exclusive to that. Extend it now before proceding to ccompute the OS load events (and
+			// if the initial OS verification event is the same then it will be filtered out anyway)
+			g.extendVerificationMeasurement(
+				tpm2.Digest(event.event.Event.Digests[tcglog.AlgorithmId(g.alg)]), FirmwareLoad)
+			fallthrough
 		case eventClassInitialAppVerification:
-			if err := g.beginComputingOSLoadEvents(event.event.Event, events[i+1:]); err != nil {
+			if err := g.continueComputingOSLoadEvents(g.params.LoadPaths); err != nil {
 				return fmt.Errorf("cannot compute OS load events: %v", err)
 			}
 			break Loop
@@ -1028,7 +1029,7 @@ func computeSecureBootPolicyDigests(tpm *tpm2.TPMContext, alg tpm2.AlgorithmId, 
 	// have the expected digests. If the digests are unexpected, then that means the events were measured
 	// in a way that we don't understand, and therefore we're unable to create a working policy.
 	for _, event := range events {
-		if event.class == eventClassUnclassified {
+		if event.class == eventClassUnclassified || event.class == eventClassDriverVerification {
 			continue
 		}
 
