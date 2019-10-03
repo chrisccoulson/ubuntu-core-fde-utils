@@ -107,21 +107,27 @@ func main() {
 	}
 	defer tpm.Close()
 
-	var policy *fdeutil.PolicyInputData
+	var params *fdeutil.SealParams
 	if len(shims) > 0 || len(grubs) > 0 || len(kernels) > 0 {
-		policy = &fdeutil.PolicyInputData{}
-	}
-	for _, shim := range shims {
-		policy.ShimExecutables = append(policy.ShimExecutables, fdeutil.OsFile(shim))
-	}
-	for _, grub := range grubs {
-		policy.GrubExecutables = append(policy.GrubExecutables, fdeutil.OsFile(grub))
-	}
-	for _, kernel := range kernels {
-		policy.Kernels = append(policy.Kernels, fdeutil.OsFile(kernel))
+		params = &fdeutil.SealParams{}
 	}
 
-	if err := fdeutil.SealKeyToTPM(tpm, keyFile, mode, policy, key); err != nil {
+	for _, shim := range shims {
+		s := &fdeutil.OSComponent{LoadType: fdeutil.FirmwareLoad, Image: fdeutil.FileOSComponent(shim)}
+		for _, grub := range grubs {
+			g := &fdeutil.OSComponent{LoadType: fdeutil.DirectLoadWithShimVerify,
+				Image: fdeutil.FileOSComponent(grub)}
+			for _, kernel := range kernels {
+				k := &fdeutil.OSComponent{LoadType: fdeutil.DirectLoadWithShimVerify,
+					Image: fdeutil.FileOSComponent(kernel)}
+				g.Next = append(g.Next, k)
+			}
+			s.Next = append(s.Next, g)
+		}
+		params.LoadPaths = append(params.LoadPaths, s)
+	}
+
+	if err := fdeutil.SealKeyToTPM(tpm, keyFile, mode, params, key); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot seal key to TPM: %v\n", err)
 		os.Exit(1)
 	}

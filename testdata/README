@@ -14,8 +14,6 @@
     issuer of which is shim's embedded vendor cert) and a custom kernel signed by the test UEFI CA key.
 - eventlog2.bin is an event log from the same QEMU instance but with with secure boot validation disabled in shim
   via MokSBState.
-- eventlog3.bin is an event log from the same QEMU instance as eventlog1.bin, but booted with a version of shim
-  that has a bug causing it to measure 5 byte of padding at the end of EV_EFI_VARIABLE_AUTHORITY events.
 
 - mock.efi.signed.1 is a mock EFI executable signed with the key from the test certificate in db2.bin.
 - mock.efi.signed.2 is the same as mock.efi.signed.1 but signed with the key from a certificate issued by the
