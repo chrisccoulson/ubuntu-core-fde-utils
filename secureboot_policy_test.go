@@ -326,6 +326,29 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 					0x60, 0xfb, 0xc5, 0x20, 0x8a, 0x8b, 0xfc, 0x06, 0x81}},
 		},
 		{
+			desc:    "VerifyDirectCASignature",
+			logPath: "testdata/eventlog1.bin",
+			dbPath:  "testdata/db2.bin",
+			dbxPath: "testdata/dbx2.bin",
+			params: &SealParams{
+				LoadPaths: []*OSComponent{
+					&OSComponent{
+						LoadType: FirmwareLoad,
+						Image:    FileOSComponent("testdata/mockshim1.efi.signed.1"),
+						Next: []*OSComponent{
+							&OSComponent{
+								LoadType: DirectLoadWithShimVerify,
+								Image:    FileOSComponent("testdata/mock.efi.signed.ca1"),
+								Next: []*OSComponent{
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1")}}}}}}},
+			digests: tpm2.DigestList{
+				tpm2.Digest{0xe8, 0x01, 0x30, 0xf2, 0xd8, 0x21, 0x2d, 0x69, 0x69, 0xf0, 0xcd,
+					0x20, 0xef, 0xfc, 0x3b, 0xbd, 0xed, 0x14, 0x58, 0x48, 0x61, 0xf8, 0xf5,
+					0x60, 0xfb, 0xc5, 0x20, 0x8a, 0x8b, 0xfc, 0x06, 0x81}},
+		},
+		{
 			desc:    "VerifyFromDbUC20",
 			logPath: "testdata/eventlog1.bin",
 			dbPath:  "testdata/db2.bin",
