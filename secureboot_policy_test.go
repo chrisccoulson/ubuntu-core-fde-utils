@@ -734,6 +734,7 @@ func TestComputeDbUpdate(t *testing.T) {
 		orig string
 		update string
 		sha1hash [20]byte
+		newSignatures int
 	}{
 		{
 			desc: "AppendOneCertToDb",
@@ -741,6 +742,7 @@ func TestComputeDbUpdate(t *testing.T) {
 			update: "testdata/db-update1.bin",
 			sha1hash: [...]byte{0x49, 0x78, 0x5b, 0x43, 0x6f, 0xbc, 0xbb, 0xc4, 0x34, 0x9d, 0xfa, 0xe2,
 				0xc0, 0x89, 0x54, 0x77, 0xba, 0xba, 0x15, 0xe8},
+			newSignatures: 1,
 		},
 		{
 			desc: "AppendExistingCertToDb",
@@ -755,6 +757,7 @@ func TestComputeDbUpdate(t *testing.T) {
 			update: "testdata/MS-2016-08-08.bin",
 			sha1hash: [...]byte{0x96, 0xf7, 0xdc, 0x10, 0x4e, 0xe3, 0x4a, 0x0c, 0xe8, 0x42, 0x5a, 0xac,
 				0x20, 0xf2, 0x9e, 0x2b, 0x2a, 0xba, 0x9d, 0x7e},
+			newSignatures: 77,
 		},
 		{
 			desc: "AppendDbxUpdateWithDuplicateSignatures",
@@ -762,6 +765,7 @@ func TestComputeDbUpdate(t *testing.T) {
 			update: "testdata/dbx-update1.bin",
 			sha1hash: [...]byte{0xb4, 0x95, 0x64, 0xb2, 0xda, 0xee, 0x39, 0xb0, 0x1b, 0x52, 0x4b, 0xef,
 				0x75, 0xcf, 0x9c, 0xde, 0x2c, 0x3a, 0x2a, 0x0d},
+			newSignatures: 2,
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {
@@ -781,6 +785,26 @@ func TestComputeDbUpdate(t *testing.T) {
 
 			if _, err := decodeSecureBootDb(bytes.NewReader(b)); err != nil {
 				t.Errorf("decodeSecureBootDb failed: %v", err)
+			}
+
+			origb, err := ioutil.ReadAll(orig)
+			if err != nil {
+				t.Fatalf("ReadAll failed: %v", err)
+			}
+			orig.Seek(0, io.SeekStart)
+
+			if !bytes.Equal(origb[4:], b[:len(origb)-4]) {
+				t.Errorf("computeDbUpdate didn't perform an append")
+			}
+
+			signatures, err := decodeSecureBootDb(bytes.NewReader(b[len(origb)-4:]))
+			if err != nil {
+				t.Errorf("decodeSecureBootDb failed: %v", err)
+			}
+
+			if len(signatures) != data.newSignatures {
+				t.Errorf("Incorrect number of new signatures (got %d, expected %d)",
+					len(signatures), data.newSignatures)
 			}
 
 			h := sha1.New()
