@@ -179,17 +179,18 @@ func decodeEFIGUID(r io.Reader) (*tcglog.EFIGUID, error) {
 	return &out, nil
 }
 
-type efiCertificateDataX509 struct {
-	owner tcglog.EFIGUID
-	cert  *x509.Certificate
+type efiSignatureData struct {
+	signatureType tcglog.EFIGUID
+	owner         tcglog.EFIGUID
+	data          []byte
 }
 
-func (e *efiCertificateDataX509) encode(buf io.Writer) error {
+func (e *efiSignatureData) encode(buf io.Writer) error {
 	if err := e.owner.Encode(buf); err != nil {
-		return fmt.Errorf("cannot encode EFI_GUID: %v", err)
+		return fmt.Errorf("cannot encode signature owner: %v", err)
 	}
-	if _, err := buf.Write(e.cert.Raw); err != nil {
-		return fmt.Errorf("cannot write certificate: %v", err)
+	if _, err := buf.Write(e.data); err != nil {
+		return fmt.Errorf("cannot write signature data: %v", err)
 	}
 	return nil
 }
@@ -263,15 +264,10 @@ func iterateSecureBootDb(r io.ReaderAt, fn func(*tcglog.EFIGUID, *io.SectionRead
 	return nil
 }
 
-func decodeSecureBootDb(r io.ReaderAt) ([]*efiCertificateDataX509, error) {
-	var out []*efiCertificateDataX509
+func decodeSecureBootDb(r io.ReaderAt) ([]*efiSignatureData, error) {
+	var out []*efiSignatureData
 
 	err := iterateSecureBootDb(r, func(t *tcglog.EFIGUID, h, s *io.SectionReader, unused bool) (bool, error) {
-		// Ignore everything that isn't EFI_CERT_X509_GUID
-		if *t != efiCertX509Guid {
-			return true, nil
-		}
-
 		// Decode EFI_SIGNATURE_DATA.SignatureOwner
 		signatureOwner, err := decodeEFIGUID(s)
 		if err != nil {
@@ -284,12 +280,7 @@ func decodeSecureBootDb(r io.ReaderAt) ([]*efiCertificateDataX509, error) {
 			return false, fmt.Errorf("cannot obtain contents: %v", err)
 		}
 
-		cert, err := x509.ParseCertificate(data)
-		if err != nil {
-			return false, fmt.Errorf("cannot decode X509 certificate: %v", err)
-		}
-
-		out = append(out, &efiCertificateDataX509{owner: *signatureOwner, cert: cert})
+		out = append(out, &efiSignatureData{signatureType: *t, owner: *signatureOwner, data: data})
 		return true, nil
 	})
 
@@ -303,7 +294,7 @@ func decodeSecureBootDb(r io.ReaderAt) ([]*efiCertificateDataX509, error) {
 type secureBootDb struct {
 	variableName tcglog.EFIGUID
 	unicodeName  string
-	certs        []*efiCertificateDataX509
+	signatures   []*efiSignatureData
 }
 
 type secureBootDbSet struct {
@@ -439,12 +430,12 @@ func (g *secureBootPolicyGen) processSecureBootDb(db []byte, events []classified
 	defer g.exitDbScope()
 
 	// Decode this db and update the secure boot DB set
-	certs, err := decodeSecureBootDb(bytes.NewReader(db))
+	signatures, err := decodeSecureBootDb(bytes.NewReader(db))
 	if err != nil {
 		return fmt.Errorf("cannot decode secure boot db: %v", err)
 	}
 	g.dbSet().uefiDb = secureBootDb{variableName: efiImageSecurityDatabaseGuid, unicodeName: dbName,
-		certs: certs}
+		signatures: signatures}
 
 	// Continue replaying events
 	if err := g.processEvents(events); err != nil {
@@ -560,20 +551,31 @@ func (g *secureBootPolicyGen) processPeBinaryVerification(r io.ReaderAt, mode OS
 		dbs = append(dbs, &g.dbSet().mokDb, &g.dbSet().shimDb)
 	}
 
-	var root *efiCertificateDataX509
+	var root *efiSignatureData
 	var rootDb *secureBootDb
 Outer:
 	for _, db := range dbs {
-		for _, c := range db.certs {
-			if bytes.Equal(c.cert.Raw, signer.Raw) {
+		for _, s := range db.signatures {
+			// Ignore signatures that aren't X509 certificates
+			if s.signatureType != efiCertX509Guid {
+				continue
+			}
+
+			if bytes.Equal(s.data, signer.Raw) {
 				// The signing certificate is actually the root in the DB
-				root = c
+				root = s
 				rootDb = db
 				break Outer
 			}
-			if err := signer.CheckSignatureFrom(c.cert); err == nil {
+
+			c, err := x509.ParseCertificate(s.data)
+			if err != nil {
+				continue
+			}
+
+			if err := signer.CheckSignatureFrom(c); err == nil {
 				// The signing certificate was issued by this root
-				root = c
+				root = s
 				rootDb = db
 				break Outer
 			}
@@ -596,7 +598,7 @@ Outer:
 		}
 	case DirectLoadWithShimVerify:
 		// Shim measures the certificate data, rather than the entire EFI_SIGNATURE_DATA
-		varData = bytes.NewBuffer(root.cert.Raw)
+		varData = bytes.NewBuffer(root.data)
 	}
 
 	// Create event data, compute digest and perform extension for verification of this executable
@@ -613,7 +615,7 @@ Outer:
 	return nil
 }
 
-func readShimVendorCert(r io.ReaderAt) (*x509.Certificate, error) {
+func readShimVendorCert(r io.ReaderAt) ([]byte, error) {
 	pefile, err := pe.NewFile(r)
 	if err != nil {
 		return nil, fmt.Errorf("cannot decode PE binary: %v", err)
@@ -652,11 +654,7 @@ func readShimVendorCert(r io.ReaderAt) (*x509.Certificate, error) {
 		return nil, fmt.Errorf("cannot read vendor cert data: %v", err)
 	}
 
-	vendorCert, err := x509.ParseCertificate(certData)
-	if err != nil {
-		return nil, fmt.Errorf("cannot decode vendor cert: %v", err)
-	}
-	return vendorCert, nil
+	return certData, nil
 }
 
 func (g *secureBootPolicyGen) processShimExecutable(r io.ReaderAt, mode OSComponentLoadType,
@@ -682,7 +680,8 @@ func (g *secureBootPolicyGen) processShimExecutable(r io.ReaderAt, mode OSCompon
 	if vendorCert != nil {
 		g.dbSet().shimDb = secureBootDb{variableName: shimGuid,
 			unicodeName: shimName,
-			certs:       []*efiCertificateDataX509{&efiCertificateDataX509{cert: vendorCert}}}
+			signatures: []*efiSignatureData{
+				&efiSignatureData{signatureType: efiCertX509Guid, data: vendorCert}}}
 	}
 
 	for i, component := range next {

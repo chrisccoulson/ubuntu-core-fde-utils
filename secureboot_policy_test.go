@@ -2,6 +2,7 @@ package fdeutil
 
 import (
 	"bytes"
+	"crypto/x509"
 	"io"
 	"io/ioutil"
 	"os"
@@ -60,9 +61,10 @@ func TestDecodeSecureBootDb(t *testing.T) {
 		owner   tcglog.EFIGUID
 	}
 	for _, data := range []struct {
-		desc  string
-		path  string
-		certs []certId
+		desc       string
+		path       string
+		certs      []certId
+		signatures int
 	}{
 		{
 			desc: "db1",
@@ -81,6 +83,7 @@ func TestDecodeSecureBootDb(t *testing.T) {
 					owner:   microsoftOwnerGuid,
 				},
 			},
+			signatures: 2,
 		},
 		{
 			desc: "db2",
@@ -105,6 +108,7 @@ func TestDecodeSecureBootDb(t *testing.T) {
 					owner:   testOwnerGuid,
 				},
 			},
+			signatures: 3,
 		},
 		{
 			desc: "db3",
@@ -136,6 +140,7 @@ func TestDecodeSecureBootDb(t *testing.T) {
 					owner: testOwnerGuid,
 				},
 			},
+			signatures: 4,
 		},
 		{
 			desc: "dbx1",
@@ -150,10 +155,12 @@ func TestDecodeSecureBootDb(t *testing.T) {
 						E: [...]uint8{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},
 				},
 			},
+			signatures: 78,
 		},
 		{
-			desc: "dbx2",
-			path: "testdata/dbx2.bin",
+			desc:       "dbx2",
+			path:       "testdata/dbx2.bin",
+			signatures: 1,
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {
@@ -167,29 +174,40 @@ func TestDecodeSecureBootDb(t *testing.T) {
 				t.Fatalf("ReadAll failed: %v", err)
 			}
 
-			certs, err := decodeSecureBootDb(bytes.NewReader(d[4:]))
+			signatures, err := decodeSecureBootDb(bytes.NewReader(d[4:]))
 			if err != nil {
 				t.Fatalf("decodeSecureBootDb failed: %v", err)
 			}
-			if len(certs) != len(data.certs) {
-				t.Fatalf("Unexpected number of certificates (got %d, expected %d)", len(certs),
-					len(data.certs))
+			if len(signatures) != data.signatures {
+				t.Fatalf("Unexpected number of signatures (got %d, expected %d)", len(signatures),
+					data.signatures)
 			}
-			for i, c := range certs {
-				if c.owner != data.certs[i].owner {
-					t.Errorf("Unexpected owner (got %s, expected %s)", &c.owner,
+			i := 0
+			for _, s := range signatures {
+				if s.signatureType != efiCertX509Guid {
+					continue
+				}
+
+				c, err := x509.ParseCertificate(s.data)
+				if err != nil {
+					t.Errorf("ParseCertificate failed: %v", err)
+				}
+
+				if s.owner != data.certs[i].owner {
+					t.Errorf("Unexpected owner (got %s, expected %s)", &s.owner,
 						&data.certs[i].owner)
 				}
-				if !bytes.Equal(c.cert.RawIssuer, data.certs[i].issuer) {
-					t.Errorf("Unexpected issuer: %s", c.cert.Issuer)
+				if !bytes.Equal(c.RawIssuer, data.certs[i].issuer) {
+					t.Errorf("Unexpected issuer: %s", c.Issuer)
 				}
-				if c.cert.Subject.String() != data.certs[i].subject {
-					t.Errorf("Unexpected subject: %s", c.cert.Subject.String())
+				if c.Subject.String() != data.certs[i].subject {
+					t.Errorf("Unexpected subject: %s", c.Subject.String())
 				}
-				if !bytes.Equal(c.cert.SerialNumber.Bytes(), data.certs[i].serial) {
+				if !bytes.Equal(c.SerialNumber.Bytes(), data.certs[i].serial) {
 					t.Errorf("Unexpected serial number (got %x, expected %x)",
-						c.cert.SerialNumber.Bytes(), data.certs[i].serial)
+						c.SerialNumber.Bytes(), data.certs[i].serial)
 				}
+				i++
 			}
 		})
 	}
