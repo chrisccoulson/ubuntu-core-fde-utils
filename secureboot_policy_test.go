@@ -2,7 +2,9 @@ package fdeutil
 
 import (
 	"bytes"
+	"crypto/sha1"
 	"crypto/x509"
+	"encoding/binary"
 	"io"
 	"io/ioutil"
 	"os"
@@ -721,6 +723,79 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 							data.digests[i])
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestComputeDbUpdate(t *testing.T) {
+	for _, data := range []struct{
+		desc string
+		orig string
+		update string
+		sha1hash [20]byte
+	}{
+		{
+			desc: "AppendOneCertToDb",
+			orig: "testdata/db2.bin",
+			update: "testdata/db-update1.bin",
+			sha1hash: [...]byte{0x49, 0x78, 0x5b, 0x43, 0x6f, 0xbc, 0xbb, 0xc4, 0x34, 0x9d, 0xfa, 0xe2,
+				0xc0, 0x89, 0x54, 0x77, 0xba, 0xba, 0x15, 0xe8},
+		},
+		{
+			desc: "AppendExistingCertToDb",
+			orig: "testdata/db3.bin",
+			update: "testdata/db-update1.bin",
+			sha1hash: [...]byte{0x49, 0x78, 0x5b, 0x43, 0x6f, 0xbc, 0xbb, 0xc4, 0x34, 0x9d, 0xfa, 0xe2,
+				0xc0, 0x89, 0x54, 0x77, 0xba, 0xba, 0x15, 0xe8},
+		},
+		{
+			desc: "AppendMsDbxUpdate",
+			orig: "testdata/dbx2.bin",
+			update: "testdata/MS-2016-08-08.bin",
+			sha1hash: [...]byte{0x96, 0xf7, 0xdc, 0x10, 0x4e, 0xe3, 0x4a, 0x0c, 0xe8, 0x42, 0x5a, 0xac,
+				0x20, 0xf2, 0x9e, 0x2b, 0x2a, 0xba, 0x9d, 0x7e},
+		},
+		{
+			desc: "AppendDbxUpdateWithDuplicateSignatures",
+			orig: "testdata/dbx3.bin",
+			update: "testdata/dbx-update1.bin",
+			sha1hash: [...]byte{0xb4, 0x95, 0x64, 0xb2, 0xda, 0xee, 0x39, 0xb0, 0x1b, 0x52, 0x4b, 0xef,
+				0x75, 0xcf, 0x9c, 0xde, 0x2c, 0x3a, 0x2a, 0x0d},
+		},
+	} {
+		t.Run(data.desc, func(t *testing.T) {
+			orig, err := os.Open(data.orig)
+			if err != nil {
+				t.Fatalf("Open failed: %v", err)
+			}
+			update, err := os.Open(data.update)
+			if err != nil {
+				t.Fatalf("Open failed: %v", err)
+			}
+
+			b, err := computeDbUpdate(io.NewSectionReader(orig, 4, (1<<63)-1), update)
+			if err != nil {
+				t.Fatalf("computeDbUpdate failed: %v", err)
+			}
+
+			if _, err := decodeSecureBootDb(bytes.NewReader(b)); err != nil {
+				t.Errorf("decodeSecureBootDb failed: %v", err)
+			}
+
+			h := sha1.New()
+			var attrs uint32
+			if err := binary.Read(orig, binary.LittleEndian, &attrs); err != nil {
+				t.Fatalf("binary.Read failed: %v", err)
+			}
+			if err := binary.Write(h, binary.LittleEndian, attrs); err != nil {
+				t.Fatalf("binary.Write failed: %v", err)
+			}
+			h.Write(b)
+
+			if !bytes.Equal(data.sha1hash[:], h.Sum(nil)) {
+				t.Errorf("Unexpected updated contents (sha1 got %x, expected %x)", h.Sum(nil),
+					data.sha1hash[:])
 			}
 		})
 	}

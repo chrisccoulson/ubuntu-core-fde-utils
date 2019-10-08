@@ -1,8 +1,13 @@
 - db1.bin is the UEFI database from a Dell Precision Workstation 7510, containing the 2 Microsoft CAs.
 - dbx1.bin is the UEFI forbidden signature database from the same machine, with MS-2016-08-08.bin applied.
 - db2.bin is the UEFI database from a QEMU instance running OVMF with "Microsoft Windows Production PCA 2011", "Microsoft Corporation UEFI CA 2011" and a test CA certificate enrolled.
+- dbx2.bin is the UEFI forbidden signature database from the same QEMU instance.
 - db3.bin is the same as db2.bin with a second test CA certificate enrolled.
-- dbx2.in is the UEFI forbidden signature database from the same QEMU instance.
+- dbx3.bin is the same as dbx2.bin but with MS-2016-08-08.bin applied.
+
+- db-update1.bin is a UEFI db update containing the second test CA certificate from db3.bin.
+- dbx-update1.bin is a UEFI dbx update based on the contents of dbx3.bin, but with 2 sha256 signatures changed
+  (one digest and one owner GUID).
 
 - eventlog1.bin is an event log from a QEMU instance running OVMF with the following configuration:
   - "Ubuntu OVMF Secure Boot (PK/KEK key)" enrolled in to PK.

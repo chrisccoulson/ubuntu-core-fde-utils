@@ -61,6 +61,8 @@ var (
 
 	efiCertX509Guid = tcglog.EFIGUID{A: 0xa5c059a1, B: 0x94e4, C: 0x4aa7, D: 0x87b5,
 		E: [...]uint8{0xab, 0x15, 0x5c, 0x2b, 0xf0, 0x72}}
+	efiCertPkcs7Guid = tcglog.EFIGUID{A: 0x4aafd29d, B: 0x68df, C: 0x49ee, D: 0x8aa9,
+		E: [...]uint8{0x34, 0x7d, 0x37, 0x56, 0x65, 0xa7}}
 )
 
 var (
@@ -289,6 +291,139 @@ func decodeSecureBootDb(r io.ReaderAt) ([]*efiSignatureData, error) {
 	}
 
 	return out, nil
+}
+
+func computeDbUpdate(db, dbUpdate io.ReaderAt) ([]byte, error) {
+	var filteredDbUpdate bytes.Buffer
+	var signatures bytes.Buffer
+
+	dbuReader := io.NewSectionReader(dbUpdate, 0, (1<<63)-1)
+
+	// Skip over EFI_VARIABLE_AUTHENTICATION_2.TimeStamp, which is 16-bytes long (EFI_TIME)
+	dbuReader.Seek(16, io.SeekCurrent)
+
+	// Obtain EFI_VARIABLE_AUTHENTICATION_2.AuthInfo.Hdr.dwLength
+	var dwLength uint32
+	if err := binary.Read(dbuReader, binary.LittleEndian, &dwLength); err != nil {
+		return nil, fmt.Errorf("cannot read signature length: %v", err)
+	}
+
+	// Skip to EFI_VARIABLE_AUTHENTICATION_2.AuthInfo.CertType
+	dbuReader.Seek(4, io.SeekCurrent)
+
+	certType, err := decodeEFIGUID(dbuReader)
+	if err != nil {
+		return nil, fmt.Errorf("cannot decode cert type: %v", err)
+	}
+	if *certType != efiCertPkcs7Guid {
+		return nil, fmt.Errorf("unexpected cert type %s", certType)
+	}
+
+	// dwLength is the length of the entire WIN_CERTIFICATE structure and its contents, but doesn't include
+	// the length of EFI_VARIABLE_AUTHENTICATION_2.Timestamp
+	offset := int64(dwLength + 16)
+
+	// Iterate over the EFI_SIGNATURE_DATA entries in the database update
+	if err := iterateSecureBootDb(io.NewSectionReader(dbuReader, offset, (1<<63)-1),
+		func(newType *tcglog.EFIGUID, headerReader, newSignatureReader *io.SectionReader,
+		finalSignature bool) (bool, error) {
+		newSignature, err := ioutil.ReadAll(newSignatureReader)
+		if err != nil {
+			return false, fmt.Errorf("cannot obtain contents for new signature: %v", err)
+		}
+
+		isNewSignature := true
+
+		// For each EFI_SIGNATURE_DATA entry in the database update, iterate over the existing database
+		// to find a match in order to filter out duplicates
+		if err := iterateSecureBootDb(db, func(t *tcglog.EFIGUID, unused1 *io.SectionReader,
+			signatureReader *io.SectionReader, unused2 bool) (bool, error) {
+			if *newType != *t {
+				// EFI_SIGNATURE_LIST.SignatureType don't match
+				return true, nil
+			}
+			signature, err := ioutil.ReadAll(signatureReader)
+			if err != nil {
+				return false, fmt.Errorf("cannot obtain contents for current signature: %v", err)
+			}
+			if !bytes.Equal(newSignature, signature) {
+				// EFI_SIGNATURE_DATA doesn't match
+				return true, nil
+			}
+			// We've found a match. Mark the entry as not new and tell the inner loop to abort
+			isNewSignature = false
+			return false, nil
+		}); err != nil {
+			return false, fmt.Errorf("cannot iterate current database: %v", err)
+		}
+
+		// If this is a new EFI_SIGNATURE_DATA entry, append it to signatures
+		if isNewSignature {
+			if _, err := signatures.Write(newSignature); err != nil {
+				return false, fmt.Errorf(
+					"cannot write new signature to temporary buffer: %v", err)
+			}
+		}
+
+		// If this isn't the final signature in a list, or it is but the list contains no new signatures,
+		// return early
+		if !finalSignature || signatures.Len() == 0 {
+			return true, nil
+		}
+
+		// This is the final signature in a list and this list has new signatures. Encode the filtered
+		// EFI_SIGNATURE_LIST update to filteredDbUpdate
+
+		// Encode EFI_SIGNATURE_LIST.SignatureType
+		if err := newType.Encode(&filteredDbUpdate); err != nil {
+			return false, fmt.Errorf("cannot encode new EFI_SIGNATURE_LIST SignatureType: %v", err)
+		}
+
+		// Calculate and encode EFI_SIGNATURE_LIST.SignatureListSize
+		signatureListSize := uint32(binary.Size(tcglog.EFIGUID{})) + 12 + uint32(headerReader.Size()) +
+			uint32(signatures.Len())
+		if err := binary.Write(&filteredDbUpdate, binary.LittleEndian,
+			uint32(signatureListSize)); err != nil {
+			return false, fmt.Errorf("cannot write new EFI_SIGNATURE_LIST SignatureListSize: %v", err)
+		}
+
+		// Encode EFI_SIGNATURE_LIST.SignatureHeaderSize
+		if err := binary.Write(&filteredDbUpdate, binary.LittleEndian,
+			uint32(headerReader.Size())); err != nil {
+			return false, fmt.Errorf(
+				"cannot write new EFI_SIGNATURE_LIST SignatureHeaderSize: %v", err)
+		}
+
+		// Encode EFI_SIGNATURE_LIST.SignatureSize
+		if err := binary.Write(&filteredDbUpdate, binary.LittleEndian,
+			uint32(newSignatureReader.Size())); err != nil {
+			return false, fmt.Errorf("cannot write new EFI_SIGNATURE_LIST SignatureSize: %v", err)
+		}
+
+		// Write EFI_SIGNATURE_LIST.SignatureHeader
+		if _, err := filteredDbUpdate.ReadFrom(headerReader); err != nil {
+			return false, fmt.Errorf("cannot write new EFI_SIGNATURE_LIST SignatureHeader: %v", err)
+		}
+
+		// Write the saved EFI_SIGNATURE_DATA entries for this list
+		if _, err := filteredDbUpdate.ReadFrom(&signatures); err != nil {
+			return false, fmt.Errorf("cannot write new EFI_SIGNATURE_DATA entries: %v", err)
+		}
+		return true, nil
+	}); err != nil {
+		return nil, fmt.Errorf("cannot iterate update: %v", err)
+	}
+
+	dbReader := io.NewSectionReader(db, 0, (1<<63)-1)
+
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(dbReader); err != nil {
+		return nil, fmt.Errorf("cannot write existing db contents to buffer: %v", err)
+	}
+	if _, err := buf.ReadFrom(&filteredDbUpdate); err != nil {
+		return nil, fmt.Errorf("cannot write filtered update contents to buffer: %v", err)
+	}
+	return buf.Bytes(), nil
 }
 
 type secureBootDb struct {
