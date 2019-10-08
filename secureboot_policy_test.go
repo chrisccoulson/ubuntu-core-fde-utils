@@ -700,9 +700,6 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			}()
 
 			digests, err := computeSecureBootPolicyDigests(tpm, tpm2.AlgorithmSHA256, data.params)
-			for _, digest := range digests {
-				t.Logf("%x\n", digest)
-			}
 			if data.err != "" {
 				if err == nil {
 					t.Fatalf("Expected computeSecureBootPolicyDigests to fail")
