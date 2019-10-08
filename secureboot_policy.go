@@ -407,9 +407,17 @@ func (g *secureBootPolicyGen) extendVerificationMeasurementIfUnique(digest tpm2.
 
 func (g *secureBootPolicyGen) enterShimScope() {
 	g.shimVerificationEvents = append(g.shimVerificationEvents, make([]tpm2.Digest, 0))
+	newDbSet := &secureBootDbSet{}
+	if len(g.dbStack) > 0 {
+		top := g.dbStack[len(g.dbStack)-1]
+		newDbSet.uefiDb = top.uefiDb
+		newDbSet.mokDb = top.mokDb
+	}
+	g.dbStack = append(g.dbStack, newDbSet)
 }
 
 func (g *secureBootPolicyGen) exitShimScope() {
+	g.dbStack = g.dbStack[0 : len(g.dbStack)-1]
 	g.shimVerificationEvents = g.shimVerificationEvents[0 : len(g.shimVerificationEvents)-1]
 }
 
@@ -664,13 +672,9 @@ func (g *secureBootPolicyGen) processShimExecutable(r io.ReaderAt, mode OSCompon
 		return fmt.Errorf("cannot compute measurement for PE binary verification: %v", err)
 	}
 
-	// Ensure we start with an empty list of shim measurements
+	// Ensure we start with an empty list of shim measurements and an empty vendor cert
 	g.enterShimScope()
 	defer g.exitShimScope()
-
-	// Enter a new secure boot DB set scope
-	g.enterDbScope()
-	defer g.exitDbScope()
 
 	// Extract this shim's vendor cert and update the secure boot DB set
 	vendorCert, err := readShimVendorCert(r)
