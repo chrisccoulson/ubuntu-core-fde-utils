@@ -1,6 +1,7 @@
 package fdeutil
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/x509"
 	"debug/pe"
@@ -10,11 +11,14 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/chrisccoulson/go-tpm2"
 	"github.com/chrisccoulson/tcglog-parser"
 	"github.com/fullsailor/pkcs7"
+	"github.com/snapcore/snapd/osutil"
 )
 
 type eventClass int
@@ -39,10 +43,10 @@ const (
 	shimName       string = "Shim"
 
 	eventLogPath = "/sys/kernel/security/tpm0/binary_bios_measurements"
-	efivarsPath = "/sys/firmware/efi/efivars"
+	efivarsPath  = "/sys/firmware/efi/efivars"
 
-	dbFilename string = "db-d719b2cb-3d3a-4596-a3bc-dad00e67656f"
-	dbxFilename string = "dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f"
+	dbFilename      string = "db-d719b2cb-3d3a-4596-a3bc-dad00e67656f"
+	dbxFilename     string = "dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f"
 	mokListFilename string = "MokListRT-605dab50-e046-4300-abb6-3dd810dd8b23"
 
 	winCertTypePKCSSignedData uint16 = 2
@@ -51,6 +55,8 @@ const (
 	bootManagerCodePCR = 4
 
 	returningFromEfiApplicationEvent string = "Returning from EFI Application from Boot Option"
+
+	sbKeySyncExe string = "sbkeysync"
 )
 
 var (
@@ -68,7 +74,7 @@ var (
 )
 
 var (
-	efivarsPathForTesting string
+	efivarsPathForTesting  string
 	eventLogPathForTesting string
 )
 
@@ -327,91 +333,96 @@ func computeDbUpdate(db, dbUpdate io.ReaderAt) ([]byte, error) {
 	// Iterate over the EFI_SIGNATURE_DATA entries in the database update
 	if err := iterateSecureBootDb(io.NewSectionReader(dbuReader, offset, (1<<63)-1),
 		func(newType *tcglog.EFIGUID, headerReader, newSignatureReader *io.SectionReader,
-		finalSignature bool) (bool, error) {
-		newSignature, err := ioutil.ReadAll(newSignatureReader)
-		if err != nil {
-			return false, fmt.Errorf("cannot obtain contents for new signature: %v", err)
-		}
-
-		isNewSignature := true
-
-		// For each EFI_SIGNATURE_DATA entry in the database update, iterate over the existing database
-		// to find a match in order to filter out duplicates
-		if err := iterateSecureBootDb(db, func(t *tcglog.EFIGUID, unused1 *io.SectionReader,
-			signatureReader *io.SectionReader, unused2 bool) (bool, error) {
-			if *newType != *t {
-				// EFI_SIGNATURE_LIST.SignatureType don't match
-				return true, nil
-			}
-			signature, err := ioutil.ReadAll(signatureReader)
+			finalSignature bool) (bool, error) {
+			newSignature, err := ioutil.ReadAll(newSignatureReader)
 			if err != nil {
-				return false, fmt.Errorf("cannot obtain contents for current signature: %v", err)
+				return false, fmt.Errorf("cannot obtain contents for new signature: %v", err)
 			}
-			if !bytes.Equal(newSignature, signature) {
-				// EFI_SIGNATURE_DATA doesn't match
+
+			isNewSignature := true
+
+			// For each EFI_SIGNATURE_DATA entry in the database update, iterate over the existing
+			// database to find a match in order to filter out duplicates
+			if err := iterateSecureBootDb(db, func(t *tcglog.EFIGUID, unused1 *io.SectionReader,
+				signatureReader *io.SectionReader, unused2 bool) (bool, error) {
+				if *newType != *t {
+					// EFI_SIGNATURE_LIST.SignatureType don't match
+					return true, nil
+				}
+				signature, err := ioutil.ReadAll(signatureReader)
+				if err != nil {
+					return false, fmt.Errorf("cannot obtain contents for current "+
+						"signature: %v", err)
+				}
+				if !bytes.Equal(newSignature, signature) {
+					// EFI_SIGNATURE_DATA doesn't match
+					return true, nil
+				}
+				// We've found a match. Mark the entry as not new and tell the inner loop to abort
+				isNewSignature = false
+				return false, nil
+			}); err != nil {
+				return false, fmt.Errorf("cannot iterate current database: %v", err)
+			}
+
+			// If this is a new EFI_SIGNATURE_DATA entry, append it to signatures
+			if isNewSignature {
+				if _, err := signatures.Write(newSignature); err != nil {
+					return false, fmt.Errorf(
+						"cannot write new signature to temporary buffer: %v", err)
+				}
+			}
+
+			// If this isn't the final signature in a list, or it is but the list contains no new
+			// signatures, return early
+			if !finalSignature || signatures.Len() == 0 {
 				return true, nil
 			}
-			// We've found a match. Mark the entry as not new and tell the inner loop to abort
-			isNewSignature = false
-			return false, nil
-		}); err != nil {
-			return false, fmt.Errorf("cannot iterate current database: %v", err)
-		}
 
-		// If this is a new EFI_SIGNATURE_DATA entry, append it to signatures
-		if isNewSignature {
-			if _, err := signatures.Write(newSignature); err != nil {
+			// This is the final signature in a list and this list has new signatures. Encode the
+			// filtered EFI_SIGNATURE_LIST update to filteredDbUpdate
+
+			// Encode EFI_SIGNATURE_LIST.SignatureType
+			if err := newType.Encode(&filteredDbUpdate); err != nil {
 				return false, fmt.Errorf(
-					"cannot write new signature to temporary buffer: %v", err)
+					"cannot encode new EFI_SIGNATURE_LIST SignatureType: %v", err)
 			}
-		}
 
-		// If this isn't the final signature in a list, or it is but the list contains no new signatures,
-		// return early
-		if !finalSignature || signatures.Len() == 0 {
+			// Calculate and encode EFI_SIGNATURE_LIST.SignatureListSize
+			signatureListSize := uint32(binary.Size(tcglog.EFIGUID{})) + 12 +
+				uint32(headerReader.Size()) + uint32(signatures.Len())
+			if err := binary.Write(&filteredDbUpdate, binary.LittleEndian,
+				uint32(signatureListSize)); err != nil {
+				return false, fmt.Errorf(
+					"cannot write new EFI_SIGNATURE_LIST SignatureListSize: %v", err)
+			}
+
+			// Encode EFI_SIGNATURE_LIST.SignatureHeaderSize
+			if err := binary.Write(&filteredDbUpdate, binary.LittleEndian,
+				uint32(headerReader.Size())); err != nil {
+				return false, fmt.Errorf(
+					"cannot write new EFI_SIGNATURE_LIST SignatureHeaderSize: %v", err)
+			}
+
+			// Encode EFI_SIGNATURE_LIST.SignatureSize
+			if err := binary.Write(&filteredDbUpdate, binary.LittleEndian,
+				uint32(newSignatureReader.Size())); err != nil {
+				return false, fmt.Errorf(
+					"cannot write new EFI_SIGNATURE_LIST SignatureSize: %v", err)
+			}
+
+			// Write EFI_SIGNATURE_LIST.SignatureHeader
+			if _, err := filteredDbUpdate.ReadFrom(headerReader); err != nil {
+				return false, fmt.Errorf(
+					"cannot write new EFI_SIGNATURE_LIST SignatureHeader: %v", err)
+			}
+
+			// Write the saved EFI_SIGNATURE_DATA entries for this list
+			if _, err := filteredDbUpdate.ReadFrom(&signatures); err != nil {
+				return false, fmt.Errorf("cannot write new EFI_SIGNATURE_DATA entries: %v", err)
+			}
 			return true, nil
-		}
-
-		// This is the final signature in a list and this list has new signatures. Encode the filtered
-		// EFI_SIGNATURE_LIST update to filteredDbUpdate
-
-		// Encode EFI_SIGNATURE_LIST.SignatureType
-		if err := newType.Encode(&filteredDbUpdate); err != nil {
-			return false, fmt.Errorf("cannot encode new EFI_SIGNATURE_LIST SignatureType: %v", err)
-		}
-
-		// Calculate and encode EFI_SIGNATURE_LIST.SignatureListSize
-		signatureListSize := uint32(binary.Size(tcglog.EFIGUID{})) + 12 + uint32(headerReader.Size()) +
-			uint32(signatures.Len())
-		if err := binary.Write(&filteredDbUpdate, binary.LittleEndian,
-			uint32(signatureListSize)); err != nil {
-			return false, fmt.Errorf("cannot write new EFI_SIGNATURE_LIST SignatureListSize: %v", err)
-		}
-
-		// Encode EFI_SIGNATURE_LIST.SignatureHeaderSize
-		if err := binary.Write(&filteredDbUpdate, binary.LittleEndian,
-			uint32(headerReader.Size())); err != nil {
-			return false, fmt.Errorf(
-				"cannot write new EFI_SIGNATURE_LIST SignatureHeaderSize: %v", err)
-		}
-
-		// Encode EFI_SIGNATURE_LIST.SignatureSize
-		if err := binary.Write(&filteredDbUpdate, binary.LittleEndian,
-			uint32(newSignatureReader.Size())); err != nil {
-			return false, fmt.Errorf("cannot write new EFI_SIGNATURE_LIST SignatureSize: %v", err)
-		}
-
-		// Write EFI_SIGNATURE_LIST.SignatureHeader
-		if _, err := filteredDbUpdate.ReadFrom(headerReader); err != nil {
-			return false, fmt.Errorf("cannot write new EFI_SIGNATURE_LIST SignatureHeader: %v", err)
-		}
-
-		// Write the saved EFI_SIGNATURE_DATA entries for this list
-		if _, err := filteredDbUpdate.ReadFrom(&signatures); err != nil {
-			return false, fmt.Errorf("cannot write new EFI_SIGNATURE_DATA entries: %v", err)
-		}
-		return true, nil
-	}); err != nil {
+		}); err != nil {
 		return nil, fmt.Errorf("cannot iterate update: %v", err)
 	}
 
@@ -440,8 +451,10 @@ type secureBootDbSet struct {
 }
 
 type secureBootPolicyGen struct {
-	alg    tpm2.AlgorithmId
-	params *SealParams
+	alg        tpm2.AlgorithmId
+	loadPaths  []*OSComponent
+	dbUpdates  []string
+	dbxUpdates []string
 
 	dbStack  []*secureBootDbSet
 	pcrStack []tpm2.Digest
@@ -929,23 +942,45 @@ Loop:
 			if f, err := os.Open(path); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("cannot open db from efivarfs: %v", err)
 			} else if f != nil {
-				defer f.Close()
-				d, err := ioutil.ReadAll(f)
+				d, err := func() ([]byte, error) {
+					defer f.Close()
+					return ioutil.ReadAll(f)
+				}()
 				if err != nil {
 					return fmt.Errorf("cannot read UEFI db from efivarfs: %v", err)
 				}
-				f.Close()
 				db = d[4:]
 			}
-			if err := func() error {
+
+			processSecureBootDb := func() error {
 				g.enterMeasurementScope()
 				defer g.exitMeasurementScope()
 				return g.processSecureBootDb(db, events[i+1:])
-			}(); err != nil {
+			}
+
+			if err := processSecureBootDb(); err != nil {
 				return fmt.Errorf("cannot process db measurement event with current db "+
 					"contents: %v", err)
 			}
-			// TODO: Handle db updates here
+
+			// Handle db updates
+			for _, path := range g.dbUpdates {
+				if f, err := os.Open(path); err != nil {
+					return fmt.Errorf("cannot open db update %s: %v", path, err)
+				} else {
+					d, err := computeDbUpdate(bytes.NewReader(db), f)
+					if err != nil {
+						return fmt.Errorf("cannot compute UEFI db update with update "+
+							"%s: %v", path, err)
+					}
+					db = d
+				}
+
+				if err := processSecureBootDb(); err != nil {
+					return fmt.Errorf("cannot process db measurement event with db "+
+						"contents updated from %s: %v", path, err)
+				}
+			}
 			break Loop
 		case eventClassDbx:
 			// Handle current dbx
@@ -955,23 +990,45 @@ Loop:
 			if f, err := os.Open(path); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("cannot open dbx from efivarfs: %v", err)
 			} else if f != nil {
-				defer f.Close()
-				d, err := ioutil.ReadAll(f)
+				d, err := func() ([]byte, error) {
+					defer f.Close()
+					return ioutil.ReadAll(f)
+				}()
 				if err != nil {
 					return fmt.Errorf("cannot read UEFI dbx from efivarfs: %v", err)
 				}
-				f.Close()
 				dbx = d[4:]
 			}
-			if err := func() error {
+
+			processSecureBootDbx := func() error {
 				g.enterMeasurementScope()
 				defer g.exitMeasurementScope()
 				return g.processSecureBootDbx(dbx, events[i+1:])
-			}(); err != nil {
+			}
+
+			if err := processSecureBootDbx(); err != nil {
 				return fmt.Errorf("cannot process dbx measurement event with current dbx "+
 					"contents: %v", err)
 			}
-			// TODO: Handle dbx updates here
+
+			// Handle dbx updates
+			for _, path := range g.dbxUpdates {
+				if f, err := os.Open(path); err != nil {
+					return fmt.Errorf("cannot open dbx update %s: %v", path, err)
+				} else {
+					d, err := computeDbUpdate(bytes.NewReader(dbx), f)
+					if err != nil {
+						return fmt.Errorf("cannot compute UEFI dbx update with update "+
+							"%s: %v", path, err)
+					}
+					dbx = d
+				}
+
+				if err := processSecureBootDbx(); err != nil {
+					return fmt.Errorf("cannot process dbx measurement event with dbx "+
+						"contents updated from %s: %v", path, err)
+				}
+			}
 			break Loop
 		case eventClassDriverVerification:
 			g.extendVerificationMeasurement(
@@ -984,7 +1041,7 @@ Loop:
 				tpm2.Digest(event.event.Event.Digests[tcglog.AlgorithmId(g.alg)]), FirmwareLoad)
 			fallthrough
 		case eventClassInitialAppVerification:
-			if err := g.continueComputingOSLoadEvents(g.params.LoadPaths); err != nil {
+			if err := g.continueComputingOSLoadEvents(g.loadPaths); err != nil {
 				return fmt.Errorf("cannot compute OS load events: %v", err)
 			}
 			break Loop
@@ -994,7 +1051,71 @@ Loop:
 	return nil
 }
 
-func (g *secureBootPolicyGen) run(secureBootEvents []classifiedEvent) (tpm2.DigestList, error) {
+func (g *secureBootPolicyGen) findDbUpdates(keyStores []string) error {
+	if len(keyStores) == 0 {
+		return nil
+	}
+
+	sbKeySync, err := exec.LookPath(sbKeySyncExe)
+	if err != nil {
+		return fmt.Errorf("lookup failed %s: %v", sbKeySyncExe, err)
+	}
+
+	args := []string{"--dry-run", "--verbose", "--no-default-keystores", "--efivars-path"}
+	if efivarsPathForTesting == "" {
+		args = append(args, efivarsPath)
+	} else {
+		args = append(args, efivarsPathForTesting)
+	}
+	for _, ks := range keyStores {
+		args = append(args, "--keystore", ks)
+	}
+
+	out, err := osutil.StreamCommand(sbKeySync, args...)
+	if err != nil {
+		return fmt.Errorf("cannot execute command: %v", err)
+	}
+
+	scanner := bufio.NewScanner(out)
+	seenNewKeysHeader := false
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "New keys in filesystem:" {
+			seenNewKeysHeader = true
+			continue
+		}
+		if !seenNewKeysHeader {
+			continue
+		}
+		line = strings.TrimSpace(line)
+		for _, ks := range keyStores {
+			rel, err := filepath.Rel(ks, line)
+			if err != nil {
+				continue
+			}
+			if strings.HasPrefix("..", rel) {
+				continue
+			}
+			switch filepath.Dir(rel) {
+			case dbName:
+				g.dbUpdates = append(g.dbUpdates, line)
+			case dbxName:
+				g.dbxUpdates = append(g.dbxUpdates, line)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (g *secureBootPolicyGen) run(params *SealParams, secureBootEvents []classifiedEvent) (tpm2.DigestList,
+	error) {
+	g.loadPaths = params.LoadPaths
+
+	if err := g.findDbUpdates(params.SecureBootDbKeystores); err != nil {
+		return nil, fmt.Errorf("cannot find DB updates: %v", err)
+	}
+
 	g.enterDbScope()
 	defer g.exitDbScope()
 
@@ -1025,6 +1146,9 @@ func (g *secureBootPolicyGen) run(secureBootEvents []classifiedEvent) (tpm2.Dige
 	defer g.exitMeasurementScope()
 
 	defer func() {
+		g.loadPaths = nil
+		g.dbUpdates = nil
+		g.dbxUpdates = nil
 		g.outputDigests = nil
 		if len(g.dbStack) != 1 {
 			panic("mismatched number of enterDbScope / exitDbScope calls")
@@ -1185,6 +1309,6 @@ func computeSecureBootPolicyDigests(tpm *tpm2.TPMContext, alg tpm2.AlgorithmId, 
 		}
 	}
 
-	gen := &secureBootPolicyGen{alg: alg, params: params}
-	return gen.run(events)
+	gen := &secureBootPolicyGen{alg: alg}
+	return gen.run(params, events)
 }

@@ -161,7 +161,7 @@ func TestDecodeSecureBootDb(t *testing.T) {
 		},
 		{
 			desc:       "dbx2",
-			path: "testdata/efivars1/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
+			path:       "testdata/efivars1/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
 			signatures: 1,
 		},
 	} {
@@ -264,6 +264,103 @@ func TestClassifySecureBootEvents(t *testing.T) {
 				if err.Error() != data.err {
 					t.Errorf("Unexpected error: %v", err)
 				}
+			}
+		})
+	}
+}
+
+func TestComputeDbUpdate(t *testing.T) {
+	for _, data := range []struct {
+		desc          string
+		orig          string
+		update        string
+		sha1hash      [20]byte
+		newSignatures int
+	}{
+		{
+			desc:   "AppendOneCertToDb",
+			orig:   "testdata/efivars1/db-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
+			update: "testdata/updates1/db/1.bin",
+			sha1hash: [...]byte{0x49, 0x78, 0x5b, 0x43, 0x6f, 0xbc, 0xbb, 0xc4, 0x34, 0x9d, 0xfa, 0xe2,
+				0xc0, 0x89, 0x54, 0x77, 0xba, 0xba, 0x15, 0xe8},
+			newSignatures: 1,
+		},
+		{
+			desc:   "AppendExistingCertToDb",
+			orig:   "testdata/efivars2/db-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
+			update: "testdata/updates1/db/1.bin",
+			sha1hash: [...]byte{0x49, 0x78, 0x5b, 0x43, 0x6f, 0xbc, 0xbb, 0xc4, 0x34, 0x9d, 0xfa, 0xe2,
+				0xc0, 0x89, 0x54, 0x77, 0xba, 0xba, 0x15, 0xe8},
+		},
+		{
+			desc:   "AppendMsDbxUpdate",
+			orig:   "testdata/efivars1/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
+			update: "testdata/updates/dbx/MS-2016-08-08.bin",
+			sha1hash: [...]byte{0x96, 0xf7, 0xdc, 0x10, 0x4e, 0xe3, 0x4a, 0x0c, 0xe8, 0x42, 0x5a, 0xac,
+				0x20, 0xf2, 0x9e, 0x2b, 0x2a, 0xba, 0x9d, 0x7e},
+			newSignatures: 77,
+		},
+		{
+			desc:   "AppendDbxUpdateWithDuplicateSignatures",
+			orig:   "testdata/efivars3/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
+			update: "testdata/updates2/dbx/1.bin",
+			sha1hash: [...]byte{0xb4, 0x95, 0x64, 0xb2, 0xda, 0xee, 0x39, 0xb0, 0x1b, 0x52, 0x4b, 0xef,
+				0x75, 0xcf, 0x9c, 0xde, 0x2c, 0x3a, 0x2a, 0x0d},
+			newSignatures: 2,
+		},
+	} {
+		t.Run(data.desc, func(t *testing.T) {
+			orig, err := os.Open(data.orig)
+			if err != nil {
+				t.Fatalf("Open failed: %v", err)
+			}
+			update, err := os.Open(data.update)
+			if err != nil {
+				t.Fatalf("Open failed: %v", err)
+			}
+
+			b, err := computeDbUpdate(io.NewSectionReader(orig, 4, (1<<63)-1), update)
+			if err != nil {
+				t.Fatalf("computeDbUpdate failed: %v", err)
+			}
+
+			if _, err := decodeSecureBootDb(bytes.NewReader(b)); err != nil {
+				t.Errorf("decodeSecureBootDb failed: %v", err)
+			}
+
+			origb, err := ioutil.ReadAll(orig)
+			if err != nil {
+				t.Fatalf("ReadAll failed: %v", err)
+			}
+			orig.Seek(0, io.SeekStart)
+
+			if !bytes.Equal(origb[4:], b[:len(origb)-4]) {
+				t.Errorf("computeDbUpdate didn't perform an append")
+			}
+
+			signatures, err := decodeSecureBootDb(bytes.NewReader(b[len(origb)-4:]))
+			if err != nil {
+				t.Errorf("decodeSecureBootDb failed: %v", err)
+			}
+
+			if len(signatures) != data.newSignatures {
+				t.Errorf("Incorrect number of new signatures (got %d, expected %d)",
+					len(signatures), data.newSignatures)
+			}
+
+			h := sha1.New()
+			var attrs uint32
+			if err := binary.Read(orig, binary.LittleEndian, &attrs); err != nil {
+				t.Fatalf("binary.Read failed: %v", err)
+			}
+			if err := binary.Write(h, binary.LittleEndian, attrs); err != nil {
+				t.Fatalf("binary.Write failed: %v", err)
+			}
+			h.Write(b)
+
+			if !bytes.Equal(data.sha1hash[:], h.Sum(nil)) {
+				t.Errorf("Unexpected updated contents (sha1 got %x, expected %x)", h.Sum(nil),
+					data.sha1hash[:])
 			}
 		})
 	}
@@ -673,6 +770,32 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 					0x54, 0x88, 0x9e, 0xb8, 0xfe, 0x78, 0xd7, 0xb2, 0x04, 0xfa, 0x58, 0x1a,
 					0xce, 0x55, 0x52, 0x2c, 0x07, 0x40, 0x50, 0xe4, 0x28}},
 		},
+		{
+			desc:    "DbxUpdate",
+			logPath: "testdata/eventlog1.bin",
+			efivars: "testdata/efivars1",
+			params: &SealParams{
+				LoadPaths: []*OSComponent{
+					&OSComponent{
+						LoadType: FirmwareLoad,
+						Image:    FileOSComponent("testdata/mockshim1.efi.signed.1"),
+						Next: []*OSComponent{
+							&OSComponent{
+								LoadType: DirectLoadWithShimVerify,
+								Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+								Next: []*OSComponent{
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1")}}}}}},
+				SecureBootDbKeystores: []string{"testdata/updates"}},
+			digests: tpm2.DigestList{
+				tpm2.Digest{0xe8, 0x01, 0x30, 0xf2, 0xd8, 0x21, 0x2d, 0x69, 0x69, 0xf0, 0xcd,
+					0x20, 0xef, 0xfc, 0x3b, 0xbd, 0xed, 0x14, 0x58, 0x48, 0x61, 0xf8, 0xf5,
+					0x60, 0xfb, 0xc5, 0x20, 0x8a, 0x8b, 0xfc, 0x06, 0x81},
+				tpm2.Digest{0x38, 0xae, 0x1e, 0x75, 0xea, 0x72, 0x37, 0x98, 0x3f, 0x4d, 0x44, 0xc3,
+					0x69, 0x5e, 0x08, 0xa1, 0xd7, 0xb6, 0x0d, 0x8c, 0xba, 0xc3, 0xc6, 0x5e,
+					0x57, 0x64, 0x73, 0xb7, 0x27, 0x77, 0x61, 0x6e}},
+		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {
 			resetTPMSimulator(t, tpm, tcti)
@@ -707,103 +830,6 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 							data.digests[i])
 					}
 				}
-			}
-		})
-	}
-}
-
-func TestComputeDbUpdate(t *testing.T) {
-	for _, data := range []struct{
-		desc string
-		orig string
-		update string
-		sha1hash [20]byte
-		newSignatures int
-	}{
-		{
-			desc: "AppendOneCertToDb",
-			orig: "testdata/efivars1/db-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
-			update: "testdata/updates1/db/1.bin",
-			sha1hash: [...]byte{0x49, 0x78, 0x5b, 0x43, 0x6f, 0xbc, 0xbb, 0xc4, 0x34, 0x9d, 0xfa, 0xe2,
-				0xc0, 0x89, 0x54, 0x77, 0xba, 0xba, 0x15, 0xe8},
-			newSignatures: 1,
-		},
-		{
-			desc: "AppendExistingCertToDb",
-			orig: "testdata/efivars2/db-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
-			update: "testdata/updates1/db/1.bin",
-			sha1hash: [...]byte{0x49, 0x78, 0x5b, 0x43, 0x6f, 0xbc, 0xbb, 0xc4, 0x34, 0x9d, 0xfa, 0xe2,
-				0xc0, 0x89, 0x54, 0x77, 0xba, 0xba, 0x15, 0xe8},
-		},
-		{
-			desc: "AppendMsDbxUpdate",
-			orig: "testdata/efivars1/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
-			update: "testdata/updates/dbx/MS-2016-08-08.bin",
-			sha1hash: [...]byte{0x96, 0xf7, 0xdc, 0x10, 0x4e, 0xe3, 0x4a, 0x0c, 0xe8, 0x42, 0x5a, 0xac,
-				0x20, 0xf2, 0x9e, 0x2b, 0x2a, 0xba, 0x9d, 0x7e},
-			newSignatures: 77,
-		},
-		{
-			desc: "AppendDbxUpdateWithDuplicateSignatures",
-			orig: "testdata/efivars3/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
-			update: "testdata/updates2/dbx/1.bin",
-			sha1hash: [...]byte{0xb4, 0x95, 0x64, 0xb2, 0xda, 0xee, 0x39, 0xb0, 0x1b, 0x52, 0x4b, 0xef,
-				0x75, 0xcf, 0x9c, 0xde, 0x2c, 0x3a, 0x2a, 0x0d},
-			newSignatures: 2,
-		},
-	} {
-		t.Run(data.desc, func(t *testing.T) {
-			orig, err := os.Open(data.orig)
-			if err != nil {
-				t.Fatalf("Open failed: %v", err)
-			}
-			update, err := os.Open(data.update)
-			if err != nil {
-				t.Fatalf("Open failed: %v", err)
-			}
-
-			b, err := computeDbUpdate(io.NewSectionReader(orig, 4, (1<<63)-1), update)
-			if err != nil {
-				t.Fatalf("computeDbUpdate failed: %v", err)
-			}
-
-			if _, err := decodeSecureBootDb(bytes.NewReader(b)); err != nil {
-				t.Errorf("decodeSecureBootDb failed: %v", err)
-			}
-
-			origb, err := ioutil.ReadAll(orig)
-			if err != nil {
-				t.Fatalf("ReadAll failed: %v", err)
-			}
-			orig.Seek(0, io.SeekStart)
-
-			if !bytes.Equal(origb[4:], b[:len(origb)-4]) {
-				t.Errorf("computeDbUpdate didn't perform an append")
-			}
-
-			signatures, err := decodeSecureBootDb(bytes.NewReader(b[len(origb)-4:]))
-			if err != nil {
-				t.Errorf("decodeSecureBootDb failed: %v", err)
-			}
-
-			if len(signatures) != data.newSignatures {
-				t.Errorf("Incorrect number of new signatures (got %d, expected %d)",
-					len(signatures), data.newSignatures)
-			}
-
-			h := sha1.New()
-			var attrs uint32
-			if err := binary.Read(orig, binary.LittleEndian, &attrs); err != nil {
-				t.Fatalf("binary.Read failed: %v", err)
-			}
-			if err := binary.Write(h, binary.LittleEndian, attrs); err != nil {
-				t.Fatalf("binary.Write failed: %v", err)
-			}
-			h.Write(b)
-
-			if !bytes.Equal(data.sha1hash[:], h.Sum(nil)) {
-				t.Errorf("Unexpected updated contents (sha1 got %x, expected %x)", h.Sum(nil),
-					data.sha1hash[:])
 			}
 		})
 	}
