@@ -723,7 +723,7 @@ func TestComputeDbUpdate(t *testing.T) {
 		{
 			desc: "AppendOneCertToDb",
 			orig: "testdata/efivars1/db-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
-			update: "testdata/db-update1.bin",
+			update: "testdata/updates1/db/1.bin",
 			sha1hash: [...]byte{0x49, 0x78, 0x5b, 0x43, 0x6f, 0xbc, 0xbb, 0xc4, 0x34, 0x9d, 0xfa, 0xe2,
 				0xc0, 0x89, 0x54, 0x77, 0xba, 0xba, 0x15, 0xe8},
 			newSignatures: 1,
@@ -731,14 +731,14 @@ func TestComputeDbUpdate(t *testing.T) {
 		{
 			desc: "AppendExistingCertToDb",
 			orig: "testdata/efivars2/db-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
-			update: "testdata/db-update1.bin",
+			update: "testdata/updates1/db/1.bin",
 			sha1hash: [...]byte{0x49, 0x78, 0x5b, 0x43, 0x6f, 0xbc, 0xbb, 0xc4, 0x34, 0x9d, 0xfa, 0xe2,
 				0xc0, 0x89, 0x54, 0x77, 0xba, 0xba, 0x15, 0xe8},
 		},
 		{
 			desc: "AppendMsDbxUpdate",
 			orig: "testdata/efivars1/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
-			update: "testdata/MS-2016-08-08.bin",
+			update: "testdata/updates/dbx/MS-2016-08-08.bin",
 			sha1hash: [...]byte{0x96, 0xf7, 0xdc, 0x10, 0x4e, 0xe3, 0x4a, 0x0c, 0xe8, 0x42, 0x5a, 0xac,
 				0x20, 0xf2, 0x9e, 0x2b, 0x2a, 0xba, 0x9d, 0x7e},
 			newSignatures: 77,
@@ -746,7 +746,7 @@ func TestComputeDbUpdate(t *testing.T) {
 		{
 			desc: "AppendDbxUpdateWithDuplicateSignatures",
 			orig: "testdata/efivars3/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
-			update: "testdata/dbx-update1.bin",
+			update: "testdata/updates2/dbx/1.bin",
 			sha1hash: [...]byte{0xb4, 0x95, 0x64, 0xb2, 0xda, 0xee, 0x39, 0xb0, 0x1b, 0x52, 0x4b, 0xef,
 				0x75, 0xcf, 0x9c, 0xde, 0x2c, 0x3a, 0x2a, 0x0d},
 			newSignatures: 2,
