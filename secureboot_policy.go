@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 
 	"github.com/chrisccoulson/go-tpm2"
 	"github.com/chrisccoulson/tcglog-parser"
@@ -38,10 +39,11 @@ const (
 	shimName       string = "Shim"
 
 	eventLogPath = "/sys/kernel/security/tpm0/binary_bios_measurements"
+	efivarsPath = "/sys/firmware/efi/efivars"
 
-	dbPath      string = "/sys/firmware/efi/efivars/db-d719b2cb-3d3a-4596-a3bc-dad00e67656f"
-	dbxPath     string = "/sys/firmware/efi/efivars/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f"
-	mokListPath string = "/sys/firmware/efi/efivars/MokListRT-605dab50-e046-4300-abb6-3dd810dd8b23"
+	dbFilename string = "db-d719b2cb-3d3a-4596-a3bc-dad00e67656f"
+	dbxFilename string = "dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f"
+	mokListFilename string = "MokListRT-605dab50-e046-4300-abb6-3dd810dd8b23"
 
 	winCertTypePKCSSignedData uint16 = 2
 
@@ -66,8 +68,7 @@ var (
 )
 
 var (
-	dbPathForTesting       string
-	dbxPathForTesting      string
+	efivarsPathForTesting string
 	eventLogPathForTesting string
 )
 
@@ -907,6 +908,13 @@ func (g *secureBootPolicyGen) continueComputingOSLoadEvents(next []*OSComponent)
 	return nil
 }
 
+func computeEfivarPath(filename string) string {
+	if efivarsPathForTesting == "" {
+		return filepath.Join(efivarsPath, filename)
+	}
+	return filepath.Join(efivarsPathForTesting, filename)
+}
+
 func (g *secureBootPolicyGen) processEvents(events []classifiedEvent) error {
 Loop:
 	for i, event := range events {
@@ -915,10 +923,7 @@ Loop:
 			g.extendMeasurement(tpm2.Digest(event.event.Event.Digests[tcglog.AlgorithmId(g.alg)]))
 		case eventClassDb:
 			// Handle current db
-			path := dbPath
-			if dbPathForTesting != "" {
-				path = dbPathForTesting
-			}
+			path := computeEfivarPath(dbFilename)
 
 			var db []byte
 			if f, err := os.Open(path); err != nil && !os.IsNotExist(err) {
@@ -944,10 +949,7 @@ Loop:
 			break Loop
 		case eventClassDbx:
 			// Handle current dbx
-			path := dbxPath
-			if dbxPathForTesting != "" {
-				path = dbxPathForTesting
-			}
+			path := computeEfivarPath(dbxFilename)
 
 			var dbx []byte
 			if f, err := os.Open(path); err != nil && !os.IsNotExist(err) {

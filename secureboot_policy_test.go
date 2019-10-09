@@ -70,7 +70,7 @@ func TestDecodeSecureBootDb(t *testing.T) {
 	}{
 		{
 			desc: "db1",
-			path: "testdata/db1.bin",
+			path: "testdata/efivars/db-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
 			certs: []certId{
 				{
 					issuer:  microsoftRootCANameDER,
@@ -89,7 +89,7 @@ func TestDecodeSecureBootDb(t *testing.T) {
 		},
 		{
 			desc: "db2",
-			path: "testdata/db2.bin",
+			path: "testdata/efivars1/db-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
 			certs: []certId{
 				{
 					issuer:  microsoftRootCANameDER,
@@ -114,7 +114,7 @@ func TestDecodeSecureBootDb(t *testing.T) {
 		},
 		{
 			desc: "db3",
-			path: "testdata/db3.bin",
+			path: "testdata/efivars2/db-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
 			certs: []certId{
 				{
 					issuer:  microsoftRootCANameDER,
@@ -146,7 +146,7 @@ func TestDecodeSecureBootDb(t *testing.T) {
 		},
 		{
 			desc: "dbx1",
-			path: "testdata/dbx1.bin",
+			path: "testdata/efivars/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
 			certs: []certId{
 				{
 					issuer: microsoftRootCANameDER,
@@ -161,7 +161,7 @@ func TestDecodeSecureBootDb(t *testing.T) {
 		},
 		{
 			desc:       "dbx2",
-			path:       "testdata/dbx2.bin",
+			path: "testdata/efivars1/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
 			signatures: 1,
 		},
 	} {
@@ -316,8 +316,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 	for _, data := range []struct {
 		desc    string
 		logPath string
-		dbPath  string
-		dbxPath string
+		efivars string
 		params  *SealParams
 		digests tpm2.DigestList
 		err     string
@@ -325,8 +324,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 		{
 			desc:    "VerifyFromDbClassic",
 			logPath: "testdata/eventlog1.bin",
-			dbPath:  "testdata/db2.bin",
-			dbxPath: "testdata/dbx2.bin",
+			efivars: "testdata/efivars1",
 			params: &SealParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -348,8 +346,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 		{
 			desc:    "VerifyDirectCASignature",
 			logPath: "testdata/eventlog1.bin",
-			dbPath:  "testdata/db2.bin",
-			dbxPath: "testdata/dbx2.bin",
+			efivars: "testdata/efivars1",
 			params: &SealParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -371,8 +368,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 		{
 			desc:    "VerifyFromDbUC20",
 			logPath: "testdata/eventlog1.bin",
-			dbPath:  "testdata/db2.bin",
-			dbxPath: "testdata/dbx2.bin",
+			efivars: "testdata/efivars1",
 			params: &SealParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -401,8 +397,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 		{
 			desc:    "InvalidGrubSignature",
 			logPath: "testdata/eventlog1.bin",
-			dbPath:  "testdata/db2.bin",
-			dbxPath: "testdata/dbx2.bin",
+			efivars: "testdata/efivars1",
 			params: &SealParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -428,8 +423,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 		{
 			desc:    "NoKernelSignature",
 			logPath: "testdata/eventlog1.bin",
-			dbPath:  "testdata/db2.bin",
-			dbxPath: "testdata/dbx2.bin",
+			efivars: "testdata/efivars1",
 			params: &SealParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -457,8 +451,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 		{
 			desc:    "ShimVerificationDisabled",
 			logPath: "testdata/eventlog2.bin",
-			dbPath:  "testdata/db2.bin",
-			dbxPath: "testdata/dbx2.bin",
+			efivars: "testdata/efivars1",
 			params: &SealParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -477,8 +470,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 		{
 			desc:    "VerifyGrubAndKernelWithShimVendorCert",
 			logPath: "testdata/eventlog1.bin",
-			dbPath:  "testdata/db2.bin",
-			dbxPath: "testdata/dbx2.bin",
+			efivars: "testdata/efivars1",
 			params: &SealParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -507,8 +499,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 		{
 			desc:    "VerifyFromDbUC20_2",
 			logPath: "testdata/eventlog1.bin",
-			dbPath:  "testdata/db3.bin",
-			dbxPath: "testdata/dbx2.bin",
+			efivars: "testdata/efivars2",
 			params: &SealParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -537,8 +528,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 		{
 			desc:    "VerifyFromDbUC20_3",
 			logPath: "testdata/eventlog1.bin",
-			dbPath:  "testdata/db2.bin",
-			dbxPath: "testdata/dbx2.bin",
+			efivars: "testdata/efivars1",
 			params: &SealParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -567,8 +557,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 		{
 			desc:    "KernelKeyRotationUC20",
 			logPath: "testdata/eventlog1.bin",
-			dbPath:  "testdata/db2.bin",
-			dbxPath: "testdata/dbx2.bin",
+			efivars: "testdata/efivars1",
 			params: &SealParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -606,8 +595,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 		{
 			desc:    "MissingShimVendorCertSection",
 			logPath: "testdata/eventlog1.bin",
-			dbPath:  "testdata/db2.bin",
-			dbxPath: "testdata/dbx2.bin",
+			efivars: "testdata/efivars1",
 			params: &SealParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -634,8 +622,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 		{
 			desc:    "NoShimVendorCert",
 			logPath: "testdata/eventlog1.bin",
-			dbPath:  "testdata/db2.bin",
-			dbxPath: "testdata/dbx2.bin",
+			efivars: "testdata/efivars1",
 			params: &SealParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -657,8 +644,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 		{
 			desc:    "MismatchedNormalAndRecoverySystemsUC20",
 			logPath: "testdata/eventlog1.bin",
-			dbPath:  "testdata/db2.bin",
-			dbxPath: "testdata/dbx2.bin",
+			efivars: "testdata/efivars1",
 			params: &SealParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -693,12 +679,10 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			replayLogToTPM(t, tpm, tcti, data.logPath)
 
 			eventLogPathForTesting = data.logPath
-			dbPathForTesting = data.dbPath
-			dbxPathForTesting = data.dbxPath
+			efivarsPathForTesting = data.efivars
 			defer func() {
 				eventLogPathForTesting = ""
-				dbPathForTesting = ""
-				dbxPathForTesting = ""
+				efivarsPathForTesting = ""
 			}()
 
 			digests, err := computeSecureBootPolicyDigests(tpm, tpm2.AlgorithmSHA256, data.params)
@@ -738,7 +722,7 @@ func TestComputeDbUpdate(t *testing.T) {
 	}{
 		{
 			desc: "AppendOneCertToDb",
-			orig: "testdata/db2.bin",
+			orig: "testdata/efivars1/db-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
 			update: "testdata/db-update1.bin",
 			sha1hash: [...]byte{0x49, 0x78, 0x5b, 0x43, 0x6f, 0xbc, 0xbb, 0xc4, 0x34, 0x9d, 0xfa, 0xe2,
 				0xc0, 0x89, 0x54, 0x77, 0xba, 0xba, 0x15, 0xe8},
@@ -746,14 +730,14 @@ func TestComputeDbUpdate(t *testing.T) {
 		},
 		{
 			desc: "AppendExistingCertToDb",
-			orig: "testdata/db3.bin",
+			orig: "testdata/efivars2/db-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
 			update: "testdata/db-update1.bin",
 			sha1hash: [...]byte{0x49, 0x78, 0x5b, 0x43, 0x6f, 0xbc, 0xbb, 0xc4, 0x34, 0x9d, 0xfa, 0xe2,
 				0xc0, 0x89, 0x54, 0x77, 0xba, 0xba, 0x15, 0xe8},
 		},
 		{
 			desc: "AppendMsDbxUpdate",
-			orig: "testdata/dbx2.bin",
+			orig: "testdata/efivars1/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
 			update: "testdata/MS-2016-08-08.bin",
 			sha1hash: [...]byte{0x96, 0xf7, 0xdc, 0x10, 0x4e, 0xe3, 0x4a, 0x0c, 0xe8, 0x42, 0x5a, 0xac,
 				0x20, 0xf2, 0x9e, 0x2b, 0x2a, 0xba, 0x9d, 0x7e},
@@ -761,7 +745,7 @@ func TestComputeDbUpdate(t *testing.T) {
 		},
 		{
 			desc: "AppendDbxUpdateWithDuplicateSignatures",
-			orig: "testdata/dbx3.bin",
+			orig: "testdata/efivars3/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
 			update: "testdata/dbx-update1.bin",
 			sha1hash: [...]byte{0xb4, 0x95, 0x64, 0xb2, 0xda, 0xee, 0x39, 0xb0, 0x1b, 0x52, 0x4b, 0xef,
 				0x75, 0xcf, 0x9c, 0xde, 0x2c, 0x3a, 0x2a, 0x0d},
