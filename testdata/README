@@ -1,14 +1,19 @@
 - efivars/ contains:
-  - a UEFI signature database from a Dell Precision Workstation 7510, containing the 2 Microsoft CAs.
+  - a KEK database from a Dell Precision Workstation 7510.
+  - a UEFI signature database from the same machine, containing the 2 Microsoft CAs.
   - a UEFI forbidden signature database from the same machine, with MS-2016-08-08.bin applied.
 - efivars1/ contains:
-  - a UEFI signature database from a QEMU instance running OVMF with "Microsoft Windows Production PCA 2011",
+  - a KEK database from a QEMU instance running OVMF with "Ubuntu OVMF Secure Boot (PK/KEK key)", "Microsoft
+    Corporation KEK CA 2011" and a test KEK CA certificate enrolled.
+  - a UEFI signature database from the same QEMU instance with "Microsoft Windows Production PCA 2011",
     "Microsoft Corporation UEFI CA 2011" and a test CA certificate enrolled.
   - a UEFI forbidden signature database from the same QEMU instance with a single SHA-256 signature.
 - efivars2/ contains:
+  - The same KEK database from efivars1/.
   - The same UEFI signature database from efivars1/, but with a second test CA certificate enrolled.
   - The same UEFI forbidden signature database from efivars1/
 - efivars3/ contains:
+  - The same KEK database from efivars1/.
   - The same UEFI signature database from efivars1/
   - The same UEFI signature database from efivars1/, but with MS-2016-08-08.bin applied.
 
@@ -19,9 +24,7 @@
 
 - eventlog1.bin is an event log from a QEMU instance running OVMF with the following configuration:
   - "Ubuntu OVMF Secure Boot (PK/KEK key)" enrolled in to PK.
-  - "Ubuntu OVMF Secure Boot (PK/KEK key)", "Microsoft Corporation KEK CA 2011" and test certificate enrolled in to
-    KEK.
-  - UEFI database and forbidden signature database from efivars1/.
+  - KEK database, UEFI database and forbidden signature databases from efivars1/.
   - Booted with a version of shim signed by the test UEFI CA key, Grub signed by Canonical's archive key (the
     issuer of which is shim's embedded vendor cert) and a custom kernel signed by the test UEFI CA key.
 - eventlog2.bin is an event log from the same QEMU instance but with with secure boot validation disabled in shim
