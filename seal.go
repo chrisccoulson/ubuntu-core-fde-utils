@@ -23,9 +23,11 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 
 	"github.com/chrisccoulson/go-tpm2"
+	"github.com/snapcore/snapd/snap"
 )
 
 type SealMode int
@@ -35,15 +37,76 @@ const (
 	Update
 )
 
+type OSComponentImage interface {
+	ReadAll() ([]byte, error)
+}
+
+type SnapFileOSComponent struct {
+	Container snap.Container
+	FileName  string
+}
+
+func (f SnapFileOSComponent) ReadAll() ([]byte, error) {
+	return f.Container.ReadFile(f.FileName)
+}
+
+type FileOSComponent string
+
+func (p FileOSComponent) ReadAll() ([]byte, error) {
+	f, err := os.Open(string(p))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return ioutil.ReadAll(f)
+}
+
+// OSComponentLoadType describes how an OS component in a boot sequence that should be permitted to unseal the disk
+// encryption key is loaded by the previous component.
+type OSComponentLoadType int
+
+const (
+	// FirmwareLoad corresponds to a component that is loaded via EFI_BOOT_SERVICES.LoadImage() and
+	// EFI_BOOT_SERVICES.StartImage(), being verified by UEFI firmware using a signature from the UEFI
+	// signature database.
+	FirmwareLoad OSComponentLoadType = iota
+
+	// DirectLoadWithShimVerify corresponds to a component that is loaded directly without the assistance of
+	// UEFI boot services APIs, being verified using Shim's UEFI protocol using a signature from the UEFI
+	// signature database, a machine-owner key, or Shim's vendor certificate.
+	DirectLoadWithShimVerify
+)
+
+// OSComponent corresponds to a single OS component in a boot sequence that should be permitted to unseal the disk
+// encryption key. These form a tree representing alternate sequences.
+type OSComponent struct {
+	LoadType OSComponentLoadType // How the component is loaded and verified by the previous component
+	Image    OSComponentImage    // The raw image of this component
+	Next     []*OSComponent      // The next components for each permitted boot path
+}
+
+// SealParams contains parameters used for computation of the authorization policy for the sealed key object.
+type SealParams struct {
+	// LoadPaths corresponds to alternate trees of OSComponent structures corresponding to the boot sequences
+	// that should be permitted to unseal the disk encryption key. The root of each tree must have LoadType
+	// set to FirmwareLoad.
+	// To support atomic updates of a component (eg, a kernel), SealKeyToTPM should be called before an
+	// update is committed with boot sequences containing both the old and new components. If the old and
+	// new components are signed with different keys, then this will automatically be reflected in the
+	// generated authorization policy. Alternate boot sequences resulting in the same authorization policy
+	// are automatically de-duplicated.
+	LoadPaths []*OSComponent
+}
+
 // SealKeyToTPM seals the provided disk encryption key to the storage hierarchy of a TPM. The caller is required
 // to provide a connection to the TPM. The sealed key object and associated metadata (creation data and ticket
 // for sealed key object, PIN object and auxiliary policy data) are all written to the file specified by dest. If
 // called with mode == Create, a new file will be created and this function will fail if there is already a file
 // with the same name. If called with mode == Update, this function expects there to be a valid key data file at
 // the location specified by dest. In this case, this function will preserve the PIN object (and therefore the PIN
-// object auth value) from the original file, and the original file will be updated atomically.
-// TODO: This function prototype will be extended to take policy inputs
-func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, mode SealMode, key []byte) error {
+// object auth value) from the original file, and the original file will be updated atomically. The authorization
+// policy for sealed key object will be computed based on params.
+func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, mode SealMode, params *SealParams, key []byte) error {
 	// Check that the key is the correct length
 	if len(key) != 64 {
 		return fmt.Errorf("expected a key length of 512 bits (got %d)", len(key)*8)
@@ -80,16 +143,20 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, mode SealMode, key []byte) 
 		pinFlags = existing.PinFlags
 	}
 
-	// Convert policy inputs in to individual event digests
-	//  TODO
-
-	// Use event digests, the event log and GRUB data to generate PCR digests
-	//  TODO: Use policy inputs rather than the current PCR values
-	//  TODO: Generate digests for other PCRs
-	_, digests, err := tpm.PCRRead(tpm2.PCRSelectionList{
-		tpm2.PCRSelection{Hash: defaultHashAlgorithm, Select: tpm2.PCRSelectionData{7}}})
-	if err != nil {
-		return fmt.Errorf("cannot read PCR values: %v", err)
+	var secureBootDigests tpm2.DigestList
+	var err error
+	if params != nil {
+		secureBootDigests, err = computeSecureBootPolicyDigests(tpm, defaultHashAlgorithm, params)
+		if err != nil {
+			return fmt.Errorf("cannot compute secure boot policy digests: %v", err)
+		}
+	} else {
+		_, secureBootDigests, err = tpm.PCRRead(tpm2.PCRSelectionList{
+			tpm2.PCRSelection{Hash: defaultHashAlgorithm,
+				Select: tpm2.PCRSelectionData{secureBootPCR}}})
+		if err != nil {
+			return fmt.Errorf("cannot read secure boot PCR value: %v", err)
+		}
 	}
 
 	// Use the PCR digests and PIN object to generate a single policy digest
@@ -102,7 +169,7 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, mode SealMode, key []byte) 
 		secureBootPCRAlg:     defaultHashAlgorithm,
 		grubPCRAlg:           defaultHashAlgorithm,
 		snapModelPCRAlg:      defaultHashAlgorithm,
-		secureBootPCRDigests: digests,
+		secureBootPCRDigests: secureBootDigests,
 		grubPCRDigests:       tpm2.DigestList{make(tpm2.Digest, 32)},
 		snapModelPCRDigests:  tpm2.DigestList{make(tpm2.Digest, 32)},
 		pinObjectName:        pinObjectName}

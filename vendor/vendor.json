@@ -1,6 +1,6 @@
 {
 	"comment": "",
-	"ignore": "",
+	"ignore": "test",
 	"package": [
 		{
 			"checksumSHA1": "G5b4mSiqhTHSZW7W8aNKTrqe1xU=",
@@ -9,16 +9,65 @@
 			"revisionTime": "2019-09-11T23:50:26Z"
 		},
 		{
+			"checksumSHA1": "PivTtD46tIChYSQcCe153L56W4Y=",
+			"path": "github.com/chrisccoulson/tcglog-parser",
+			"revision": "822d31beb246f9f3283345db965b97a5b5083abe",
+			"revisionTime": "2019-10-02T12:18:04Z"
+		},
+		{
+			"checksumSHA1": "wHGa5uteRxMMSHJLQZtcBpIIUcw=",
+			"origin": "github.com/chrisccoulson/pkcs7",
+			"path": "github.com/fullsailor/pkcs7",
+			"revision": "9d98ea9f9bc8b4feee8f0d7c5ef8179f85f0e237",
+			"revisionTime": "2019-09-06T18:49:57Z"
+		},
+		{
 			"checksumSHA1": "89YJCAgJAXBIjqzqeXiiO4cEuVo=",
 			"path": "github.com/godbus/dbus",
 			"revision": "6eb4cf171088115fc4f087cb8a302859c601a546",
 			"revisionTime": "2019-07-26T03:53:44Z"
 		},
 		{
+			"checksumSHA1": "CSPV27Mm4+WBlyGFT/lKz1la/VI=",
+			"path": "github.com/snapcore/go-gettext",
+			"revision": "a77afd68d2bd1740e0d843e28cc756ee59493e24",
+			"revisionTime": "2019-08-12T09:09:36Z"
+		},
+		{
+			"checksumSHA1": "ZHYmaLRlCMJfx0+Ppr8dZ/+KtAc=",
+			"path": "github.com/snapcore/go-gettext/pluralforms",
+			"revision": "a77afd68d2bd1740e0d843e28cc756ee59493e24",
+			"revisionTime": "2019-08-12T09:09:36Z"
+		},
+		{
+			"checksumSHA1": "xRtnXbK6hrWpsGCRG8WfyWVhjSc=",
+			"path": "github.com/snapcore/snapd/cmd/cmdutil",
+			"revision": "6341e63d82dabb39a0a834fb956fa26dc06a2788",
+			"revisionTime": "2019-09-14T15:45:38Z"
+		},
+		{
 			"checksumSHA1": "3anxpq/J8MUCJO7to/W4frpA35Y=",
 			"path": "github.com/snapcore/snapd/dirs",
 			"revision": "c1cd87df460bee8cdcc1f77786c9bd30e27e7ea2",
 			"revisionTime": "2019-09-11T18:46:24Z"
+		},
+		{
+			"checksumSHA1": "4Ie673xc3PJbxsnujxe8bCifr4I=",
+			"path": "github.com/snapcore/snapd/i18n",
+			"revision": "6341e63d82dabb39a0a834fb956fa26dc06a2788",
+			"revisionTime": "2019-09-14T15:45:38Z"
+		},
+		{
+			"checksumSHA1": "dToLFMNcYqhMMxoPftbX8nJgig4=",
+			"path": "github.com/snapcore/snapd/logger",
+			"revision": "6341e63d82dabb39a0a834fb956fa26dc06a2788",
+			"revisionTime": "2019-09-14T15:45:38Z"
+		},
+		{
+			"checksumSHA1": "d09E/bfjOHPFE0emxHDWa25o8rc=",
+			"path": "github.com/snapcore/snapd/metautil",
+			"revision": "6341e63d82dabb39a0a834fb956fa26dc06a2788",
+			"revisionTime": "2019-09-14T15:45:38Z"
 		},
 		{
 			"checksumSHA1": "hWWybnDfJluajBFiZeLRFUGZxd0=",
@@ -45,6 +94,36 @@
 			"revisionTime": "2019-09-11T18:46:24Z"
 		},
 		{
+			"checksumSHA1": "PrQw10a7vFtdtAjkIkU/2f0z9bY=",
+			"path": "github.com/snapcore/snapd/snap",
+			"revision": "6341e63d82dabb39a0a834fb956fa26dc06a2788",
+			"revisionTime": "2019-09-14T15:45:38Z"
+		},
+		{
+			"checksumSHA1": "i5EvzRMaMc0gY6U3diBVnBpGzV8=",
+			"path": "github.com/snapcore/snapd/snap/naming",
+			"revision": "6341e63d82dabb39a0a834fb956fa26dc06a2788",
+			"revisionTime": "2019-09-14T15:45:38Z"
+		},
+		{
+			"checksumSHA1": "fG0pgHM5bCVJJY4UYfmsKhLOx54=",
+			"path": "github.com/snapcore/snapd/snap/snapdir",
+			"revision": "6341e63d82dabb39a0a834fb956fa26dc06a2788",
+			"revisionTime": "2019-09-14T15:45:38Z"
+		},
+		{
+			"checksumSHA1": "wsnJGgGkGMuwyoAo0PmQlGDLSOw=",
+			"path": "github.com/snapcore/snapd/snap/squashfs",
+			"revision": "6341e63d82dabb39a0a834fb956fa26dc06a2788",
+			"revisionTime": "2019-09-14T15:45:38Z"
+		},
+		{
+			"checksumSHA1": "nv9pDBzs9U3Q/scdzoyWbcNOcW4=",
+			"path": "github.com/snapcore/snapd/spdx",
+			"revision": "6341e63d82dabb39a0a834fb956fa26dc06a2788",
+			"revisionTime": "2019-09-14T15:45:38Z"
+		},
+		{
 			"checksumSHA1": "zfSheMKpwsr6LsxpTy9RQvuoehM=",
 			"path": "github.com/snapcore/snapd/strutil",
 			"revision": "c1cd87df460bee8cdcc1f77786c9bd30e27e7ea2",
@@ -55,6 +134,18 @@
 			"path": "github.com/snapcore/snapd/testutil",
 			"revision": "c1cd87df460bee8cdcc1f77786c9bd30e27e7ea2",
 			"revisionTime": "2019-09-11T18:46:24Z"
+		},
+		{
+			"checksumSHA1": "leL+WTjj2xj4V+wbm76CXw2Eo/c=",
+			"path": "github.com/snapcore/snapd/timeout",
+			"revision": "6341e63d82dabb39a0a834fb956fa26dc06a2788",
+			"revisionTime": "2019-09-14T15:45:38Z"
+		},
+		{
+			"checksumSHA1": "wohuB0InrEmeHJarq90aC5eOvfU=",
+			"path": "github.com/snapcore/snapd/timeutil",
+			"revision": "6341e63d82dabb39a0a834fb956fa26dc06a2788",
+			"revisionTime": "2019-09-14T15:45:38Z"
 		},
 		{
 			"checksumSHA1": "wRLo86qqt/7IwI8X43IjXLvveU0=",

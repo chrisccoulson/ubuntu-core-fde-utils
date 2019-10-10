@@ -20,6 +20,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -28,14 +29,39 @@ import (
 	"github.com/chrisccoulson/ubuntu-core-fde-utils"
 )
 
+type pathList []string
+
+func (l *pathList) String() string {
+	var builder bytes.Buffer
+	for i, path := range *l {
+		if i > 0 {
+			builder.WriteString(", ")
+		}
+		builder.WriteString(path)
+	}
+	return builder.String()
+}
+
+func (l *pathList) Set(value string) error {
+	*l = append(*l, value)
+	return nil
+}
+
 var update bool
 var masterKeyFile string
 var keyFile string
+var kernels pathList
+var grubs pathList
+var shims pathList
 
 func init() {
 	flag.BoolVar(&update, "update", false, "")
 	flag.StringVar(&masterKeyFile, "master-key-file", "", "")
 	flag.StringVar(&keyFile, "key-file", "", "")
+
+	flag.Var(&kernels, "with-kernel", "")
+	flag.Var(&grubs, "with-grub", "")
+	flag.Var(&shims, "with-shim", "")
 }
 
 func main() {
@@ -81,7 +107,27 @@ func main() {
 	}
 	defer tpm.Close()
 
-	if err := fdeutil.SealKeyToTPM(tpm, keyFile, mode, key); err != nil {
+	var params *fdeutil.SealParams
+	if len(shims) > 0 || len(grubs) > 0 || len(kernels) > 0 {
+		params = &fdeutil.SealParams{}
+	}
+
+	for _, shim := range shims {
+		s := &fdeutil.OSComponent{LoadType: fdeutil.FirmwareLoad, Image: fdeutil.FileOSComponent(shim)}
+		for _, grub := range grubs {
+			g := &fdeutil.OSComponent{LoadType: fdeutil.DirectLoadWithShimVerify,
+				Image: fdeutil.FileOSComponent(grub)}
+			for _, kernel := range kernels {
+				k := &fdeutil.OSComponent{LoadType: fdeutil.DirectLoadWithShimVerify,
+					Image: fdeutil.FileOSComponent(kernel)}
+				g.Next = append(g.Next, k)
+			}
+			s.Next = append(s.Next, g)
+		}
+		params.LoadPaths = append(params.LoadPaths, s)
+	}
+
+	if err := fdeutil.SealKeyToTPM(tpm, keyFile, mode, params, key); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot seal key to TPM: %v\n", err)
 		os.Exit(1)
 	}

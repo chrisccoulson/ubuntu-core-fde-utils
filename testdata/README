@@ -1,0 +1,33 @@
+- db1.bin is the UEFI database from a Dell Precision Workstation 7510, containing the 2 Microsoft CAs.
+- dbx1.bin is the UEFI forbidden signature database from the same machine, with MS-2016-08-08.bin applied.
+- db2.bin is the UEFI database from a QEMU instance running OVMF with "Microsoft Windows Production PCA 2011", "Microsoft Corporation UEFI CA 2011" and a test CA certificate enrolled.
+- db3.bin is the same as db2.bin with a second test CA certificate enrolled.
+- dbx2.in is the UEFI forbidden signature database from the same QEMU instance.
+
+- eventlog1.bin is an event log from a QEMU instance running OVMF with the following configuration:
+  - "Ubuntu OVMF Secure Boot (PK/KEK key)" enrolled in to PK.
+  - "Ubuntu OVMF Secure Boot (PK/KEK key)", "Microsoft Corporation KEK CA 2011" and test certificate enrolled in to
+    KEK.
+  - "Microsoft Windows Production PCA 2011", "Microsoft Corporation UEFI CA 2011" and test CA certificate enrolled
+    in to db (db2.bin).
+  - Booted with a version of shim signed by the test UEFI CA key, Grub signed by Canonical's archive key (the
+    issuer of which is shim's embedded vendor cert) and a custom kernel signed by the test UEFI CA key.
+- eventlog2.bin is an event log from the same QEMU instance but with with secure boot validation disabled in shim
+  via MokSBState.
+
+- mock.efi is a mock EFI executable that has no signature.
+- mock.efi.signed.1 is a mock EFI executable signed with the key from a certificate issued by the test CA in
+  db2.bin.
+- mock.efi.signed.2 is the same as mock.efi.signed.1 but signed with the key from a certificate issued by the
+  second test CA in db3.bin.
+
+- mockshim1.efi.signed.1 is a mock shim EFI executable signed with the key from a certificate issued by the test
+  CA in db2.bin, and the same test CA certificate embedded as the vendor cert.
+- mockshim1.efi.signed.2 is the same as mockshim1.efi.signed.1 but signed with the key from a certificate issued
+  by the second test CA in db3.bin.
+- mockshim2.efi.signed.1 is a mock shim EFI executable signed with the key from a certificate issued by the test CA
+  in db2.bin, and the second test CA certificate from db3.bin embedded as the vendor cert.
+- mockshim2.efi.signed.2 is the same as mockshim2.efi.signed.1 but signed with the key from a certificate issued
+  by the second test CA in db3.bin.
+- mockshim.efi.signed.1 is a mock shim EFI executable signed with the key from a certificate issued by the test CA
+  in db2.bin, with no vendor cert.
