@@ -43,7 +43,7 @@ func readOptionalHeader(r io.ReadSeeker, sz uint16) (interface{}, error) {
 		return nil, fmt.Errorf("optional header size is less than optional header magic size")
 	}
 
-	// read reads from io.ReadSeeke, r, into data.
+	// read reads from io.ReadSeeker, r, into data.
 	var err error
 	read := func(data interface{}) bool {
 		err = binary.Read(r, binary.LittleEndian, data)
@@ -189,7 +189,7 @@ func tryHarderToGetOptionalPeHeader(pefile *pe.File, r io.ReaderAt) (interface{}
 		}
 		base = signoff + 4
 	} else {
-		base = int64(0)
+		base = 0
 	}
 
 	sr := io.NewSectionReader(r, base+int64(binary.Size(pefile.FileHeader)),
