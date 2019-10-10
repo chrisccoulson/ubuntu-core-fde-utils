@@ -144,14 +144,13 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, mode SealMode, params *Seal
 	}
 
 	var secureBootDigests tpm2.DigestList
+	var err error
 	if params != nil {
-		var err error
 		secureBootDigests, err = computeSecureBootPolicyDigests(tpm, defaultHashAlgorithm, params)
 		if err != nil {
 			return fmt.Errorf("cannot compute secure boot policy digests: %v", err)
 		}
 	} else {
-		var err error
 		_, secureBootDigests, err = tpm.PCRRead(tpm2.PCRSelectionList{
 			tpm2.PCRSelection{Hash: defaultHashAlgorithm,
 				Select: tpm2.PCRSelectionData{secureBootPCR}}})
