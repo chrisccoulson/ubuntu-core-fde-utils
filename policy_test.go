@@ -26,10 +26,29 @@ import (
 	"github.com/chrisccoulson/go-tpm2"
 )
 
+type mockResourceContext struct {
+	handle tpm2.Handle
+	name   tpm2.Name
+}
+
+func (c *mockResourceContext) Handle() tpm2.Handle {
+	return c.handle
+}
+
+func (c *mockResourceContext) Name() tpm2.Name {
+	return c.name
+}
+
 func TestComputePolicy(t *testing.T) {
 	hasher := hashAlgToGoHash(tpm2.AlgorithmSHA256)
 	hasher.Write([]byte("PIN"))
 	pinName, _ := tpm2.MarshalToBytes(tpm2.AlgorithmSHA256, tpm2.RawBytes(hasher.Sum(nil)))
+
+	hasher = hashAlgToGoHash(tpm2.AlgorithmSHA256)
+	hasher.Write([]byte("REVOKE"))
+	revokeIndexName, _ := tpm2.MarshalToBytes(tpm2.AlgorithmSHA256, tpm2.RawBytes(hasher.Sum(nil)))
+
+	policyRevokeContext := &mockResourceContext{handle: 0x0181ffff, name: revokeIndexName}
 
 	digestMatrix := make(map[tpm2.AlgorithmId]tpm2.DigestList)
 
@@ -58,10 +77,12 @@ func TestComputePolicy(t *testing.T) {
 				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][1]},
 				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
 				pinObjectName:        pinName,
+				policyRevokeContext:  policyRevokeContext,
+				policyRevokeCount:    10,
 			},
-			output: tpm2.Digest{0x7c, 0x53, 0x87, 0x2b, 0x7f, 0x16, 0x47, 0xdb, 0x80, 0x46, 0x83, 0x6e,
-				0x25, 0xc3, 0xa6, 0x66, 0x42, 0x1b, 0x9b, 0x9b, 0x98, 0xe9, 0x5b, 0x14, 0x8d, 0x63,
-				0xc4, 0x5d, 0x56, 0xa8, 0xc3, 0x5e},
+			output: tpm2.Digest{0xa8, 0x14, 0x47, 0x66, 0x4c, 0xbb, 0x32, 0x61, 0x8c, 0x9b, 0x31, 0xfa,
+				0xd6, 0x20, 0xdb, 0xff, 0xba, 0x66, 0x37, 0xdc, 0xbf, 0x85, 0x4e, 0x19, 0xac, 0xf5,
+				0xf8, 0xb4, 0x14, 0x99, 0xb8, 0x52},
 		},
 		{
 			desc: "SHA1Session",
@@ -74,9 +95,11 @@ func TestComputePolicy(t *testing.T) {
 				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][1]},
 				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
 				pinObjectName:        pinName,
+				policyRevokeContext:  policyRevokeContext,
+				policyRevokeCount:    4551,
 			},
-			output: tpm2.Digest{0x93, 0x21, 0x88, 0x6a, 0xbf, 0xbf, 0xa5, 0x1a, 0x90, 0x13, 0x9a, 0x47,
-				0xb9, 0x43, 0xdf, 0x09, 0xed, 0xed, 0x9e, 0x19},
+			output: tpm2.Digest{0xf1, 0xe0, 0xaa, 0x57, 0xfc, 0x19, 0x03, 0x86, 0x9a, 0x43, 0xca, 0x5a,
+				0x3a, 0x56, 0xb8, 0x48, 0xe7, 0x7f, 0xe7, 0xc7},
 		},
 		{
 			desc: "SHA256SessionWithSHA512PCRs",
@@ -89,10 +112,12 @@ func TestComputePolicy(t *testing.T) {
 				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA512][1]},
 				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA512][2]},
 				pinObjectName:        pinName,
+				policyRevokeContext:  policyRevokeContext,
+				policyRevokeCount:    403,
 			},
-			output: tpm2.Digest{0xa4, 0x6f, 0x82, 0x03, 0xc3, 0x32, 0x8b, 0xab, 0x22, 0x81, 0xcc, 0xc3,
-				0x4a, 0x08, 0x9f, 0x9b, 0x9c, 0x23, 0xa2, 0xfc, 0xe3, 0x06, 0xaf, 0xbe, 0xf4, 0x4b,
-				0x3f, 0x1a, 0x85, 0xae, 0xc7, 0x00},
+			output: tpm2.Digest{0x77, 0x9b, 0x50, 0x0a, 0x46, 0x37, 0x26, 0x3b, 0xbb, 0xde, 0xa6, 0xe4,
+				0x0d, 0xd1, 0x69, 0x94, 0x7d, 0x2c, 0x4c, 0xff, 0x72, 0xbc, 0x8e, 0xad, 0xf4, 0x86,
+				0x3b, 0x9c, 0xfb, 0x6a, 0x93, 0x69},
 		},
 		{
 			desc: "MultiplePCRValues",
@@ -109,10 +134,12 @@ func TestComputePolicy(t *testing.T) {
 					digestMatrix[tpm2.AlgorithmSHA256][2]},
 				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA512][2]},
 				pinObjectName:       pinName,
+				policyRevokeContext: policyRevokeContext,
+				policyRevokeCount:   5,
 			},
-			output: tpm2.Digest{0x6c, 0xa6, 0x19, 0x30, 0x5b, 0x63, 0x1a, 0xaa, 0xc9, 0x14, 0x47, 0x1d,
-				0x49, 0xbe, 0x49, 0x21, 0xa6, 0x8d, 0x85, 0xde, 0xe8, 0xfb, 0x36, 0xcc, 0xaa, 0xe3,
-				0x16, 0x7c, 0x61, 0x10, 0xf7, 0x79},
+			output: tpm2.Digest{0xb7, 0x15, 0xc1, 0xad, 0x46, 0x47, 0xd6, 0x1d, 0x73, 0x03, 0xb8, 0x26,
+				0xfa, 0x74, 0xc4, 0x72, 0x08, 0x71, 0xc6, 0x83, 0x99, 0x80, 0x4c, 0x9b, 0x4c, 0x89,
+				0x03, 0x52, 0x72, 0xed, 0xdc, 0x16},
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {
@@ -182,6 +209,23 @@ func TestExecutePolicy(t *testing.T) {
 	}
 	pinName, _ := pinPub.Name()
 
+	policyRevokeContext, err := createPolicyRevocationNvIndex(tpm, 0x0181ffff, nil)
+	if err != nil {
+		t.Fatalf("createPolicyRevocationNvIndex failed: %v", err)
+	}
+	defer func() {
+		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, policyRevokeContext, nil); err != nil {
+			t.Errorf("NVUndefineSpace failed: %v", err)
+		}
+	}()
+
+	var policyRevokeCount uint64
+	if c, err := tpm.NVReadCounter(policyRevokeContext, policyRevokeContext, nil); err != nil {
+		t.Fatalf("NVReadCounter failed: %v", err)
+	} else {
+		policyRevokeCount = c
+	}
+
 	digestMatrix := make(map[tpm2.AlgorithmId]tpm2.DigestList)
 	for _, data := range []string{"foo", "bar", "xyz", "1234", "5678"} {
 		for _, alg := range []tpm2.AlgorithmId{tpm2.AlgorithmSHA256, tpm2.AlgorithmSHA1} {
@@ -224,6 +268,8 @@ func TestExecutePolicy(t *testing.T) {
 				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][1]},
 				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
 				pinObjectName:        pinName,
+				policyRevokeContext:  policyRevokeContext,
+				policyRevokeCount:    policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -252,6 +298,8 @@ func TestExecutePolicy(t *testing.T) {
 				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][1]},
 				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
 				pinObjectName:        pinName,
+				policyRevokeContext:  policyRevokeContext,
+				policyRevokeCount:    policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -280,6 +328,8 @@ func TestExecutePolicy(t *testing.T) {
 				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA1][1]},
 				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA1][2]},
 				pinObjectName:        pinName,
+				policyRevokeContext:  policyRevokeContext,
+				policyRevokeCount:    policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -308,6 +358,8 @@ func TestExecutePolicy(t *testing.T) {
 				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][1]},
 				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
 				pinObjectName:        pinName,
+				policyRevokeContext:  policyRevokeContext,
+				policyRevokeCount:    policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -338,6 +390,8 @@ func TestExecutePolicy(t *testing.T) {
 				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][1]},
 				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
 				pinObjectName:        pinName,
+				policyRevokeContext:  policyRevokeContext,
+				policyRevokeCount:    policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -370,6 +424,8 @@ func TestExecutePolicy(t *testing.T) {
 					digestMatrix[tpm2.AlgorithmSHA256][1]},
 				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
 				pinObjectName:       pinName,
+				policyRevokeContext: policyRevokeContext,
+				policyRevokeCount:   policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -402,6 +458,8 @@ func TestExecutePolicy(t *testing.T) {
 					digestMatrix[tpm2.AlgorithmSHA256][3]},
 				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
 				pinObjectName:       pinName,
+				policyRevokeContext: policyRevokeContext,
+				policyRevokeCount:   policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -434,6 +492,8 @@ func TestExecutePolicy(t *testing.T) {
 					digestMatrix[tpm2.AlgorithmSHA256][3]},
 				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
 				pinObjectName:       pinName,
+				policyRevokeContext: policyRevokeContext,
+				policyRevokeCount:   policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -466,6 +526,8 @@ func TestExecutePolicy(t *testing.T) {
 					digestMatrix[tpm2.AlgorithmSHA256][3]},
 				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
 				pinObjectName:       pinName,
+				policyRevokeContext: policyRevokeContext,
+				policyRevokeCount:   policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -482,6 +544,36 @@ func TestExecutePolicy(t *testing.T) {
 				},
 			},
 			policyMatch: false,
+		},
+		{
+			desc: "RevokedPolicy",
+			alg:  tpm2.AlgorithmSHA256,
+			input: policyComputeInput{
+				secureBootPCRAlg:     tpm2.AlgorithmSHA256,
+				grubPCRAlg:           tpm2.AlgorithmSHA256,
+				snapModelPCRAlg:      tpm2.AlgorithmSHA256,
+				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][0]},
+				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][1]},
+				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
+				pinObjectName:        pinName,
+				policyRevokeContext:  policyRevokeContext,
+				policyRevokeCount:    policyRevokeCount - 1,
+			},
+			pcrEvents: []pcrEvent{
+				{
+					index: secureBootPCR,
+					data:  "foo",
+				},
+				{
+					index: grubPCR,
+					data:  "bar",
+				},
+				{
+					index: snapModelPCR,
+					data:  "xyz",
+				},
+			},
+			policyMatch: true,
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {
@@ -531,11 +623,18 @@ func TestExecutePolicy(t *testing.T) {
 			defer flushContext(t, tpm, sessionContext)
 
 			err = executePolicySession(tpm, sessionContext, pinContext, policyData, data.pinInput)
-			if data.pinInput != data.pinDefine {
+			if data.input.policyRevokeCount < policyRevokeCount {
 				if err == nil {
 					t.Fatalf("Expected an error")
 				}
-				if err != policySecretAuthFailError {
+				if err != ErrPolicyRevoked {
+					t.Errorf("Unexpected error: %v", err)
+				}
+			} else if data.pinInput != data.pinDefine {
+				if err == nil {
+					t.Fatalf("Expected an error")
+				}
+				if err != ErrPinFail {
 					t.Errorf("Unexpected error: %v", err)
 				}
 			} else if err != nil {
@@ -548,7 +647,8 @@ func TestExecutePolicy(t *testing.T) {
 			}
 
 			match := bytes.Equal(digest, policy)
-			if data.policyMatch && data.pinInput == data.pinDefine {
+			if data.policyMatch && data.pinInput == data.pinDefine &&
+				data.input.policyRevokeCount >= policyRevokeCount {
 				if !match {
 					t.Errorf("Session digest didn't match policy digest")
 				}

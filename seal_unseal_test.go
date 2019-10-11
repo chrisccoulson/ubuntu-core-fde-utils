@@ -22,6 +22,7 @@ package fdeutil
 import (
 	"bytes"
 	"crypto/rand"
+	"io"
 	"io/ioutil"
 	"os"
 	"strings"
@@ -55,9 +56,10 @@ func TestCreateAndUnseal(t *testing.T) {
 
 	dest := tmpDir + "/keydata"
 
-	if err := SealKeyToTPM(tpm, dest, Create, nil, key); err != nil {
+	if err := SealKeyToTPM(tpm, Create, dest, policyRevocationIndex, nil, key, nil); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
+	defer deleteKey(t, tpm, dest)
 
 	f, err := os.Open(dest)
 	if err != nil {
@@ -101,16 +103,17 @@ func TestCreateDoesntReplace(t *testing.T) {
 
 	dest := tmpDir + "/keydata"
 
-	if err := SealKeyToTPM(tpm, dest, Create, nil, key); err != nil {
+	if err := SealKeyToTPM(tpm, Create, dest, policyRevocationIndex, nil, key, nil); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
+	defer deleteKey(t, tpm, dest)
 
 	fi1, err := os.Stat(dest)
 	if err != nil {
 		t.Errorf("Cannot stat key data file: %v", err)
 	}
 
-	err = SealKeyToTPM(tpm, dest, Create, nil, key)
+	err = SealKeyToTPM(tpm, Create, dest, policyRevocationIndex, nil, key, nil)
 	if err == nil {
 		t.Fatalf("SealKeyToTPM Create should fail if there is already a file with the same path")
 	}
@@ -155,9 +158,10 @@ func TestUpdateAndUnseal(t *testing.T) {
 
 	dest := tmpDir + "/keydata"
 
-	if err := SealKeyToTPM(tpm, dest, Create, nil, key); err != nil {
+	if err := SealKeyToTPM(tpm, Create, dest, policyRevocationIndex, nil, key, nil); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
+	defer deleteKey(t, tpm, dest)
 
 	testPIN := "1234"
 
@@ -170,7 +174,7 @@ func TestUpdateAndUnseal(t *testing.T) {
 		t.Errorf("Cannot stat key data file: %v", err)
 	}
 
-	if err := SealKeyToTPM(tpm, dest, Update, nil, key); err != nil {
+	if err := SealKeyToTPM(tpm, Update, dest, 0, nil, key, nil); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
 
@@ -195,6 +199,62 @@ func TestUpdateAndUnseal(t *testing.T) {
 
 	if !bytes.Equal(key, keyUnsealed) {
 		t.Errorf("TPM returned the wrong key")
+	}
+}
+
+func TestRevoke(t *testing.T) {
+	tpm := openTPMForTesting(t)
+	defer closeTPM(t, tpm)
+
+	if err := ProvisionTPM(tpm, nil); err != nil && err != ErrClearRequiresPPI {
+		t.Fatalf("Failed to provision TPM for test: %v", err)
+	}
+
+	status, err := ProvisionStatus(tpm)
+	if err != nil {
+		t.Fatalf("Cannot check provision status: %v", err)
+	}
+	if status&AttrValidSRK == 0 {
+		t.Fatalf("No valid SRK for test")
+	}
+
+	key := make([]byte, 64)
+	rand.Read(key)
+
+	tmpDir, err := ioutil.TempDir("", "_TestRevoke_")
+	if err != nil {
+		t.Fatalf("Creating temporary directory failed: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dest := tmpDir + "/keydata"
+
+	if err := SealKeyToTPM(tpm, Create, dest, policyRevocationIndex, nil, key, nil); err != nil {
+		t.Fatalf("SealKeyToTPM failed: %v", err)
+	}
+	defer deleteKey(t, tpm, dest)
+
+	f, err := os.Open(dest)
+	if err != nil {
+		t.Fatalf("Cannot open file: %v", err)
+	}
+	defer f.Close()
+
+	var keydata bytes.Buffer
+	if _, err := io.Copy(&keydata, f); err != nil {
+		t.Fatalf("Cannot copy key data file: %v", err)
+	}
+
+	if err := SealKeyToTPM(tpm, Update, dest, 0, nil, key, nil); err != nil {
+		t.Fatalf("SealKeyToTPM failed: %v", err)
+	}
+
+	_, err = UnsealKeyFromTPM(tpm, &keydata, "")
+	if err == nil {
+		t.Fatalf("UnsealKeyFromTPM should have failed")
+	}
+	if err != ErrPolicyRevoked {
+		t.Errorf("Unexpected error: %v", err)
 	}
 }
 
@@ -225,7 +285,7 @@ func TestUpdateWithoutExisting(t *testing.T) {
 
 	dest := tmpDir + "/keydata"
 
-	err = SealKeyToTPM(tpm, dest, Update, nil, key)
+	err = SealKeyToTPM(tpm, Update, dest, 0, nil, key, nil)
 	if err == nil {
 		t.Fatalf("SealKeyToTPM Update should fail if there isn't a valid key data file")
 	}

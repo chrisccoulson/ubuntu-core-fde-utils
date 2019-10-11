@@ -21,11 +21,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
 
+	"github.com/chrisccoulson/go-tpm2"
 	"github.com/chrisccoulson/ubuntu-core-fde-utils"
 )
 
@@ -50,6 +53,8 @@ func (l *pathList) Set(value string) error {
 var update bool
 var masterKeyFile string
 var keyFile string
+var policyRevocationIndex string
+var ownerAuth string
 var kernels pathList
 var grubs pathList
 var shims pathList
@@ -58,7 +63,8 @@ func init() {
 	flag.BoolVar(&update, "update", false, "")
 	flag.StringVar(&masterKeyFile, "master-key-file", "", "")
 	flag.StringVar(&keyFile, "key-file", "", "")
-
+	flag.StringVar(&policyRevocationIndex, "policy-revocation-index", "", "")
+	flag.StringVar(&ownerAuth, "auth", "", "")
 	flag.Var(&kernels, "with-kernel", "")
 	flag.Var(&grubs, "with-grub", "")
 	flag.Var(&shims, "with-shim", "")
@@ -87,6 +93,16 @@ func main() {
 		}
 		in = f
 		defer in.Close()
+	}
+
+	var policyRevokeHandle tpm2.Handle
+	if policyRevocationIndex != "" {
+		if h, err := hex.DecodeString(policyRevocationIndex); err != nil {
+			fmt.Fprintf(os.Stderr, "Invalid -policy-revocation-index: %v\n", err)
+			os.Exit(1)
+		} else {
+			policyRevokeHandle = tpm2.Handle(binary.BigEndian.Uint32(h))
+		}
 	}
 
 	key, err := ioutil.ReadAll(in)
@@ -127,7 +143,8 @@ func main() {
 		params.LoadPaths = append(params.LoadPaths, s)
 	}
 
-	if err := fdeutil.SealKeyToTPM(tpm, keyFile, mode, params, key); err != nil {
+	if err := fdeutil.SealKeyToTPM(tpm, mode, keyFile, policyRevokeHandle, params, key,
+		ownerAuth); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot seal key to TPM: %v\n", err)
 		os.Exit(1)
 	}

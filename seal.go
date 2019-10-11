@@ -100,13 +100,26 @@ type SealParams struct {
 
 // SealKeyToTPM seals the provided disk encryption key to the storage hierarchy of a TPM. The caller is required
 // to provide a connection to the TPM. The sealed key object and associated metadata (creation data and ticket
-// for sealed key object, PIN object and auxiliary policy data) are all written to the file specified by dest. If
-// called with mode == Create, a new file will be created and this function will fail if there is already a file
-// with the same name. If called with mode == Update, this function expects there to be a valid key data file at
-// the location specified by dest. In this case, this function will preserve the PIN object (and therefore the PIN
-// object auth value) from the original file, and the original file will be updated atomically. The authorization
-// policy for sealed key object will be computed based on params.
-func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, mode SealMode, params *SealParams, key []byte) error {
+// for sealed key object, PIN object and auxiliary policy data) are all written to the file specified by dest.
+//
+// If called with mode == Create, a new file will be created and this function will fail if there is already a file
+// with the same name. When called with mode == Create, the caller is also expected to provide a handle at which
+// a NV index should be created for policy revocation via the policyRevocationIndex parameter. If the handle is
+// already in use, an error will be returned. The handle must be a valid NV index handle (MSO == 0x01), and the
+// choice of handle should take in to consideration the reserved indices from the "Registry of reserved TPM 2.0
+// handles and localities" specification. It is recommended that the handle is in the block reserved for owner
+// objects (0x01800000 - 0x01bfffff). When called with mode == Create, the owner authorization is required,
+// provided via ownerAuth. On a TPM that has been newly provisioned with ProvisionTPM, the owner authorization is
+// empty and the nil value can be passed here.
+//
+// If called with mode == Update, this function expects there to be a valid key data file at the location
+// specified by dest, and it expects NV indices associated with the key data file to be present. In this case,
+// this function will preserve the PIN object (and therefore the PIN object auth value) from the original file,
+// and the original file will be updated atomically.
+//
+// The authorization policy for sealed key object will be computed based on params.
+func SealKeyToTPM(tpm *tpm2.TPMContext, mode SealMode, dest string, policyRevocationIndex tpm2.Handle,
+	params *SealParams, key []byte, ownerAuth interface{}) error {
 	// Check that the key is the correct length
 	if len(key) != 64 {
 		return fmt.Errorf("expected a key length of 512 bits (got %d)", len(key)*8)
@@ -115,6 +128,7 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, mode SealMode, params *Seal
 	var pinPrivate tpm2.Private
 	var pinPublic *tpm2.Public
 	var pinFlags uint8
+	var policyRevokeContext tpm2.ResourceContext
 
 	// If we aren't creating a new key data file, load the PIN from the existing file, else create a new one
 	switch mode {
@@ -126,6 +140,10 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, mode SealMode, params *Seal
 		pinPrivate, pinPublic, err = createPINObject(tpm)
 		if err != nil {
 			return fmt.Errorf("cannot create new PIN object: %v", err)
+		}
+		policyRevokeContext, err = createPolicyRevocationNvIndex(tpm, policyRevocationIndex, ownerAuth)
+		if err != nil {
+			return fmt.Errorf("cannot create revocation counter: %v", err)
 		}
 		pinFlags = 0
 	case Update:
@@ -141,6 +159,18 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, mode SealMode, params *Seal
 		pinPrivate = existing.PinPrivate
 		pinPublic = existing.PinPublic
 		pinFlags = existing.PinFlags
+
+		policyRevokeContext, err = tpm.WrapHandle(existing.AuxData.PolicyData.PolicyRevokeHandle)
+		if err != nil {
+			return fmt.Errorf("cannot create context for revocation counter: %v", err)
+		}
+	}
+
+	var nextPolicyRevokeCount uint64
+	if c, err := tpm.NVReadCounter(policyRevokeContext, policyRevokeContext, nil); err != nil {
+		return fmt.Errorf("cannot read revocation counter: %v", err)
+	} else {
+		nextPolicyRevokeCount = c + 1
 	}
 
 	var secureBootDigests tpm2.DigestList
@@ -172,7 +202,9 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, mode SealMode, params *Seal
 		secureBootPCRDigests: secureBootDigests,
 		grubPCRDigests:       tpm2.DigestList{make(tpm2.Digest, 32)},
 		snapModelPCRDigests:  tpm2.DigestList{make(tpm2.Digest, 32)},
-		pinObjectName:        pinObjectName}
+		pinObjectName:        pinObjectName,
+		policyRevokeContext:  policyRevokeContext,
+		policyRevokeCount:    nextPolicyRevokeCount}
 
 	policyData, authPolicy, err := computePolicy(defaultHashAlgorithm, &policyComputeIn)
 
@@ -230,6 +262,35 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, mode SealMode, params *Seal
 
 	if err := data.writeToFile(dest); err != nil {
 		return fmt.Errorf("cannot write key data file: %v", err)
+	}
+
+	if err := tpm.NVIncrement(policyRevokeContext, policyRevokeContext, nil); err != nil {
+		return fmt.Errorf("cannot revoke old authorization policies: %v", err)
+	}
+
+	return nil
+}
+
+func DeleteKey(tpm *tpm2.TPMContext, path string, ownerAuth interface{}) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("cannot open key data file: %v", err)
+	}
+
+	var data keyData
+	if _, _, err := data.loadAndIntegrityCheck(f, tpm, true); err != nil {
+		return fmt.Errorf("cannot load key data file: %v", err)
+	}
+
+	policyRevokeContext, err := tpm.WrapHandle(data.AuxData.PolicyData.PolicyRevokeHandle)
+	if err == nil {
+		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, policyRevokeContext, ownerAuth); err != nil {
+			return fmt.Errorf("cannot undefine policy revocation NV index: %v", err)
+		}
+	}
+
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("cannot remove key data file: %v", err)
 	}
 
 	return nil

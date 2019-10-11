@@ -26,6 +26,10 @@ import (
 	"github.com/chrisccoulson/go-tpm2"
 )
 
+const (
+	policyRevocationIndex = tpm2.Handle(0x0181ffff)
+)
+
 var (
 	useTpm         = flag.Bool("use-tpm", false, "")
 	tpmPathForTest = flag.String("tpm-path", "/dev/tpm0", "")
@@ -35,6 +39,12 @@ var (
 	mssimTpmPort      = flag.Uint("mssim-tpm-port", 2321, "")
 	mssimPlatformPort = flag.Uint("mssim-platform-port", 2322, "")
 )
+
+func deleteKey(t *testing.T, tpm *tpm2.TPMContext, path string) {
+	if err := DeleteKey(tpm, path, nil); err != nil {
+		t.Errorf("DeleteKey failed: %v", err)
+	}
+}
 
 func flushContext(t *testing.T, tpm *tpm2.TPMContext, context tpm2.ResourceContext) {
 	if err := tpm.FlushContext(context); err != nil {
