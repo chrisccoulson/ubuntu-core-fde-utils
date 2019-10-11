@@ -28,19 +28,21 @@ import (
 )
 
 var (
-	clear bool
-	lockoutAuth string
+	clear         bool
+	lockoutAuth   string
 	noLockoutAuth bool
-	ownerAuth string
-	requestClear bool
+	ownerAuth     string
+	requestClear  bool
 )
 
 func init() {
-	flag.BoolVar(&clear, "clear", false, "")
-	flag.StringVar(&lockoutAuth, "lockout-auth", "", "")
-	flag.BoolVar(&noLockoutAuth, "no-lockout-auth", false, "")
-	flag.StringVar(&ownerAuth, "owner-auth", "", "")
-	flag.BoolVar(&requestClear, "request-clear", false, "")
+	flag.BoolVar(&clear, "clear", false, "Attempt to clear the TPM before provisioning")
+	flag.StringVar(&lockoutAuth, "lockout-auth", "", "The current lockout hierarchy authorization value")
+	flag.BoolVar(&noLockoutAuth, "no-lockout-auth", false,
+		"Don't perform provisioning actions that require the use of the lockout hierarchy authorization")
+	flag.StringVar(&ownerAuth, "owner-auth", "", "The current storage hierarchy authorization value")
+	flag.BoolVar(&requestClear, "request-clear", false,
+		"Request to clear the TPM via the physical presence interface")
 }
 
 func main() {
@@ -53,6 +55,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Failed to request clearing the TPM via the PPI: %v\n", err)
 			os.Exit(1)
 		}
+		fmt.Println("Request to clear the TPM submitted successfully. Now perform a system restart")
 		return
 	}
 
@@ -85,7 +88,28 @@ func main() {
 
 	if err := fdeutil.ProvisionTPM(tpm, mode, []byte(newLockoutAuth), []byte(ownerAuth),
 		[]byte(lockoutAuth)); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to provision the TPM: %v\n", err)
+		switch err {
+		case fdeutil.ErrClearRequiresPPI:
+			fmt.Fprintf(os.Stderr,
+				"Clearing requires the use of the physical presence interface. Re-run with "+
+					"-request-clear\n")
+		case fdeutil.ErrRequiresLockoutAuth:
+			fmt.Fprintf(os.Stderr,
+				"The TPM indicates that the lockout hierarchy has an authorization value. "+
+					"Either re-run with -lockout-auth <auth> or request to clear the TPM "+
+					"with -request-clear if the authorization value isn't known\n")
+		case fdeutil.ErrLockoutAuthFail:
+			fmt.Fprintf(os.Stderr, "The lockout hierarchy authorization value provided is incorrect\n")
+		case fdeutil.ErrInLockout:
+			fmt.Fprintf(os.Stderr,
+				"The lockout hierarchy is in dictionary attack lockout mode. Either wait for "+
+					"the recovery time to expire, or request to clear the TPM with "+
+					"-request-clear\n")
+		case fdeutil.ErrOwnerAuthFail:
+			fmt.Fprintf(os.Stderr, "The storage hierarchy authorization value provided is incorrect\n")
+		default:
+			fmt.Fprintf(os.Stderr, "Failed to provision the TPM: %v\n", err)
+		}
 		os.Exit(1)
 	}
 }
