@@ -26,11 +26,10 @@ import (
 const (
 	srkHandle tpm2.Handle = 0x81000000
 
-	pinSetHint uint8 = 1 << 0
-
 	// SHA-256 is mandatory to exist on every PC-Client TPM
 	// FIXME: Dynamically select algorithms based on what's available on the device
-	defaultHashAlgorithm tpm2.AlgorithmId = tpm2.AlgorithmSHA256
+	defaultHashAlgorithm    tpm2.AlgorithmId = tpm2.AlgorithmSHA256
+	signingKeyHashAlgorithm tpm2.AlgorithmId = tpm2.AlgorithmSHA256
 )
 
 var (

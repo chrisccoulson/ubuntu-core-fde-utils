@@ -60,6 +60,8 @@ type policyComputeInput struct {
 	grubPCRDigests          tpm2.DigestList
 	snapModelPCRDigests     tpm2.DigestList
 	pinObjectName           tpm2.Name
+	pinIndexHandle          tpm2.Handle
+	pinIndexName            tpm2.Name
 	policyRevokeIndexHandle tpm2.Handle
 	policyRevokeIndexName   tpm2.Name
 	policyRevokeCount       uint64
@@ -73,6 +75,7 @@ type policyData struct {
 	SecureBootORDigests     tpm2.DigestList
 	GrubORDigests           tpm2.DigestList
 	SnapModelORDigests      tpm2.DigestList
+	PinIndexHandle          tpm2.Handle
 	PolicyRevokeIndexHandle tpm2.Handle
 	PolicyRevokeCount       uint64
 }
@@ -122,6 +125,63 @@ func initTrialPolicyDigest(alg tpm2.AlgorithmId) tpm2.Digest {
 	return make(tpm2.Digest, digestSize)
 }
 
+func trialPolicyUpdate(alg tpm2.AlgorithmId, currentDigest tpm2.Digest, command tpm2.CommandCode, arg2 tpm2.Name,
+	arg3 tpm2.Nonce) tpm2.Digest {
+	h := hashAlgToGoHash(alg)
+	h.Write(currentDigest)
+	binary.Write(h, binary.BigEndian, command)
+	h.Write(arg2)
+
+	intermediateDigest := h.Sum(nil)
+
+	h = hashAlgToGoHash(alg)
+	h.Write(intermediateDigest)
+	h.Write(arg3)
+
+	return h.Sum(nil)
+}
+
+func trialPolicySigned(alg tpm2.AlgorithmId, currentDigest tpm2.Digest, authName tpm2.Name,
+	policyRef tpm2.Nonce) tpm2.Digest {
+	return trialPolicyUpdate(alg, currentDigest, tpm2.CommandPolicySigned, authName, policyRef)
+}
+
+func trialPolicyCommandCode(alg tpm2.AlgorithmId, currentDigest tpm2.Digest,
+	command tpm2.CommandCode) tpm2.Digest {
+	h := hashAlgToGoHash(alg)
+	h.Write(currentDigest)
+	binary.Write(h, binary.BigEndian, tpm2.CommandPolicyCommandCode)
+	binary.Write(h, binary.BigEndian, command)
+
+	return h.Sum(nil)
+}
+
+func trialPolicyAuthValue(alg tpm2.AlgorithmId, currentDigest tpm2.Digest) tpm2.Digest {
+	h := hashAlgToGoHash(alg)
+	h.Write(currentDigest)
+	binary.Write(h, binary.BigEndian, tpm2.CommandPolicyAuthValue)
+
+	return h.Sum(nil)
+}
+
+func trialPolicyOR(alg tpm2.AlgorithmId, pHashList tpm2.DigestList) (tpm2.Digest, error) {
+	if len(pHashList) > 8 {
+		return nil, errors.New("cannot have more than 8 digests in a PolicyOR")
+	}
+	digests := new(bytes.Buffer)
+	for _, digest := range pHashList {
+		digests.Write(digest)
+	}
+	resetPolicyDigest := initTrialPolicyDigest(alg)
+
+	h := hashAlgToGoHash(alg)
+	h.Write(resetPolicyDigest)
+	binary.Write(h, binary.BigEndian, tpm2.CommandPolicyOR)
+	digests.WriteTo(h)
+
+	return h.Sum(nil), nil
+}
+
 func ensureSufficientORDigests(digests tpm2.DigestList) tpm2.DigestList {
 	if len(digests) == 0 {
 		// This is really an error - return nothing here and let the consumer of this handle the error
@@ -131,6 +191,19 @@ func ensureSufficientORDigests(digests tpm2.DigestList) tpm2.DigestList {
 		return digests
 	}
 	return tpm2.DigestList{digests[0], digests[0]}
+}
+
+func trialPolicyPCR(alg tpm2.AlgorithmId, currentDigest tpm2.Digest, pcrs tpm2.PCRSelectionList,
+	pcrDigest tpm2.Digest) (tpm2.Digest, error) {
+	h := hashAlgToGoHash(alg)
+	h.Write(currentDigest)
+	binary.Write(h, binary.BigEndian, tpm2.CommandPolicyPCR)
+	if err := tpm2.MarshalToWriter(h, pcrs); err != nil {
+		return nil, fmt.Errorf("cannot marshal pcrs: %v", err)
+	}
+	h.Write(pcrDigest)
+
+	return h.Sum(nil), nil
 }
 
 func makePCRSelectionList(alg tpm2.AlgorithmId, index int) tpm2.PCRSelectionList {
@@ -152,51 +225,9 @@ func computePCRDigest(alg tpm2.AlgorithmId, pcrs tpm2.PCRSelectionList, digests 
 	return h.Sum(nil)
 }
 
-func trialPolicyPCR(alg tpm2.AlgorithmId, currentDigest tpm2.Digest, pcrs tpm2.PCRSelectionList,
-	pcrDigest tpm2.Digest) (tpm2.Digest, error) {
-	h := hashAlgToGoHash(alg)
-	h.Write(currentDigest)
-	binary.Write(h, binary.BigEndian, tpm2.CommandPolicyPCR)
-	if err := tpm2.MarshalToWriter(h, pcrs); err != nil {
-		return nil, fmt.Errorf("cannot marshal pcrs: %v", err)
-	}
-	h.Write(pcrDigest)
-
-	return h.Sum(nil), nil
-}
-
-func trialPolicyOR(alg tpm2.AlgorithmId, pHashList tpm2.DigestList) (tpm2.Digest, error) {
-	if len(pHashList) > 8 {
-		return nil, errors.New("cannot have more than 8 digests in a PolicyOR")
-	}
-	digests := new(bytes.Buffer)
-	for _, digest := range pHashList {
-		digests.Write(digest)
-	}
-	resetPolicyDigest := initTrialPolicyDigest(alg)
-
-	h := hashAlgToGoHash(alg)
-	h.Write(resetPolicyDigest)
-	binary.Write(h, binary.BigEndian, tpm2.CommandPolicyOR)
-	digests.WriteTo(h)
-
-	return h.Sum(nil), nil
-}
-
 func trialPolicySecret(alg tpm2.AlgorithmId, currentDigest tpm2.Digest, name tpm2.Name,
 	policyRef tpm2.Nonce) tpm2.Digest {
-	h := hashAlgToGoHash(alg)
-	h.Write(currentDigest)
-	binary.Write(h, binary.BigEndian, tpm2.CommandPolicySecret)
-	h.Write(name)
-
-	intermediateDigest := h.Sum(nil)
-
-	h = hashAlgToGoHash(alg)
-	h.Write(intermediateDigest)
-	h.Write(policyRef)
-
-	return h.Sum(nil)
+	return trialPolicyUpdate(alg, currentDigest, tpm2.CommandPolicySecret, name, policyRef)
 }
 
 func trialPolicyNV(alg tpm2.AlgorithmId, currentDigest tpm2.Digest, operandB tpm2.Operand, offset uint16,
@@ -284,7 +315,7 @@ func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData
 	binary.BigEndian.PutUint64(operandB, input.policyRevokeCount)
 	policy = trialPolicyNV(alg, policy, operandB, 0, tpm2.OpUnsignedLE, input.policyRevokeIndexName)
 
-	policy = trialPolicySecret(alg, policy, input.pinObjectName, nil)
+	policy = trialPolicySecret(alg, policy, input.pinIndexName, nil)
 
 	return &policyData{Algorithm: alg,
 		SecureBootPCRAlg:        input.secureBootPCRAlg,
@@ -293,6 +324,7 @@ func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData
 		SecureBootORDigests:     secureBootORDigests,
 		GrubORDigests:           grubORDigests,
 		SnapModelORDigests:      snapModelORDigests,
+		PinIndexHandle:          input.pinIndexHandle,
 		PolicyRevokeIndexHandle: input.policyRevokeIndexHandle,
 		PolicyRevokeCount:       input.policyRevokeCount}, policy, nil
 }
@@ -344,7 +376,7 @@ func executePolicySessionPCRAssertions(tpm *tpm2.TPMContext, sessionContext tpm2
 	return nil
 }
 
-func executePolicySession(tpm *tpm2.TPMContext, sessionContext, pinContext tpm2.ResourceContext, input *policyData,
+func executePolicySession(tpm *tpm2.TPMContext, sessionContext tpm2.ResourceContext, input *policyData,
 	pin string) error {
 	if err := executePolicySessionPCRAssertions(tpm, sessionContext, input); err != nil {
 		return fmt.Errorf("cannot execute PCR assertions: %v", err)
@@ -368,7 +400,16 @@ func executePolicySession(tpm *tpm2.TPMContext, sessionContext, pinContext tpm2.
 		return fmt.Errorf("cannot execute PolicyNV assertion: %v", err)
 	}
 
-	pinSessionContext, err := tpm.StartAuthSession(nil, pinContext, tpm2.SessionTypeHMAC, nil,
+	srkContext, err := tpm.WrapHandle(srkHandle)
+	if err != nil {
+		return fmt.Errorf("cannot obtain context for SRK: %v", err)
+	}
+	pinIndexContext, err := tpm.WrapHandle(input.PinIndexHandle)
+	if err != nil {
+		return fmt.Errorf("cannot obtain context for PIN NV index: %v", err)
+	}
+
+	pinSessionContext, err := tpm.StartAuthSession(srkContext, pinIndexContext, tpm2.SessionTypeHMAC, nil,
 		defaultHashAlgorithm, []byte(pin))
 	if err != nil {
 		return fmt.Errorf("cannot start HMAC session for PIN verification: %v", err)
@@ -376,7 +417,7 @@ func executePolicySession(tpm *tpm2.TPMContext, sessionContext, pinContext tpm2.
 	defer tpm.FlushContext(pinSessionContext)
 
 	pinSession := tpm2.Session{Context: pinSessionContext}
-	if _, _, err := tpm.PolicySecret(pinContext, sessionContext, nil, nil, 0, &pinSession); err != nil {
+	if _, _, err := tpm.PolicySecret(pinIndexContext, sessionContext, nil, nil, 0, &pinSession); err != nil {
 		switch e := err.(type) {
 		case tpm2.TPMSessionError:
 			if e.Code == tpm2.ErrorAuthFail {

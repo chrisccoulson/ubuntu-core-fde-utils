@@ -30,7 +30,6 @@ func NewKeydata() *keyData {
 		KeyPublic:         &tpm2.Public{},
 		KeyCreationData:   &tpm2.CreationData{},
 		KeyCreationTicket: &tpm2.TkCreation{},
-		PinPublic:         &tpm2.Public{},
 	}
 }
 
