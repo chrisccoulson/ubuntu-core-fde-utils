@@ -53,27 +53,28 @@ const (
 )
 
 type policyComputeInput struct {
-	secureBootPCRAlg     tpm2.AlgorithmId
-	grubPCRAlg           tpm2.AlgorithmId
-	snapModelPCRAlg      tpm2.AlgorithmId
-	secureBootPCRDigests tpm2.DigestList
-	grubPCRDigests       tpm2.DigestList
-	snapModelPCRDigests  tpm2.DigestList
-	pinObjectName        tpm2.Name
-	policyRevokeContext  tpm2.ResourceContext
-	policyRevokeCount    uint64
+	secureBootPCRAlg        tpm2.AlgorithmId
+	grubPCRAlg              tpm2.AlgorithmId
+	snapModelPCRAlg         tpm2.AlgorithmId
+	secureBootPCRDigests    tpm2.DigestList
+	grubPCRDigests          tpm2.DigestList
+	snapModelPCRDigests     tpm2.DigestList
+	pinObjectName           tpm2.Name
+	policyRevokeIndexHandle tpm2.Handle
+	policyRevokeIndexName   tpm2.Name
+	policyRevokeCount       uint64
 }
 
 type policyData struct {
-	Algorithm           tpm2.AlgorithmId
-	SecureBootPCRAlg    tpm2.AlgorithmId
-	GrubPCRAlg          tpm2.AlgorithmId
-	SnapModelPCRAlg     tpm2.AlgorithmId
-	SecureBootORDigests tpm2.DigestList
-	GrubORDigests       tpm2.DigestList
-	SnapModelORDigests  tpm2.DigestList
-	PolicyRevokeHandle  tpm2.Handle
-	PolicyRevokeCount   uint64
+	Algorithm               tpm2.AlgorithmId
+	SecureBootPCRAlg        tpm2.AlgorithmId
+	GrubPCRAlg              tpm2.AlgorithmId
+	SnapModelPCRAlg         tpm2.AlgorithmId
+	SecureBootORDigests     tpm2.DigestList
+	GrubORDigests           tpm2.DigestList
+	SnapModelORDigests      tpm2.DigestList
+	PolicyRevokeIndexHandle tpm2.Handle
+	PolicyRevokeCount       uint64
 }
 
 func hashAlgToGoHash(hashAlg tpm2.AlgorithmId) hash.Hash {
@@ -281,19 +282,19 @@ func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData
 
 	operandB := make([]byte, 8)
 	binary.BigEndian.PutUint64(operandB, input.policyRevokeCount)
-	policy = trialPolicyNV(alg, policy, operandB, 0, tpm2.OpUnsignedLE, input.policyRevokeContext.Name())
+	policy = trialPolicyNV(alg, policy, operandB, 0, tpm2.OpUnsignedLE, input.policyRevokeIndexName)
 
 	policy = trialPolicySecret(alg, policy, input.pinObjectName, nil)
 
 	return &policyData{Algorithm: alg,
-		SecureBootPCRAlg:    input.secureBootPCRAlg,
-		GrubPCRAlg:          input.grubPCRAlg,
-		SnapModelPCRAlg:     input.snapModelPCRAlg,
-		SecureBootORDigests: secureBootORDigests,
-		GrubORDigests:       grubORDigests,
-		SnapModelORDigests:  snapModelORDigests,
-		PolicyRevokeHandle:  input.policyRevokeContext.Handle(),
-		PolicyRevokeCount:   input.policyRevokeCount}, policy, nil
+		SecureBootPCRAlg:        input.secureBootPCRAlg,
+		GrubPCRAlg:              input.grubPCRAlg,
+		SnapModelPCRAlg:         input.snapModelPCRAlg,
+		SecureBootORDigests:     secureBootORDigests,
+		GrubORDigests:           grubORDigests,
+		SnapModelORDigests:      snapModelORDigests,
+		PolicyRevokeIndexHandle: input.policyRevokeIndexHandle,
+		PolicyRevokeCount:       input.policyRevokeCount}, policy, nil
 }
 
 func swallowPolicyORValueError(err error) error {
@@ -349,7 +350,7 @@ func executePolicySession(tpm *tpm2.TPMContext, sessionContext, pinContext tpm2.
 		return fmt.Errorf("cannot execute PCR assertions: %v", err)
 	}
 
-	policyRevokeContext, err := tpm.WrapHandle(input.PolicyRevokeHandle)
+	policyRevokeContext, err := tpm.WrapHandle(input.PolicyRevokeIndexHandle)
 	if err != nil {
 		return fmt.Errorf("cannot create context for policy revocation NV index: %v", err)
 	}
