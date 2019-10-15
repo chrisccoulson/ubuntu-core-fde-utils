@@ -369,7 +369,7 @@ func executePolicySession(tpm *tpm2.TPMContext, sessionContext, pinContext tpm2.
 	}
 
 	pinSessionContext, err := tpm.StartAuthSession(nil, pinContext, tpm2.SessionTypeHMAC, nil,
-		defaultHashAlgorithm, []byte(pin))
+		defaultSessionHashAlgorithm, []byte(pin))
 	if err != nil {
 		return fmt.Errorf("cannot start HMAC session for PIN verification: %v", err)
 	}

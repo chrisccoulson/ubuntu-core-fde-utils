@@ -27,7 +27,7 @@ import (
 )
 
 var (
-	template = tpm2.Public{
+	pinTemplate = tpm2.Public{
 		Type:    tpm2.AlgorithmKeyedHash,
 		NameAlg: tpm2.AlgorithmSHA256,
 		Attrs:   tpm2.AttrFixedTPM | tpm2.AttrFixedParent | tpm2.AttrUserWithAuth,
@@ -43,7 +43,7 @@ func createPINObject(tpm *tpm2.TPMContext) (tpm2.Private, *tpm2.Public, error) {
 
 	sensitive := tpm2.SensitiveCreate{Data: []byte("PIN")}
 
-	priv, pub, _, _, _, err := tpm.Create(srkContext, &sensitive, &template, nil, nil, nil)
+	priv, pub, _, _, _, err := tpm.Create(srkContext, &sensitive, &pinTemplate, nil, nil, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("cannot create object: %v", err)
 	}
@@ -72,7 +72,7 @@ func ChangePIN(tpm *tpm2.TPMContext, path string, oldAuth, newAuth string) error
 	}
 
 	sessionContext, err := tpm.StartAuthSession(srkContext, pinContext, tpm2.SessionTypeHMAC, &paramEncryptAlg,
-		defaultHashAlgorithm, []byte(oldAuth))
+		defaultSessionHashAlgorithm, []byte(oldAuth))
 	if err != nil {
 		return fmt.Errorf("cannot start auth session: %v", err)
 	}

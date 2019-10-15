@@ -30,6 +30,10 @@ import (
 	"github.com/snapcore/snapd/snap"
 )
 
+const (
+	pcrAlgorithm tpm2.AlgorithmId = tpm2.AlgorithmSHA256
+)
+
 type SealMode int
 
 const (
@@ -180,13 +184,13 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, mode SealMode, dest string, policyRevoca
 	var secureBootDigests tpm2.DigestList
 	var err error
 	if params != nil {
-		secureBootDigests, err = computeSecureBootPolicyDigests(tpm, defaultHashAlgorithm, params)
+		secureBootDigests, err = computeSecureBootPolicyDigests(tpm, pcrAlgorithm, params)
 		if err != nil {
 			return fmt.Errorf("cannot compute secure boot policy digests: %v", err)
 		}
 	} else {
 		_, secureBootDigests, err = tpm.PCRRead(tpm2.PCRSelectionList{
-			tpm2.PCRSelection{Hash: defaultHashAlgorithm,
+			tpm2.PCRSelection{Hash: pcrAlgorithm,
 				Select: tpm2.PCRSelectionData{secureBootPCR}}})
 		if err != nil {
 			return fmt.Errorf("cannot read secure boot PCR value: %v", err)
@@ -200,9 +204,9 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, mode SealMode, dest string, policyRevoca
 	}
 
 	policyComputeIn := policyComputeInput{
-		secureBootPCRAlg:        defaultHashAlgorithm,
-		grubPCRAlg:              defaultHashAlgorithm,
-		snapModelPCRAlg:         defaultHashAlgorithm,
+		secureBootPCRAlg:        pcrAlgorithm,
+		grubPCRAlg:              pcrAlgorithm,
+		snapModelPCRAlg:         pcrAlgorithm,
 		secureBootPCRDigests:    secureBootDigests,
 		grubPCRDigests:          tpm2.DigestList{make(tpm2.Digest, 32)},
 		snapModelPCRDigests:     tpm2.DigestList{make(tpm2.Digest, 32)},
@@ -211,12 +215,12 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, mode SealMode, dest string, policyRevoca
 		policyRevokeIndexName:   policyRevokeIndexName,
 		policyRevokeCount:       nextPolicyRevokeCount}
 
-	policyData, authPolicy, err := computePolicy(defaultHashAlgorithm, &policyComputeIn)
+	policyData, authPolicy, err := computePolicy(sealedKeyNameAlgorithm, &policyComputeIn)
 
 	// Define the template for the sealed key object, using the calculated policy digest
 	template := tpm2.Public{
 		Type:       tpm2.AlgorithmKeyedHash,
-		NameAlg:    tpm2.AlgorithmSHA256,
+		NameAlg:    sealedKeyNameAlgorithm,
 		Attrs:      tpm2.AttrFixedTPM | tpm2.AttrFixedParent,
 		AuthPolicy: authPolicy,
 		Params: tpm2.PublicParamsU{
@@ -241,7 +245,7 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, mode SealMode, dest string, policyRevoca
 
 	// Create a session for command parameter encryption
 	sessionContext, err := tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypeHMAC, &paramEncryptAlg,
-		defaultHashAlgorithm, nil)
+		defaultSessionHashAlgorithm, nil)
 	if err != nil {
 		return fmt.Errorf("cannot create session for encryption: %v", err)
 	}

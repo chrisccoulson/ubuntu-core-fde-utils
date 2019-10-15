@@ -104,8 +104,8 @@ func ProvisionTPM(tpm *tpm2.TPMContext, lockoutAuth []byte) error {
 	}
 
 	sessionContext, err :=
-		tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypeHMAC, &paramEncryptAlg, defaultHashAlgorithm,
-			nil)
+		tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypeHMAC, &paramEncryptAlg,
+			defaultSessionHashAlgorithm, nil)
 	if err != nil {
 		return fmt.Errorf("cannot start session for command parameter encryption: %v", err)
 	}
@@ -174,7 +174,7 @@ func checkForValidSRK(tpm *tpm2.TPMContext) (bool, error) {
 	h.Write(srkContext.Name())
 
 	alg := make([]byte, 2)
-	binary.BigEndian.PutUint16(alg, uint16(tpm2.AlgorithmSHA256))
+	binary.BigEndian.PutUint16(alg, uint16(srkTemplate.NameAlg))
 
 	expectedQualifiedName := h.Sum(alg)
 	if !bytes.Equal(expectedQualifiedName, qualifiedName) {
