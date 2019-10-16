@@ -50,19 +50,16 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interf
 
 	// Create and load a signing key
 	template := tpm2.Public{
-		Type:    tpm2.AlgorithmRSA,
+		Type:    tpm2.AlgorithmKeyedHash,
 		NameAlg: tpm2.AlgorithmSHA256,
 		Attrs: tpm2.AttrFixedTPM | tpm2.AttrFixedParent | tpm2.AttrSensitiveDataOrigin |
 			tpm2.AttrUserWithAuth | tpm2.AttrSign,
 		Params: tpm2.PublicParamsU{
-			Data: &tpm2.RSAParams{
-				Symmetric: tpm2.SymDefObject{Algorithm: tpm2.AlgorithmNull},
-				Scheme: tpm2.RSAScheme{
-					Scheme: tpm2.AlgorithmRSAPSS,
-					Details: tpm2.AsymSchemeU{
-						Data: &tpm2.SigSchemeRSAPSS{HashAlg: tpm2.AlgorithmSHA256}}},
-				KeyBits:  2048,
-				Exponent: 0}}}
+			Data: &tpm2.KeyedHashParams{
+				Scheme: tpm2.KeyedHashScheme{
+					Scheme: tpm2.AlgorithmHMAC,
+					Details: tpm2.SchemeKeyedHashU{
+						Data: &tpm2.SchemeHMAC{HashAlg: tpm2.AlgorithmSHA256}}}}}}
 	priv, pub, _, _, _, err := tpm.Create(srkContext, nil, &template, nil, nil, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("cannot create signing key for initializing NV index: %v", err)
@@ -134,7 +131,6 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interf
 	if err := tpm.PolicyOR(sessionContext, authPolicies); err != nil {
 		return nil, nil, fmt.Errorf("cannot execute PolicyOR assertion to initialize NV index: %v", err)
 	}
-
 
 	// Initialize the index
 	session := tpm2.Session{Context: sessionContext}
