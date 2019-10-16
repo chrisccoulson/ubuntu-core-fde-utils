@@ -59,7 +59,6 @@ type policyComputeInput struct {
 	secureBootPCRDigests    tpm2.DigestList
 	grubPCRDigests          tpm2.DigestList
 	snapModelPCRDigests     tpm2.DigestList
-	pinObjectName           tpm2.Name
 	pinIndexHandle          tpm2.Handle
 	pinIndexName            tpm2.Name
 	policyRevokeIndexHandle tpm2.Handle

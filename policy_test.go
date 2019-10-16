@@ -81,7 +81,6 @@ func TestComputePolicy(t *testing.T) {
 				secureBootPCRDigests:    tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][0]},
 				grubPCRDigests:          tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][1]},
 				snapModelPCRDigests:     tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
-				pinObjectName:           pinName,
 				pinIndexHandle:          pinIndex,
 				pinIndexName:            pinName,
 				policyRevokeIndexHandle: policyRevocationIndex,
