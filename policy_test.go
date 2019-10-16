@@ -161,6 +161,9 @@ func TestComputePolicy(t *testing.T) {
 			if len(dataout.SnapModelORDigests) != len(data.input.snapModelPCRDigests) {
 				t.Errorf("Unexpected number of snap model OR digests")
 			}
+			if dataout.PinIndexHandle != data.input.pinIndexHandle {
+				t.Errorf("Unexpected PIN NV index handle")
+			}
 			if dataout.PolicyRevokeIndexHandle != data.input.policyRevokeIndexHandle {
 				t.Errorf("Unexpected policy revocation NV index handle")
 			}
