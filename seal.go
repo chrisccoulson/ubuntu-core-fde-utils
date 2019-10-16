@@ -130,13 +130,11 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, mode SealMode, dest string, policyRevoca
 		return fmt.Errorf("cannot create context for SRK handle: %v", err)
 	}
 
-	var pinIndexContext tpm2.ResourceContext
-	var pinIndexName tpm2.Name
+	var pinIndex tpm2.ResourceContext
 	var pinIndexPolicies tpm2.DigestList
 	var askForPinHint bool
 
-	var policyRevokeIndexContext tpm2.ResourceContext
-	var policyRevokeIndexName tpm2.Name
+	var policyRevokeIndex tpm2.ResourceContext
 
 	// If we are creating a new sealed key object, create the associated NV indices
 	switch mode {
@@ -145,18 +143,16 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, mode SealMode, dest string, policyRevoca
 			return errors.New("cannot create new key data file: file already exists")
 		}
 
-		pinIndexContext, pinIndexPolicies, err = createPinNvIndex(tpm, pinHandle, ownerAuth)
+		pinIndex, pinIndexPolicies, err = createPinNvIndex(tpm, pinHandle, ownerAuth)
 		if err != nil {
 			return fmt.Errorf("cannot create new pin NV index: %v", err)
 		}
-		pinIndexName = pinIndexContext.Name()
 
-		policyRevokeIndexContext, err =
+		policyRevokeIndex, err =
 			createPolicyRevocationNvIndex(tpm, policyRevocationHandle, ownerAuth)
 		if err != nil {
 			return fmt.Errorf("cannot create revocation counter: %v", err)
 		}
-		policyRevokeIndexName = policyRevokeIndexContext.Name()
 	case Update:
 		f, err := os.Open(dest)
 		if err != nil {
@@ -167,23 +163,21 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, mode SealMode, dest string, policyRevoca
 			return fmt.Errorf("cannot load existing key data file: %v", err)
 		}
 
-		pinIndexContext, err = tpm.WrapHandle(existing.AuxData.PolicyData.PinIndexHandle)
+		pinIndex, err = tpm.WrapHandle(existing.AuxData.PolicyData.PinIndexHandle)
 		if err != nil {
 			return fmt.Errorf("cannot create context for PIN index: %v", err)
 		}
 		pinIndexPolicies = existing.AuxData.PinIndexPolicyORDigests
-		pinIndexName = existing.AuxData.PinIndexName
 		askForPinHint = existing.AskForPinHint
 
-		policyRevokeIndexContext, err = tpm.WrapHandle(existing.AuxData.PolicyData.PolicyRevokeIndexHandle)
+		policyRevokeIndex, err = tpm.WrapHandle(existing.AuxData.PolicyData.PolicyRevokeIndexHandle)
 		if err != nil {
 			return fmt.Errorf("cannot create context for revocation counter: %v", err)
 		}
-		policyRevokeIndexName = existing.AuxData.PolicyRevokeIndexName
 	}
 
 	var nextPolicyRevokeCount uint64
-	if c, err := tpm.NVReadCounter(policyRevokeIndexContext, policyRevokeIndexContext, nil); err != nil {
+	if c, err := tpm.NVReadCounter(policyRevokeIndex, policyRevokeIndex, nil); err != nil {
 		return fmt.Errorf("cannot read revocation counter: %v", err)
 	} else {
 		nextPolicyRevokeCount = c + 1
@@ -207,17 +201,15 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, mode SealMode, dest string, policyRevoca
 
 	// Use the PCR digests and NV index names to generate a single policy digest
 	policyComputeIn := policyComputeInput{
-		secureBootPCRAlg:        defaultHashAlgorithm,
-		grubPCRAlg:              defaultHashAlgorithm,
-		snapModelPCRAlg:         defaultHashAlgorithm,
-		secureBootPCRDigests:    secureBootDigests,
-		grubPCRDigests:          tpm2.DigestList{make(tpm2.Digest, 32)},
-		snapModelPCRDigests:     tpm2.DigestList{make(tpm2.Digest, 32)},
-		pinIndexHandle:          pinIndexContext.Handle(),
-		pinIndexName:            pinIndexName,
-		policyRevokeIndexHandle: policyRevokeIndexContext.Handle(),
-		policyRevokeIndexName:   policyRevokeIndexName,
-		policyRevokeCount:       nextPolicyRevokeCount}
+		secureBootPCRAlg:     defaultHashAlgorithm,
+		grubPCRAlg:           defaultHashAlgorithm,
+		snapModelPCRAlg:      defaultHashAlgorithm,
+		secureBootPCRDigests: secureBootDigests,
+		grubPCRDigests:       tpm2.DigestList{make(tpm2.Digest, 32)},
+		snapModelPCRDigests:  tpm2.DigestList{make(tpm2.Digest, 32)},
+		pinIndex:             pinIndex,
+		policyRevokeIndex:    policyRevokeIndex,
+		policyRevokeCount:    nextPolicyRevokeCount}
 
 	policyData, authPolicy, err := computePolicy(defaultHashAlgorithm, &policyComputeIn)
 
@@ -234,9 +226,9 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, mode SealMode, dest string, policyRevoca
 	// Marshal the auxiliary policy data to calculate a digest that can be stored in the CreationData returned
 	// from the TPM. This allows us to have data that is cryptographically bound to the sealed key object
 	auxData := auxData{PolicyData: policyData,
-		PinIndexName:            pinIndexName,
+		PinIndexName:            pinIndex.Name(),
 		PinIndexPolicyORDigests: pinIndexPolicies,
-		PolicyRevokeIndexName:   policyRevokeIndexName}
+		PolicyRevokeIndexName:   policyRevokeIndex.Name()}
 	auxDataHash := sha256.New()
 	if err := tpm2.MarshalToWriter(auxDataHash, auxData); err != nil {
 		return fmt.Errorf("cannot marshal auxiliary policy data: %v", err)
@@ -272,7 +264,7 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, mode SealMode, dest string, policyRevoca
 		return fmt.Errorf("cannot write key data file: %v", err)
 	}
 
-	if err := tpm.NVIncrement(policyRevokeIndexContext, policyRevokeIndexContext, nil); err != nil {
+	if err := tpm.NVIncrement(policyRevokeIndex, policyRevokeIndex, nil); err != nil {
 		return fmt.Errorf("cannot revoke old authorization policies: %v", err)
 	}
 
