@@ -48,29 +48,33 @@ const (
 	secureBootPCR = 7
 	grubPCR       = 8
 	snapModelPCR  = 11
+
+	nvIndexBase tpm2.Handle = 0x018f0000
 )
 
-var policySecretAuthFailError = errors.New("cannot execute PolicySecret assertion: the authorization HMAC check " +
-	"failed and DA counter incremented")
-
 type policyComputeInput struct {
-	secureBootPCRAlg     tpm2.AlgorithmId
-	grubPCRAlg           tpm2.AlgorithmId
-	snapModelPCRAlg      tpm2.AlgorithmId
-	secureBootPCRDigests tpm2.DigestList
-	grubPCRDigests       tpm2.DigestList
-	snapModelPCRDigests  tpm2.DigestList
-	pinObjectName        tpm2.Name
+	secureBootPCRAlg        tpm2.AlgorithmId
+	grubPCRAlg              tpm2.AlgorithmId
+	snapModelPCRAlg         tpm2.AlgorithmId
+	secureBootPCRDigests    tpm2.DigestList
+	grubPCRDigests          tpm2.DigestList
+	snapModelPCRDigests     tpm2.DigestList
+	pinObjectName           tpm2.Name
+	policyRevokeIndexHandle tpm2.Handle
+	policyRevokeIndexName   tpm2.Name
+	policyRevokeCount       uint64
 }
 
 type policyData struct {
-	Algorithm           tpm2.AlgorithmId
-	SecureBootPCRAlg    tpm2.AlgorithmId
-	GrubPCRAlg          tpm2.AlgorithmId
-	SnapModelPCRAlg     tpm2.AlgorithmId
-	SecureBootORDigests tpm2.DigestList
-	GrubORDigests       tpm2.DigestList
-	SnapModelORDigests  tpm2.DigestList
+	Algorithm               tpm2.AlgorithmId
+	SecureBootPCRAlg        tpm2.AlgorithmId
+	GrubPCRAlg              tpm2.AlgorithmId
+	SnapModelPCRAlg         tpm2.AlgorithmId
+	SecureBootORDigests     tpm2.DigestList
+	GrubORDigests           tpm2.DigestList
+	SnapModelORDigests      tpm2.DigestList
+	PolicyRevokeIndexHandle tpm2.Handle
+	PolicyRevokeCount       uint64
 }
 
 func hashAlgToGoHash(hashAlg tpm2.AlgorithmId) hash.Hash {
@@ -87,6 +91,30 @@ func getDigestSize(alg tpm2.AlgorithmId) uint {
 		panic("Unknown digest algorithm")
 	}
 	return uint(known.size)
+}
+
+func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interface{}) (
+	tpm2.ResourceContext, error) {
+	public := tpm2.NVPublic{
+		Index:   handle,
+		NameAlg: tpm2.AlgorithmSHA256,
+		Attrs:   tpm2.MakeNVAttributes(tpm2.AttrNVAuthWrite|tpm2.AttrNVAuthRead, tpm2.NVTypeCounter),
+		Size:    8}
+
+	if err := tpm.NVDefineSpace(tpm2.HandleOwner, nil, &public, ownerAuth); err != nil {
+		return nil, fmt.Errorf("cannot define NV space: %v", err)
+	}
+
+	context, err := tpm.WrapHandle(handle)
+	if err != nil {
+		return nil, fmt.Errorf("cannot obtain context for new NV index: %v", err)
+	}
+
+	if err := tpm.NVIncrement(context, context, nil); err != nil {
+		return nil, fmt.Errorf("cannot increment new NV index: %v", err)
+	}
+
+	return context, nil
 }
 
 func initTrialPolicyDigest(alg tpm2.AlgorithmId) tpm2.Digest {
@@ -171,6 +199,24 @@ func trialPolicySecret(alg tpm2.AlgorithmId, currentDigest tpm2.Digest, name tpm
 	return h.Sum(nil)
 }
 
+func trialPolicyNV(alg tpm2.AlgorithmId, currentDigest tpm2.Digest, operandB tpm2.Operand, offset uint16,
+	operation tpm2.ArithmeticOp, name tpm2.Name) tpm2.Digest {
+	h := hashAlgToGoHash(alg)
+	h.Write(operandB)
+	binary.Write(h, binary.BigEndian, offset)
+	binary.Write(h, binary.BigEndian, operation)
+
+	args := h.Sum(nil)
+
+	h = hashAlgToGoHash(alg)
+	h.Write(currentDigest)
+	binary.Write(h, binary.BigEndian, tpm2.CommandPolicyNV)
+	h.Write(args)
+	h.Write(name)
+
+	return h.Sum(nil)
+}
+
 func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData, tpm2.Digest, error) {
 	if len(input.secureBootPCRDigests) == 0 {
 		return nil, nil, errors.New("no secure-boot digests provided")
@@ -233,15 +279,22 @@ func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData
 	if err != nil {
 		return nil, nil, fmt.Errorf("cannot execute PolicyOR of snap model digests: %v", err)
 	}
+
+	operandB := make([]byte, 8)
+	binary.BigEndian.PutUint64(operandB, input.policyRevokeCount)
+	policy = trialPolicyNV(alg, policy, operandB, 0, tpm2.OpUnsignedLE, input.policyRevokeIndexName)
+
 	policy = trialPolicySecret(alg, policy, input.pinObjectName, nil)
 
 	return &policyData{Algorithm: alg,
-		SecureBootPCRAlg:    input.secureBootPCRAlg,
-		GrubPCRAlg:          input.grubPCRAlg,
-		SnapModelPCRAlg:     input.snapModelPCRAlg,
-		SecureBootORDigests: secureBootORDigests,
-		GrubORDigests:       grubORDigests,
-		SnapModelORDigests:  snapModelORDigests}, policy, nil
+		SecureBootPCRAlg:        input.secureBootPCRAlg,
+		GrubPCRAlg:              input.grubPCRAlg,
+		SnapModelPCRAlg:         input.snapModelPCRAlg,
+		SecureBootORDigests:     secureBootORDigests,
+		GrubORDigests:           grubORDigests,
+		SnapModelORDigests:      snapModelORDigests,
+		PolicyRevokeIndexHandle: input.policyRevokeIndexHandle,
+		PolicyRevokeCount:       input.policyRevokeCount}, policy, nil
 }
 
 func swallowPolicyORValueError(err error) error {
@@ -297,6 +350,24 @@ func executePolicySession(tpm *tpm2.TPMContext, sessionContext, pinContext tpm2.
 		return fmt.Errorf("cannot execute PCR assertions: %v", err)
 	}
 
+	policyRevokeContext, err := tpm.WrapHandle(input.PolicyRevokeIndexHandle)
+	if err != nil {
+		return fmt.Errorf("cannot create context for policy revocation NV index: %v", err)
+	}
+
+	operandB := make([]byte, 8)
+	binary.BigEndian.PutUint64(operandB, input.PolicyRevokeCount)
+	if err := tpm.PolicyNV(policyRevokeContext, policyRevokeContext, sessionContext, operandB, 0,
+		tpm2.OpUnsignedLE, nil); err != nil {
+		switch e := err.(type) {
+		case tpm2.TPMError:
+			if e.Code == tpm2.ErrorPolicy {
+				return ErrPolicyRevoked
+			}
+		}
+		return fmt.Errorf("cannot execute PolicyNV assertion: %v", err)
+	}
+
 	pinSessionContext, err := tpm.StartAuthSession(nil, pinContext, tpm2.SessionTypeHMAC, nil,
 		defaultHashAlgorithm, []byte(pin))
 	if err != nil {
@@ -309,7 +380,7 @@ func executePolicySession(tpm *tpm2.TPMContext, sessionContext, pinContext tpm2.
 		switch e := err.(type) {
 		case tpm2.TPMSessionError:
 			if e.Code == tpm2.ErrorAuthFail {
-				return policySecretAuthFailError
+				return ErrPinFail
 			}
 		}
 		return fmt.Errorf("cannot execute PolicySecret assertion: %v", err)

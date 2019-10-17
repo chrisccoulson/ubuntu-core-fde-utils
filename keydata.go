@@ -37,8 +37,9 @@ const (
 )
 
 type auxData struct {
-	PolicyData    *policyData
-	PinObjectName tpm2.Name
+	PolicyData            *policyData
+	PinObjectName         tpm2.Name
+	PolicyRevokeIndexName tpm2.Name
 }
 
 type keyData struct {
@@ -139,6 +140,25 @@ func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext,
 	if !bytes.Equal(d.AuxData.PinObjectName, pinContext.Name()) {
 		return nil, nil, errors.New("integrity check of file failed because the PIN object doesn't " +
 			"belong to the sealed key object")
+	}
+
+	// Ensure that the policy revocation NV index has the same name it had when the key was initially sealed
+	policyRevokeIndexContext, err := tpm.WrapHandle(d.AuxData.PolicyData.PolicyRevokeIndexHandle)
+	if err != nil {
+		switch e := err.(type) {
+		case tpm2.TPMHandleError:
+			if e.Code == tpm2.ErrorHandle {
+				return nil, nil,
+					errors.New("integrity check of file failed because the NV index used " +
+						"for authorization policy revocation has been deleted")
+			}
+		}
+		return nil, nil, fmt.Errorf("cannot obtain context for policy revocation NV index: %v", err)
+	}
+
+	if !bytes.Equal(d.AuxData.PolicyRevokeIndexName, policyRevokeIndexContext.Name()) {
+		return nil, nil, errors.New("integrity check of file failed because the NV index used for " +
+			"authorization policy revocation has been modified")
 	}
 
 	// All good! All TPM objects pass the TPM's integrity checks, and external data is all cryptographically

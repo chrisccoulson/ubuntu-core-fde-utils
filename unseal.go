@@ -28,8 +28,19 @@ import (
 )
 
 var (
+	// ErrLockout is returned from UnsealKeyFromTPM when the TPM is in dictionary-attack lockout mode. Until
+	// the TPM exits lockout mode, the key will need to be recovered via a mechanism that is independent of
+	// the TPM (eg, a recovery key)
 	ErrLockout = errors.New("the TPM is in DA lockout mode")
+
+	// ErrPinFail is returned from UnsealKeyFromTPM when the provided PIN is incorrect.
 	ErrPinFail = errors.New("the provided PIN is incorrect")
+
+	// ErrPolicyRevoked is returned from UnsealKeyFromTPM when the authorization policy for the key has been
+	// revoked. Unless there is another key object with an authorization policy that hasn't been revoked,
+	// the key will need to be recovered via a mechanism that is indepdendent of the TPM (eg, a recovery key).
+	// Once recovered, the key will need to be sealed to the TPM again with a new authorization policy.
+	ErrPolicyRevoked = errors.New("the authorization policy has been revoked")
 )
 
 func UnsealKeyFromTPM(tpm *tpm2.TPMContext, buf io.Reader, pin string) ([]byte, error) {
@@ -68,10 +79,14 @@ func UnsealKeyFromTPM(tpm *tpm2.TPMContext, buf io.Reader, pin string) ([]byte, 
 	defer tpm.FlushContext(sessionContext)
 
 	if err := executePolicySession(tpm, sessionContext, pinContext, data.AuxData.PolicyData, pin); err != nil {
-		if err == policySecretAuthFailError {
-			return nil, ErrPinFail
+		switch err {
+		case ErrPinFail:
+			fallthrough
+		case ErrPolicyRevoked:
+			return nil, err
+		default:
+			return nil, fmt.Errorf("cannot complete execution of policy session: %v", err)
 		}
-		return nil, fmt.Errorf("cannot complete execution of policy session: %v", err)
 	}
 
 	// Unseal
