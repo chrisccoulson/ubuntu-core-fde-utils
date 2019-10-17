@@ -56,7 +56,7 @@ func TestCreateAndUnseal(t *testing.T) {
 
 	dest := tmpDir + "/keydata"
 
-	if err := SealKeyToTPM(tpm, Create, dest, policyRevocationIndexHandle, pinIndexHandle, nil, key, nil); err != nil {
+	if err := SealKeyToTPM(tpm, dest, &testCreationParams, nil, key); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
 	defer deleteKey(t, tpm, dest)
@@ -103,7 +103,7 @@ func TestCreateDoesntReplace(t *testing.T) {
 
 	dest := tmpDir + "/keydata"
 
-	if err := SealKeyToTPM(tpm, Create, dest, policyRevocationIndexHandle, pinIndexHandle, nil, key, nil); err != nil {
+	if err := SealKeyToTPM(tpm, dest, &testCreationParams, nil, key); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
 	defer deleteKey(t, tpm, dest)
@@ -113,7 +113,7 @@ func TestCreateDoesntReplace(t *testing.T) {
 		t.Errorf("Cannot stat key data file: %v", err)
 	}
 
-	err = SealKeyToTPM(tpm, Create, dest, policyRevocationIndexHandle, pinIndexHandle, nil, key, nil)
+	err = SealKeyToTPM(tpm, dest, &testCreationParams, nil, key)
 	if err == nil {
 		t.Fatalf("SealKeyToTPM Create should fail if there is already a file with the same path")
 	}
@@ -158,7 +158,7 @@ func TestUpdateAndUnseal(t *testing.T) {
 
 	dest := tmpDir + "/keydata"
 
-	if err := SealKeyToTPM(tpm, Create, dest, policyRevocationIndexHandle, pinIndexHandle, nil, key, nil); err != nil {
+	if err := SealKeyToTPM(tpm, dest, &testCreationParams, nil, key); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
 	defer deleteKey(t, tpm, dest)
@@ -174,7 +174,7 @@ func TestUpdateAndUnseal(t *testing.T) {
 		t.Errorf("Cannot stat key data file: %v", err)
 	}
 
-	if err := SealKeyToTPM(tpm, Update, dest, 0, 0, nil, key, nil); err != nil {
+	if err := SealKeyToTPM(tpm, dest, nil, nil, key); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
 
@@ -229,7 +229,7 @@ func TestRevoke(t *testing.T) {
 
 	dest := tmpDir + "/keydata"
 
-	if err := SealKeyToTPM(tpm, Create, dest, policyRevocationIndexHandle, pinIndexHandle, nil, key, nil); err != nil {
+	if err := SealKeyToTPM(tpm, dest, &testCreationParams, nil, key); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
 	defer deleteKey(t, tpm, dest)
@@ -245,7 +245,7 @@ func TestRevoke(t *testing.T) {
 		t.Fatalf("Cannot copy key data file: %v", err)
 	}
 
-	if err := SealKeyToTPM(tpm, Update, dest, 0, 0, nil, key, nil); err != nil {
+	if err := SealKeyToTPM(tpm, dest, nil, nil, key); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
 
@@ -285,7 +285,7 @@ func TestUpdateWithoutExisting(t *testing.T) {
 
 	dest := tmpDir + "/keydata"
 
-	err = SealKeyToTPM(tpm, Update, dest, 0, 0, nil, key, nil)
+	err = SealKeyToTPM(tpm, dest, nil, nil, key)
 	if err == nil {
 		t.Fatalf("SealKeyToTPM Update should fail if there isn't a valid key data file")
 	}

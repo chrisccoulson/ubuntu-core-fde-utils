@@ -30,13 +30,6 @@ import (
 	"github.com/snapcore/snapd/snap"
 )
 
-type SealMode int
-
-const (
-	Create SealMode = iota
-	Update
-)
-
 type OSComponentImage interface {
 	ReadAll() ([]byte, error)
 }
@@ -98,36 +91,35 @@ type SealParams struct {
 	LoadPaths []*OSComponent
 }
 
-// SealKeyToTPM seals the provided disk encryption key to the storage hierarchy of a TPM. The caller is required
-// to provide a connection to the TPM. The sealed key object and associated metadata (creation data and ticket
-// for sealed key object, PIN data and auxiliary policy data) are all written to the file specified by dest.
+type CreationParams struct {
+	PolicyRevocationHandle tpm2.Handle
+	PinHandle              tpm2.Handle
+	OwnerAuth              interface{}
+}
+
+// SealKeyToTPM seals the provided disk encryption key to the storage hierarchy of a TPM. The caller is required to provide a
+// connection to the TPM. The sealed key object and associated metadata (creation data and ticket for sealed key object, PIN data
+// and auxiliary policy data) are all written to the file specified by dest.
 //
-// If called with mode == Create, a new file will be created and this function will fail if there is already a file
-// with the same name. When called with mode == Create, the caller is also expected to provide handles at which
-// NV indices should be created for policy revocation and PIN support via the policyRevocationHandle and pinHandle
-// parameters. If either handle is already in use, an error will be returned. The handles must be valid NV index
-// handles (MSO == 0x01), and the choice of handle should take in to consideration the reserved indices from the
-// "Registry of reserved TPM 2.0 handles and localities" specification. It is recommended that the handles are in
-// the block reserved for owner objects (0x01800000 - 0x01bfffff). When called with mode == Create, the owner
-// authorization is required, provided via ownerAuth. On a TPM that has been newly provisioned with ProvisionTPM,
-// the owner authorization is empty and the nil value can be passed here.
+// If called with a non-nil create parameter, a new file will be created and this function will fail if there is already a file with
+// the same name. In this mode, the caller is expected to provide handles at which NV indices should be created for policy revocation
+// and PIN support via the PolicyRevocationHandle and PinHandle fields of the CreationParams struct. If either handle is already in
+// use, an error will be returned. The handles must be valid NV index handles (MSO == 0x01), and the choice of handle should take in
+// to consideration the reserved indices from the "Registry of reserved TPM 2.0 handles and localities" specification. It is
+// recommended that the handles are in the block reserved for owner objects (0x01800000 - 0x01bfffff). When called in this mode, the
+// owner authorization is also required, provided via the OwnerAuth of the CreationParams struct. On a TPM that has been newly
+// provisioned with ProvisionTPM, the owner authorization is empty and the nil value can be passed here.
 //
-// If called with mode == Update, this function expects there to be a valid key data file at the location
-// specified by dest, and it expects NV indices associated with the key data file to be present. In this case,
-// this function will preserve the PIN object (and therefore the PIN object auth value) from the original file,
-// and the original file will be updated atomically.
+// If called with a nil create parameter, this function expects there to be a valid key data file at the location specified by dest,
+// and it expects NV indices associated with the key data file to be present on the TPM. In this case, this function will preserve the
+// TPM resources associated with the original file, and the original file will be updated atomically with the provided key and an
+// updated authorization policy.
 //
 // The authorization policy for sealed key object will be computed based on params.
-func SealKeyToTPM(tpm *tpm2.TPMContext, mode SealMode, dest string, policyRevocationHandle, pinHandle tpm2.Handle,
-	params *SealParams, key []byte, ownerAuth interface{}) error {
+func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, params *SealParams, key []byte) error {
 	// Check that the key is the correct length
 	if len(key) != 64 {
 		return fmt.Errorf("expected a key length of 512 bits (got %d)", len(key)*8)
-	}
-
-	srkContext, err := tpm.WrapHandle(srkHandle)
-	if err != nil {
-		return fmt.Errorf("cannot create context for SRK handle: %v", err)
 	}
 
 	var pinIndex tpm2.ResourceContext
@@ -136,24 +128,24 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, mode SealMode, dest string, policyRevoca
 
 	var policyRevokeIndex tpm2.ResourceContext
 
+	var err error
+
 	// If we are creating a new sealed key object, create the associated NV indices
-	switch mode {
-	case Create:
+	if create != nil {
 		if _, err := os.Stat(dest); err == nil || !os.IsNotExist(err) {
 			return errors.New("cannot create new key data file: file already exists")
 		}
 
-		pinIndex, pinIndexPolicies, err = createPinNvIndex(tpm, pinHandle, ownerAuth)
+		pinIndex, pinIndexPolicies, err = createPinNvIndex(tpm, create.PinHandle, create.OwnerAuth)
 		if err != nil {
 			return fmt.Errorf("cannot create new pin NV index: %v", err)
 		}
 
-		policyRevokeIndex, err =
-			createPolicyRevocationNvIndex(tpm, policyRevocationHandle, ownerAuth)
+		policyRevokeIndex, err = createPolicyRevocationNvIndex(tpm, create.PolicyRevocationHandle, create.OwnerAuth)
 		if err != nil {
 			return fmt.Errorf("cannot create revocation counter: %v", err)
 		}
-	case Update:
+	} else {
 		f, err := os.Open(dest)
 		if err != nil {
 			return fmt.Errorf("cannot open existing key data file to update: %v", err)
@@ -232,6 +224,11 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, mode SealMode, dest string, policyRevoca
 	auxDataHash := sha256.New()
 	if err := tpm2.MarshalToWriter(auxDataHash, auxData); err != nil {
 		return fmt.Errorf("cannot marshal auxiliary policy data: %v", err)
+	}
+
+	srkContext, err := tpm.WrapHandle(srkHandle)
+	if err != nil {
+		return fmt.Errorf("cannot create context for SRK handle: %v", err)
 	}
 
 	// Create a session for command parameter encryption

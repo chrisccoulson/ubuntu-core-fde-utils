@@ -122,9 +122,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	mode := fdeutil.Create
-	if update {
-		mode = fdeutil.Update
+	var create *fdeutil.CreationParams
+	if !update {
+		create = &fdeutil.CreationParams{PolicyRevocationHandle: policyRevokeHandle, PinHandle: pinHandle, OwnerAuth: ownerAuth}
 	}
 
 	tpm, err := fdeutil.ConnectToDefaultTPM()
@@ -154,8 +154,7 @@ func main() {
 		params.LoadPaths = append(params.LoadPaths, s)
 	}
 
-	if err := fdeutil.SealKeyToTPM(tpm, mode, keyFile, policyRevokeHandle, pinHandle, params, key,
-		ownerAuth); err != nil {
+	if err := fdeutil.SealKeyToTPM(tpm, keyFile, create, params, key); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot seal key to TPM: %v\n", err)
 		os.Exit(1)
 	}

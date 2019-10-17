@@ -26,10 +26,7 @@ import (
 	"github.com/chrisccoulson/go-tpm2"
 )
 
-const (
-	pinIndexHandle              = tpm2.Handle(0x0181fff0)
-	policyRevocationIndexHandle = tpm2.Handle(0x0181ffff)
-)
+var testCreationParams = CreationParams{PolicyRevocationHandle: 0x0181ffff, PinHandle: 0x0181fff0}
 
 var (
 	useTpm         = flag.Bool("use-tpm", false, "")

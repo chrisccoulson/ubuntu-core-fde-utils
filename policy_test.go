@@ -43,12 +43,12 @@ func TestComputePolicy(t *testing.T) {
 	hasher := hashAlgToGoHash(tpm2.AlgorithmSHA256)
 	hasher.Write([]byte("PIN"))
 	pinName, _ := tpm2.MarshalToBytes(tpm2.AlgorithmSHA256, tpm2.RawBytes(hasher.Sum(nil)))
-	pinIndex := &mockResourceContext{pinName, pinIndexHandle}
+	pinIndex := &mockResourceContext{pinName, testCreationParams.PinHandle}
 
 	hasher = hashAlgToGoHash(tpm2.AlgorithmSHA256)
 	hasher.Write([]byte("REVOKE"))
 	revokeIndexName, _ := tpm2.MarshalToBytes(tpm2.AlgorithmSHA256, tpm2.RawBytes(hasher.Sum(nil)))
-	revokeIndex := &mockResourceContext{revokeIndexName, policyRevocationIndexHandle}
+	revokeIndex := &mockResourceContext{revokeIndexName, testCreationParams.PolicyRevocationHandle}
 
 	digestMatrix := make(map[tpm2.AlgorithmId]tpm2.DigestList)
 
@@ -210,7 +210,7 @@ func TestExecutePolicy(t *testing.T) {
 		t.Fatalf("No valid SRK for test")
 	}
 
-	pinIndex, pinPolicies, err := createPinNvIndex(tpm, pinIndexHandle, nil)
+	pinIndex, pinPolicies, err := createPinNvIndex(tpm, testCreationParams.PinHandle, nil)
 	if err != nil {
 		t.Fatalf("createPinNvIndex failed: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestExecutePolicy(t *testing.T) {
 		}
 	}()
 
-	policyRevokeIndex, err := createPolicyRevocationNvIndex(tpm, policyRevocationIndexHandle, nil)
+	policyRevokeIndex, err := createPolicyRevocationNvIndex(tpm, testCreationParams.PolicyRevocationHandle, nil)
 	if err != nil {
 		t.Fatalf("createPolicyRevocationNvIndex failed: %v", err)
 	}
