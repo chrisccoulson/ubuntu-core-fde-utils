@@ -936,31 +936,7 @@ func computeSecureBootPolicyDigests(tpm *tpm2.TPMContext, alg tpm2.AlgorithmId, 
 		return nil, fmt.Errorf("cannot parse and validate event log: %v", err)
 	}
 
-	if !log.Algorithms.Contains(tcglog.AlgorithmId(alg)) {
-		return nil, errors.New("event log does not have the requested algorithm")
-	}
-
-	// Determine if the log has secure boot policy events
-	if _, exists := log.ExpectedPCRValues[tcglog.PCRIndex(secureBootPCR)]; !exists {
-		return nil, errors.New("event log is missing secure boot policy events")
-	}
-
-	// Read the current value of PCR7 (secure boot policy) to make sure it is consistent with the log
-	// TODO: Read this from the TPM during early boot and store the value somewhere, to allow other components
-	// to measure to this PCR without breaking our ability to detect if the log is sane
-	_, digests, err := tpm.PCRRead(tpm2.PCRSelectionList{
-		tpm2.PCRSelection{Hash: alg, Select: []int{secureBootPCR}}})
-	if err != nil {
-		return nil, fmt.Errorf("cannot read current secure boot policy PCR value from TPM: %v", err)
-	}
-	digestFromLog := log.ExpectedPCRValues[tcglog.PCRIndex(secureBootPCR)][tcglog.AlgorithmId(alg)]
-	if !bytes.Equal(digests[0], digestFromLog) {
-		return nil, fmt.Errorf("secure boot policy PCR value is not consistent with the events from the "+
-			"event log (TPM value: %x, value calculated from replaying log: %x)", digests[0],
-			digestFromLog)
-	}
-
-	// First pass over the log to make sure things on the current boot are sane.
+	// Make sure things on the current boot are sane.
 	for _, event := range log.ValidatedEvents {
 		switch event.Event.PCRIndex {
 		case bootManagerCodePCR:
@@ -1014,9 +990,6 @@ func computeSecureBootPolicyDigests(tpm *tpm2.TPMContext, alg tpm2.AlgorithmId, 
 					return nil, errors.New("the current boot was performed with validation " +
 						"disabled in Shim")
 				}
-			default:
-				return nil, fmt.Errorf("unexpected secure boot policy event type: %s",
-					event.Event.EventType)
 			}
 		}
 	}
@@ -1025,27 +998,6 @@ func computeSecureBootPolicyDigests(tpm *tpm2.TPMContext, alg tpm2.AlgorithmId, 
 	events, err := classifySecureBootEvents(log.ValidatedEvents)
 	if err != nil {
 		return nil, fmt.Errorf("cannot classify secure boot policy events from event log: %v", err)
-	}
-
-	// Pass over the classified secure boot policy events again and make sure the events that are interesting
-	// have the expected digests. If the digests are unexpected, then that means the events were measured
-	// in a way that we don't understand, and therefore we're unable to create a working policy.
-	for _, event := range events {
-		if event.class == eventClassUnclassified || event.class == eventClassDriverVerification {
-			continue
-		}
-
-		if len(event.event.IncorrectDigestValues) != 0 {
-			return nil, fmt.Errorf("digest for secure boot policy %s event at index %d is not "+
-				"consistent with the associated event data", event.event.Event.EventType,
-				event.event.Event.Index)
-		}
-
-		// Detect the problem fixed by https://github.com/rhboot/shim/pull/178 in shim
-		if event.event.MeasuredTrailingBytes > 0 {
-			return nil, fmt.Errorf("digest for secure boot policy %s event at index %d contains "+
-				"trailing bytes", event.event.Event.EventType, event.event.Event.Index)
-		}
 	}
 
 	gen := &secureBootPolicyGen{alg: alg, params: params}
