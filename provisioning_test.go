@@ -133,7 +133,7 @@ func TestProvisionNewTPM(t *testing.T) {
 			}
 
 			// Make sure ProvisionTPM didn't leak transient objects
-			handles, err := tpm.GetCapabilityHandles(tpm2.HandleTypeTransientObject,
+			handles, err := tpm.GetCapabilityHandles(tpm2.HandleTypeTransient.BaseHandle(),
 				tpm2.CapabilityMaxProperties)
 			if err != nil {
 				t.Fatalf("GetCapability failed: %v", err)
@@ -142,7 +142,7 @@ func TestProvisionNewTPM(t *testing.T) {
 				t.Errorf("ProvisionTPM leaked transient handles")
 			}
 
-			handles, err = tpm.GetCapabilityHandles(tpm2.HandleTypeLoadedSession,
+			handles, err = tpm.GetCapabilityHandles(tpm2.HandleTypeLoadedSession.BaseHandle(),
 				tpm2.CapabilityMaxProperties)
 			if err != nil {
 				t.Fatalf("GetCapability failed: %v", err)

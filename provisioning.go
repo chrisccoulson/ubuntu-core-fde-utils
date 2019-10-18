@@ -176,7 +176,7 @@ func ProvisionTPM(tpm *tpm2.TPMContext, mode ProvisionMode, newLockoutAuth, owne
 				return fmt.Errorf("cannot evict existing object at handle required by storage "+
 					"root key: %v", err)
 			}
-		case err != nil && !isHandleError(err):
+		case err != tpm2.ErrResourceDoesNotExist:
 			return fmt.Errorf("cannot create context for object at handle required by storage " +
 				"root key: %v", err)
 		}
@@ -256,7 +256,7 @@ func RequestTPMClearUsingPPI() error {
 func checkForValidSRK(tpm *tpm2.TPMContext) (bool, error) {
 	srkContext, err := tpm.WrapHandle(srkHandle)
 	if err != nil {
-		if isHandleError(err) {
+		if err == tpm2.ErrResourceDoesNotExist {
 			return false, nil
 		}
 		return false, fmt.Errorf("cannot create context for SRK: %v", err)

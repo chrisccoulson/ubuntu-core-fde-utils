@@ -26,13 +26,3 @@ func isLockoutError(err error) bool {
 	}
 	return false
 }
-
-func isHandleError(err error) bool {
-	switch e := err.(type) {
-	case tpm2.TPMHandleError:
-		if e.Code == tpm2.ErrorHandle {
-			return true
-		}
-	}
-	return false
-}
