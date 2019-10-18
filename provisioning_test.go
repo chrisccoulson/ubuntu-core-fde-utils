@@ -74,7 +74,7 @@ func TestProvisionNewTPM(t *testing.T) {
 	tpm, tcti := openTPMSimulatorForTesting(t)
 	defer closeTPM(t, tpm)
 
-	for _, data := range []struct{
+	for _, data := range []struct {
 		desc string
 		mode ProvisionMode
 	}{
@@ -166,12 +166,12 @@ func TestProvisionErrorHandling(t *testing.T) {
 		}
 	}
 
-	for _, data := range []struct{
-		desc string
-		mode ProvisionMode
+	for _, data := range []struct {
+		desc        string
+		mode        ProvisionMode
 		lockoutAuth []byte
-		prepare func(*testing.T)
-		err error
+		prepare     func(*testing.T)
+		err         error
 	}{
 		{
 			desc: "ErrRequiresLockoutAuth1",
@@ -199,7 +199,7 @@ func TestProvisionErrorHandling(t *testing.T) {
 				setLockoutAuth(t)
 			},
 			lockoutAuth: authValue,
-			err: ErrClearRequiresPPI,
+			err:         ErrClearRequiresPPI,
 		},
 		{
 			desc: "ErrLockoutAuthFail1",
@@ -208,7 +208,7 @@ func TestProvisionErrorHandling(t *testing.T) {
 				setLockoutAuth(t)
 			},
 			lockoutAuth: []byte("5678"),
-			err: ErrLockoutAuthFail,
+			err:         ErrLockoutAuthFail,
 		},
 		{
 			desc: "ErrLockoutAuthFail2",
@@ -217,7 +217,7 @@ func TestProvisionErrorHandling(t *testing.T) {
 				setLockoutAuth(t)
 			},
 			lockoutAuth: []byte("5678"),
-			err: ErrLockoutAuthFail,
+			err:         ErrLockoutAuthFail,
 		},
 		{
 			desc: "ErrInLockout1",
@@ -227,7 +227,7 @@ func TestProvisionErrorHandling(t *testing.T) {
 				tpm.HierarchyChangeAuth(tpm2.HandleLockout, nil, nil)
 			},
 			lockoutAuth: authValue,
-			err: ErrInLockout,
+			err:         ErrInLockout,
 		},
 		{
 			desc: "ErrInLockout2",
@@ -237,7 +237,7 @@ func TestProvisionErrorHandling(t *testing.T) {
 				tpm.HierarchyChangeAuth(tpm2.HandleLockout, nil, nil)
 			},
 			lockoutAuth: authValue,
-			err: ErrInLockout,
+			err:         ErrInLockout,
 		},
 		{
 			desc: "ErrOwnerAuthFail",
@@ -271,7 +271,7 @@ func TestRecreateSRK(t *testing.T) {
 	tpm, tcti := openTPMSimulatorForTesting(t)
 	defer closeTPM(t, tpm)
 
-	for _, data := range []struct{
+	for _, data := range []struct {
 		desc string
 		mode ProvisionMode
 	}{

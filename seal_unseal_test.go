@@ -190,7 +190,7 @@ func TestRevoke(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil, nil); err != nil && err != ErrClearRequiresPPI {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
@@ -246,7 +246,7 @@ func TestUpdateWithoutExisting(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, nil); err != nil && err != ErrClearRequiresPPI {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 

@@ -53,7 +53,7 @@ const (
 	// expected location.
 	AttrValidSRK ProvisionStatusAttributes = 1 << iota
 
-	AttrDAParamsOK // The dictionary attack lockout parameters are configured correctly.
+	AttrDAParamsOK         // The dictionary attack lockout parameters are configured correctly.
 	AttrOwnerClearDisabled // The ability to clear the TPM with owner authorization is disabled.
 
 	// AttrLockoutAuthSet indicates that the lockout hierarchy has an authorization value defined. This
@@ -75,13 +75,12 @@ const (
 )
 
 var (
-	ErrClearRequiresPPI = errors.New("clearing requires the use of the Physical Presence Interface")
-	ErrRequiresLockoutAuth =
-		errors.New("the TPM indicates the lockout hierarchy has an authorization value, but one hasn't " +
-			"been provided")
+	ErrClearRequiresPPI    = errors.New("clearing requires the use of the Physical Presence Interface")
+	ErrRequiresLockoutAuth = errors.New("the TPM indicates the lockout hierarchy has an authorization value, but one hasn't " +
+		"been provided")
 	ErrLockoutAuthFail = errors.New("an authorization check for the lockout hierarchy failed and the " +
 		"lockout hierarchy can not be used again for the configured recovery time")
-	ErrInLockout = errors.New("the lockout hierarchy can not be used because it is in lockout mode")
+	ErrInLockout     = errors.New("the lockout hierarchy can not be used because it is in lockout mode")
 	ErrOwnerAuthFail = errors.New("an authorization check for the storage hierarchy failed")
 
 	srkTemplate = tpm2.Public{
@@ -138,7 +137,7 @@ func ProvisionTPM(tpm *tpm2.TPMContext, mode ProvisionMode, newLockoutAuth, owne
 		return fmt.Errorf("cannot determine the current status: %v", err)
 	}
 
-	if mode != ProvisionModeWithoutLockout && status&AttrLockoutAuthSet > 0 && len(lockoutAuth) == 0{
+	if mode != ProvisionModeWithoutLockout && status&AttrLockoutAuthSet > 0 && len(lockoutAuth) == 0 {
 		// Don't needlessly trip the lockout hierarchy DA protection, as you only get one attempt
 		// at the lockout hierarchy authorization
 		return ErrRequiresLockoutAuth
@@ -168,8 +167,7 @@ func ProvisionTPM(tpm *tpm2.TPMContext, mode ProvisionMode, newLockoutAuth, owne
 		srkContext, err := tpm.WrapHandle(srkHandle)
 		switch {
 		case err == nil:
-			if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, ownerAuth);
-				err != nil {
+			if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, ownerAuth); err != nil {
 				if isAuthFailError(err) {
 					return ErrOwnerAuthFail
 				}
@@ -177,7 +175,7 @@ func ProvisionTPM(tpm *tpm2.TPMContext, mode ProvisionMode, newLockoutAuth, owne
 					"root key: %v", err)
 			}
 		case err != tpm2.ErrResourceDoesNotExist:
-			return fmt.Errorf("cannot create context for object at handle required by storage " +
+			return fmt.Errorf("cannot create context for object at handle required by storage "+
 				"root key: %v", err)
 		}
 
