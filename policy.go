@@ -145,14 +145,11 @@ func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData
 		return nil, nil, errors.New("no secure-boot digests provided")
 	}
 	secureBootORDigests := make(tpm2.DigestList, 0)
-	for i, digest := range input.secureBootPCRDigests {
+	for _, digest := range input.secureBootPCRDigests {
 		trial, _ := tpm2.ComputeAuthPolicy(alg)
 		pcrs := makePCRSelectionList(input.secureBootPCRAlg, secureBootPCR)
 		pcrDigest := computePCRDigest(alg, tpm2.DigestList{digest})
-		if err := trial.PolicyPCR(pcrDigest, pcrs); err != nil {
-			return nil, nil, fmt.Errorf("cannot execute PolicyPCR with secure-boot digest at index "+
-				"%d: %v", i, err)
-		}
+		trial.PolicyPCR(pcrDigest, pcrs)
 		secureBootORDigests = append(secureBootORDigests, trial.GetDigest())
 	}
 
@@ -160,15 +157,12 @@ func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData
 		return nil, nil, fmt.Errorf("no grub digests provided")
 	}
 	grubORDigests := make(tpm2.DigestList, 0)
-	for i, digest := range input.grubPCRDigests {
+	for _, digest := range input.grubPCRDigests {
 		trial, _ := tpm2.ComputeAuthPolicy(alg)
 		trial.PolicyOR(ensureSufficientORDigests(secureBootORDigests))
 		pcrs := makePCRSelectionList(input.grubPCRAlg, grubPCR)
 		pcrDigest := computePCRDigest(alg, tpm2.DigestList{digest})
-		if err := trial.PolicyPCR(pcrDigest, pcrs); err != nil {
-			return nil, nil, fmt.Errorf("cannot execute PolicyPCR with grub digest at index "+
-				"%d: %v", i, err)
-		}
+		trial.PolicyPCR(pcrDigest, pcrs)
 		grubORDigests = append(grubORDigests, trial.GetDigest())
 	}
 
@@ -176,15 +170,12 @@ func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData
 		return nil, nil, fmt.Errorf("no snap model digests provided")
 	}
 	snapModelORDigests := make(tpm2.DigestList, 0)
-	for i, digest := range input.snapModelPCRDigests {
+	for _, digest := range input.snapModelPCRDigests {
 		trial, _ := tpm2.ComputeAuthPolicy(alg)
 		trial.PolicyOR(ensureSufficientORDigests(grubORDigests))
 		pcrs := makePCRSelectionList(input.snapModelPCRAlg, snapModelPCR)
 		pcrDigest := computePCRDigest(alg, tpm2.DigestList{digest})
-		if err := trial.PolicyPCR(pcrDigest, pcrs); err != nil {
-			return nil, nil, fmt.Errorf("cannot execute PolicyPCR with snap model digest at index "+
-				"%d: %v", i, err)
-		}
+		trial.PolicyPCR(pcrDigest, pcrs)
 		snapModelORDigests = append(snapModelORDigests, trial.GetDigest())
 	}
 
