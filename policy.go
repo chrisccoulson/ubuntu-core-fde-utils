@@ -29,6 +29,8 @@ import (
 	"hash"
 
 	"github.com/chrisccoulson/go-tpm2"
+
+	"golang.org/x/xerrors"
 )
 
 var (
@@ -40,14 +42,6 @@ var (
 		tpm2.AlgorithmSHA256: {constructor: sha256.New, size: sha256.Size},
 		tpm2.AlgorithmSHA384: {constructor: sha512.New384, size: sha512.Size384},
 		tpm2.AlgorithmSHA512: {constructor: sha512.New, size: sha512.Size}}
-)
-
-const (
-	secureBootPCR = 7
-	grubPCR       = 8
-	snapModelPCR  = 11
-
-	nvIndexBase tpm2.Handle = 0x018f0000
 )
 
 type policyComputeInput struct {
@@ -92,8 +86,7 @@ func getDigestSize(alg tpm2.AlgorithmId) uint {
 	return uint(known.size)
 }
 
-func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interface{}) (
-	tpm2.ResourceContext, error) {
+func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interface{}) (tpm2.ResourceContext, error) {
 	public := tpm2.NVPublic{
 		Index:   handle,
 		NameAlg: tpm2.AlgorithmSHA256,
@@ -101,16 +94,16 @@ func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, own
 		Size:    8}
 
 	if err := tpm.NVDefineSpace(tpm2.HandleOwner, nil, &public, ownerAuth); err != nil {
-		return nil, fmt.Errorf("cannot define NV space: %v", err)
+		return nil, xerrors.Errorf("cannot define NV space: %w", err)
 	}
 
 	context, err := tpm.WrapHandle(handle)
 	if err != nil {
-		return nil, fmt.Errorf("cannot obtain context for new NV index: %v", err)
+		return nil, xerrors.Errorf("cannot obtain context for new NV index: %w", err)
 	}
 
 	if err := tpm.NVIncrement(context, context, nil); err != nil {
-		return nil, fmt.Errorf("cannot increment new NV index: %v", err)
+		return nil, xerrors.Errorf("cannot increment new NV index: %w", err)
 	}
 
 	return context, nil
@@ -145,14 +138,11 @@ func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData
 		return nil, nil, errors.New("no secure-boot digests provided")
 	}
 	secureBootORDigests := make(tpm2.DigestList, 0)
-	for i, digest := range input.secureBootPCRDigests {
+	for _, digest := range input.secureBootPCRDigests {
 		trial, _ := tpm2.ComputeAuthPolicy(alg)
 		pcrs := makePCRSelectionList(input.secureBootPCRAlg, secureBootPCR)
 		pcrDigest := computePCRDigest(alg, tpm2.DigestList{digest})
-		if err := trial.PolicyPCR(pcrDigest, pcrs); err != nil {
-			return nil, nil, fmt.Errorf("cannot execute PolicyPCR with secure-boot digest at index "+
-				"%d: %v", i, err)
-		}
+		trial.PolicyPCR(pcrDigest, pcrs)
 		secureBootORDigests = append(secureBootORDigests, trial.GetDigest())
 	}
 
@@ -160,15 +150,12 @@ func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData
 		return nil, nil, fmt.Errorf("no grub digests provided")
 	}
 	grubORDigests := make(tpm2.DigestList, 0)
-	for i, digest := range input.grubPCRDigests {
+	for _, digest := range input.grubPCRDigests {
 		trial, _ := tpm2.ComputeAuthPolicy(alg)
 		trial.PolicyOR(ensureSufficientORDigests(secureBootORDigests))
 		pcrs := makePCRSelectionList(input.grubPCRAlg, grubPCR)
 		pcrDigest := computePCRDigest(alg, tpm2.DigestList{digest})
-		if err := trial.PolicyPCR(pcrDigest, pcrs); err != nil {
-			return nil, nil, fmt.Errorf("cannot execute PolicyPCR with grub digest at index "+
-				"%d: %v", i, err)
-		}
+		trial.PolicyPCR(pcrDigest, pcrs)
 		grubORDigests = append(grubORDigests, trial.GetDigest())
 	}
 
@@ -176,15 +163,12 @@ func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData
 		return nil, nil, fmt.Errorf("no snap model digests provided")
 	}
 	snapModelORDigests := make(tpm2.DigestList, 0)
-	for i, digest := range input.snapModelPCRDigests {
+	for _, digest := range input.snapModelPCRDigests {
 		trial, _ := tpm2.ComputeAuthPolicy(alg)
 		trial.PolicyOR(ensureSufficientORDigests(grubORDigests))
 		pcrs := makePCRSelectionList(input.snapModelPCRAlg, snapModelPCR)
 		pcrDigest := computePCRDigest(alg, tpm2.DigestList{digest})
-		if err := trial.PolicyPCR(pcrDigest, pcrs); err != nil {
-			return nil, nil, fmt.Errorf("cannot execute PolicyPCR with snap model digest at index "+
-				"%d: %v", i, err)
-		}
+		trial.PolicyPCR(pcrDigest, pcrs)
 		snapModelORDigests = append(snapModelORDigests, trial.GetDigest())
 	}
 

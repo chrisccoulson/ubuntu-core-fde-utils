@@ -20,25 +20,33 @@
 package fdeutil
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/chrisccoulson/go-tpm2"
 )
 
-const (
-	srkHandle tpm2.Handle = 0x81000000
-
-	// SHA-256 is mandatory to exist on every PC-Client TPM
-	// FIXME: Dynamically select algorithms based on what's available on the device
-	defaultHashAlgorithm    tpm2.AlgorithmId = tpm2.AlgorithmSHA256
-	signingKeyHashAlgorithm tpm2.AlgorithmId = tpm2.AlgorithmSHA256
-
-	secureBootPCR = 7
-	grubPCR       = 8
-	snapModelPCR  = 11
-)
-
 var (
-	paramEncryptAlg = tpm2.SymDef{
-		Algorithm: tpm2.AlgorithmAES,
-		KeyBits:   tpm2.SymKeyBitsU{Data: uint16(128)},
-		Mode:      tpm2.SymModeU{Data: tpm2.AlgorithmCFB}}
+	ErrClearRequiresPPI = errors.New("clearing requires the use of the Physical Presence Interface")
+
+	ErrProvisioning  = errors.New("the TPM is not correctly provisioned")
+	ErrKeyFileExists = errors.New("a key data file already exists at the specified path")
+
+	ErrOwnerAuthFail = errors.New("an authorization check for the storage hierarchy failed")
 )
+
+type TPMResourceExistsError struct {
+	Handle tpm2.Handle
+}
+
+func (e TPMResourceExistsError) Error() string {
+	return fmt.Sprintf("a resource already exists on the TPM at handle 0x%08x", e.Handle)
+}
+
+type InvalidKeyFileError struct {
+	msg string
+}
+
+func (e InvalidKeyFileError) Error() string {
+	return fmt.Sprintf("invalid key data file: %s", e.msg)
+}

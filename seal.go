@@ -21,13 +21,14 @@ package fdeutil
 
 import (
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
 
 	"github.com/chrisccoulson/go-tpm2"
 	"github.com/snapcore/snapd/snap"
+
+	"golang.org/x/xerrors"
 )
 
 type OSComponentImage interface {
@@ -97,29 +98,54 @@ type CreationParams struct {
 	OwnerAuth              interface{}
 }
 
+func isNVIndexDefinedError(err error) bool {
+	var tpmError tpm2.TPMError
+	if !xerrors.As(err, &tpmError) {
+		return false
+	}
+	if tpmError.Code != tpm2.ErrorNVDefined {
+		return false
+	}
+	if tpmError.Command != tpm2.CommandNVDefineSpace {
+		return false
+	}
+	return true
+}
+
 // SealKeyToTPM seals the provided disk encryption key to the storage hierarchy of a TPM. The caller is required to provide a
 // connection to the TPM. The sealed key object and associated metadata (creation data and ticket for sealed key object, PIN data
 // and auxiliary policy data) are all written to the file specified by dest.
 //
-// If called with a non-nil create parameter, a new file will be created and this function will fail if there is already a file with
-// the same name. In this mode, the caller is expected to provide handles at which NV indices should be created for policy revocation
-// and PIN support via the PolicyRevocationHandle and PinHandle fields of the CreationParams struct. If either handle is already in
-// use, an error will be returned. The handles must be valid NV index handles (MSO == 0x01), and the choice of handle should take in
-// to consideration the reserved indices from the "Registry of reserved TPM 2.0 handles and localities" specification. It is
-// recommended that the handles are in the block reserved for owner objects (0x01800000 - 0x01bfffff). When called in this mode, the
-// owner authorization is also required, provided via the OwnerAuth of the CreationParams struct. On a TPM that has been newly
-// provisioned with ProvisionTPM, the owner authorization is empty and the nil value can be passed here.
-//
-// If called with a nil create parameter, this function expects there to be a valid key data file at the location specified by dest,
-// and it expects NV indices associated with the key data file to be present on the TPM. In this case, this function will preserve the
-// TPM resources associated with the original file, and the original file will be updated atomically with the provided key and an
-// updated authorization policy.
+// If the TPM is not correctly provisioned with a persistent storage root key at the expected location, it will return a
+// ErrProvisioning error. In this case, ProvisionTPM must be called before proceeding.
 //
 // The authorization policy for sealed key object will be computed based on params.
+//
+// If called with a non-nil create parameter, a new file will be created and this function will return a ErrKeyFileExists error if
+// there is already a file with the same name. In this mode, the caller is expected to provide handles at which NV indices should be
+// created for policy revocation and PIN support via the PolicyRevocationHandle and PinHandle fields of the CreationParams struct.
+// If either handle is already in use, a TPMResourceError error will be returned. The handles must be valid NV index handles
+// (MSO == 0x01), and the choice of handle should take in to consideration the reserved indices from the "Registry of reserved TPM 2.0
+// handles and localities" specification. It is recommended that the handles are in the block reserved for owner objects (0x01800000 -
+// 0x01bfffff). When called in this mode, the owner authorization is also required, provided via the OwnerAuth of the CreationParams
+// struct. If the provided owner authorization is incorrect, a ErrOwnerAuthFail error will be returned. On a TPM that has been newly
+// provisioned with ProvisionTPM, the owner authorization is empty and the nil value can be passed here.
+//
+// If called with a nil create parameter, this function operates in "reseal" mode where the provided key is sealed in the same way as
+// the create mode, including with an updated authorization policy. However, in this mode, other resources (eg, NV indices) associated
+// with the key are preserved. In this mode, a valid key data file is expected to be at the location specified by dest, and NV indices
+// associated with the key data file are expected to be present on the TPM. If any of those don't exist, or the file contains invalid
+// components or fails any integrity checks, a InvalidKeyFileError will be returned.
 func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, params *SealParams, key []byte) error {
 	// Check that the key is the correct length
 	if len(key) != 64 {
 		return fmt.Errorf("expected a key length of 512 bits (got %d)", len(key)*8)
+	}
+
+	if status, err := ProvisionStatus(tpm); err != nil {
+		return xerrors.Errorf("cannot determine the current provisioning status of the TPM: %w", err)
+	} else if status&AttrValidSRK == 0 {
+		return ErrProvisioning
 	}
 
 	var pinIndex tpm2.ResourceContext
@@ -133,44 +159,59 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 	// If we are creating a new sealed key object, create the associated NV indices
 	if create != nil {
 		if _, err := os.Stat(dest); err == nil || !os.IsNotExist(err) {
-			return errors.New("cannot create new key data file: file already exists")
+			return ErrKeyFileExists
 		}
 
 		pinIndex, pinIndexPolicies, err = createPinNvIndex(tpm, create.PinHandle, create.OwnerAuth)
 		if err != nil {
-			return fmt.Errorf("cannot create new pin NV index: %v", err)
+			switch {
+			case isNVIndexDefinedError(err):
+				return TPMResourceExistsError{create.PinHandle}
+			case isAuthFailError(err):
+				return ErrOwnerAuthFail
+			}
+			return xerrors.Errorf("cannot create new pin NV index: %w", err)
 		}
 
 		policyRevokeIndex, err = createPolicyRevocationNvIndex(tpm, create.PolicyRevocationHandle, create.OwnerAuth)
 		if err != nil {
-			return fmt.Errorf("cannot create revocation counter: %v", err)
+			switch {
+			case isNVIndexDefinedError(err):
+				return TPMResourceExistsError{create.PolicyRevocationHandle}
+			case isAuthFailError(err):
+				return ErrOwnerAuthFail
+			}
+			return xerrors.Errorf("cannot create revocation counter: %w", err)
 		}
 	} else {
 		f, err := os.Open(dest)
 		if err != nil {
-			return fmt.Errorf("cannot open existing key data file to update: %v", err)
+			if os.IsNotExist(err) {
+				return InvalidKeyFileError{"the key data file does not exist"}
+			}
+			return xerrors.Errorf("cannot open existing key data file to update: %w", err)
 		}
 		var existing keyData
 		if _, err := existing.loadAndIntegrityCheck(f, tpm, true); err != nil {
-			return fmt.Errorf("cannot load existing key data file: %v", err)
+			switch e := err.(type) {
+			case InvalidKeyFileError:
+				return e
+			}
+			return xerrors.Errorf("cannot load existing key data file: %w", err)
 		}
 
-		pinIndex, err = tpm.WrapHandle(existing.AuxData.PolicyData.PinIndexHandle)
-		if err != nil {
-			return fmt.Errorf("cannot create context for PIN index: %v", err)
-		}
+		// This can't fail, as keyData.loadAndIntegrityCheck already created it
+		pinIndex, _ = tpm.WrapHandle(existing.AuxData.PolicyData.PinIndexHandle)
 		pinIndexPolicies = existing.AuxData.PinIndexPolicyORDigests
 		askForPinHint = existing.AskForPinHint
 
-		policyRevokeIndex, err = tpm.WrapHandle(existing.AuxData.PolicyData.PolicyRevokeIndexHandle)
-		if err != nil {
-			return fmt.Errorf("cannot create context for revocation counter: %v", err)
-		}
+		// This can't fail, as keyData.loadAndIntegrityCheck already created it
+		policyRevokeIndex, _ = tpm.WrapHandle(existing.AuxData.PolicyData.PolicyRevokeIndexHandle)
 	}
 
 	var nextPolicyRevokeCount uint64
 	if c, err := tpm.NVReadCounter(policyRevokeIndex, policyRevokeIndex, nil); err != nil {
-		return fmt.Errorf("cannot read revocation counter: %v", err)
+		return xerrors.Errorf("cannot read revocation counter: %w", err)
 	} else {
 		nextPolicyRevokeCount = c + 1
 	}
@@ -187,7 +228,7 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 			tpm2.PCRSelection{Hash: defaultHashAlgorithm,
 				Select: tpm2.PCRSelectionData{secureBootPCR}}})
 		if err != nil {
-			return fmt.Errorf("cannot read secure boot PCR value: %v", err)
+			return xerrors.Errorf("cannot read secure boot PCR value: %w", err)
 		}
 	}
 
@@ -204,6 +245,9 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 		policyRevokeCount:    nextPolicyRevokeCount}
 
 	policyData, authPolicy, err := computePolicy(defaultHashAlgorithm, &policyComputeIn)
+	if err != nil {
+		return fmt.Errorf("cannot compute authorization policy: %v", err)
+	}
 
 	// Define the template for the sealed key object, using the calculated policy digest
 	template := tpm2.Public{
@@ -226,16 +270,13 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 		return fmt.Errorf("cannot marshal auxiliary policy data: %v", err)
 	}
 
-	srkContext, err := tpm.WrapHandle(srkHandle)
-	if err != nil {
-		return fmt.Errorf("cannot create context for SRK handle: %v", err)
-	}
+	// This can't fail, as ProvisionStatus already created it
+	srkContext, _ := tpm.WrapHandle(srkHandle)
 
 	// Create a session for command parameter encryption
-	sessionContext, err := tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypeHMAC, &paramEncryptAlg,
-		defaultHashAlgorithm, nil)
+	sessionContext, err := tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypeHMAC, &paramEncryptAlg, defaultHashAlgorithm, nil)
 	if err != nil {
-		return fmt.Errorf("cannot create session for encryption: %v", err)
+		return xerrors.Errorf("cannot create session for encryption: %w", err)
 	}
 	defer tpm.FlushContext(sessionContext)
 
@@ -244,7 +285,7 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 	priv, pub, creationData, _, creationTicket, err :=
 		tpm.Create(srkContext, &sensitive, &template, auxDataHash.Sum(nil), nil, nil, &session)
 	if err != nil {
-		return fmt.Errorf("cannot create sealed data object for key: %v", err)
+		return xerrors.Errorf("cannot create sealed data object for key: %w", err)
 	}
 
 	// Marshal the entire object (sealed key object, creation data, creation ticket and auxiliarya data) to
@@ -258,11 +299,11 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 		AuxData:           auxData}
 
 	if err := data.writeToFile(dest); err != nil {
-		return fmt.Errorf("cannot write key data file: %v", err)
+		return xerrors.Errorf("cannot write key data file: %v", err)
 	}
 
 	if err := tpm.NVIncrement(policyRevokeIndex, policyRevokeIndex, nil); err != nil {
-		return fmt.Errorf("cannot revoke old authorization policies: %v", err)
+		return xerrors.Errorf("cannot revoke old authorization policies: %w", err)
 	}
 
 	return nil
@@ -271,7 +312,7 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 func DeleteKey(tpm *tpm2.TPMContext, path string, ownerAuth interface{}) error {
 	f, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("cannot open key data file: %v", err)
+		return xerrors.Errorf("cannot open key data file: %w", err)
 	}
 
 	var data keyData
@@ -279,21 +320,25 @@ func DeleteKey(tpm *tpm2.TPMContext, path string, ownerAuth interface{}) error {
 		return fmt.Errorf("cannot load key data file: %v", err)
 	}
 
-	policyRevokeContext, err := tpm.WrapHandle(data.AuxData.PolicyData.PolicyRevokeIndexHandle)
-	if err == nil {
-		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, policyRevokeContext, ownerAuth); err != nil {
-			return fmt.Errorf("cannot undefine policy revocation NV index: %v", err)
+	// This can't fail, as loadAndIntegrity check creates these
+	policyRevokeContext, _ := tpm.WrapHandle(data.AuxData.PolicyData.PolicyRevokeIndexHandle)
+	pinContext, _ := tpm.WrapHandle(data.AuxData.PolicyData.PinIndexHandle)
+
+	if err := tpm.NVUndefineSpace(tpm2.HandleOwner, policyRevokeContext, ownerAuth); err != nil {
+		if isAuthFailError(err) {
+			return ErrOwnerAuthFail
 		}
+		return xerrors.Errorf("cannot undefine policy revocation NV index: %w", err)
 	}
-	pinContext, err := tpm.WrapHandle(data.AuxData.PolicyData.PinIndexHandle)
-	if err == nil {
-		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, pinContext, ownerAuth); err != nil {
-			return fmt.Errorf("cannot undefine NV index for PIN: %v", err)
+	if err := tpm.NVUndefineSpace(tpm2.HandleOwner, pinContext, ownerAuth); err != nil {
+		if isAuthFailError(err) {
+			return ErrOwnerAuthFail
 		}
+		return xerrors.Errorf("cannot undefine NV index for PIN: %w", err)
 	}
 
 	if err := os.Remove(path); err != nil {
-		return fmt.Errorf("cannot remove key data file: %v", err)
+		return xerrors.Errorf("cannot remove key data file: %v", err)
 	}
 
 	return nil

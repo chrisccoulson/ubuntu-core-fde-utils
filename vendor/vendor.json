@@ -3,16 +3,16 @@
 	"ignore": "test",
 	"package": [
 		{
-			"checksumSHA1": "r17dWvF0dyZBIvsKPtpjIhTAzwM=",
+			"checksumSHA1": "b8wYART5Xf5EzuNhBUnECH9Y+40=",
 			"path": "github.com/chrisccoulson/go-tpm2",
-			"revision": "96a1ed2c956e21e3f7c5c1bae80efaadfd6a1454",
-			"revisionTime": "2019-10-16T16:04:15Z"
+			"revision": "d29cd8daf1dabb183533e13a878c5a33460eb933",
+			"revisionTime": "2019-10-23T11:18:38Z"
 		},
 		{
-			"checksumSHA1": "PivTtD46tIChYSQcCe153L56W4Y=",
+			"checksumSHA1": "CR0DYGQPEl1gWGscQTRvtQnWInA=",
 			"path": "github.com/chrisccoulson/tcglog-parser",
-			"revision": "822d31beb246f9f3283345db965b97a5b5083abe",
-			"revisionTime": "2019-10-02T12:18:04Z"
+			"revision": "0f709e82f0e5ae78b9887a7e635e36399fb02a57",
+			"revisionTime": "2019-10-18T19:22:04Z"
 		},
 		{
 			"checksumSHA1": "wHGa5uteRxMMSHJLQZtcBpIIUcw=",
@@ -158,6 +158,18 @@
 			"path": "golang.org/x/sys/unix",
 			"revision": "dd2ff4accc098aceecb86b36eaa7829b2a17b1c9",
 			"revisionTime": "2018-03-01T08:23:35Z"
+		},
+		{
+			"checksumSHA1": "hurBRtR9I3o8NVs74ggKny2c4go=",
+			"path": "golang.org/x/xerrors",
+			"revision": "1b5146add8981d58be77b16229c0ff0f8bebd8c1",
+			"revisionTime": "2019-10-05T12:30:33Z"
+		},
+		{
+			"checksumSHA1": "LnzK4nslUNXBIfAt9PbXCJCvMdA=",
+			"path": "golang.org/x/xerrors/internal",
+			"revision": "1b5146add8981d58be77b16229c0ff0f8bebd8c1",
+			"revisionTime": "2019-10-05T12:30:33Z"
 		},
 		{
 			"checksumSHA1": "538I8ghUdvZa25NxgMUDpq14Qic=",

@@ -21,24 +21,20 @@ package fdeutil
 
 import (
 	"github.com/chrisccoulson/go-tpm2"
+
+	"golang.org/x/xerrors"
 )
 
-const (
-	srkHandle tpm2.Handle = 0x81000000
-
-	// SHA-256 is mandatory to exist on every PC-Client TPM
-	// FIXME: Dynamically select algorithms based on what's available on the device
-	defaultHashAlgorithm    tpm2.AlgorithmId = tpm2.AlgorithmSHA256
-	signingKeyHashAlgorithm tpm2.AlgorithmId = tpm2.AlgorithmSHA256
-
-	secureBootPCR = 7
-	grubPCR       = 8
-	snapModelPCR  = 11
-)
-
-var (
-	paramEncryptAlg = tpm2.SymDef{
-		Algorithm: tpm2.AlgorithmAES,
-		KeyBits:   tpm2.SymKeyBitsU{Data: uint16(128)},
-		Mode:      tpm2.SymModeU{Data: tpm2.AlgorithmCFB}}
-)
+func isAuthFailError(err error) bool {
+	var sessionErr tpm2.TPMSessionError
+	if !xerrors.As(err, &sessionErr) {
+		return false
+	}
+	switch sessionErr.Code {
+	case tpm2.ErrorAuthFail: // With DA implications
+		return true
+	case tpm2.ErrorBadAuth: // Without DA implications
+		return true
+	}
+	return false
+}

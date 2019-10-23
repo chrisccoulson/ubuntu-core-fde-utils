@@ -23,12 +23,13 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"os"
 	"reflect"
 
 	"github.com/chrisccoulson/go-tpm2"
+
+	"golang.org/x/xerrors"
 )
 
 type ProvisionStatusAttributes int
@@ -51,8 +52,6 @@ const (
 )
 
 var (
-	ErrClearRequiresPPI = errors.New("clearing requires the use of the Physical Presence Interface")
-
 	srkTemplate = tpm2.Public{
 		Type:    tpm2.AlgorithmRSA,
 		NameAlg: tpm2.AlgorithmSHA256,
@@ -136,18 +135,15 @@ func RequestTPMClearUsingPPI() error {
 func checkForValidSRK(tpm *tpm2.TPMContext) (bool, error) {
 	srkContext, err := tpm.WrapHandle(srkHandle)
 	if err != nil {
-		switch e := err.(type) {
-		case tpm2.TPMHandleError:
-			if e.Code == tpm2.ErrorHandle {
-				return false, nil
-			}
+		if err == tpm2.ErrResourceDoesNotExist {
+			return false, nil
 		}
-		return false, fmt.Errorf("cannot create context for SRK: %v", err)
+		return false, xerrors.Errorf("cannot create context for SRK: %w", err)
 	}
 
 	pub, _, qualifiedName, err := tpm.ReadPublic(srkContext)
 	if err != nil {
-		return false, fmt.Errorf("cannot read public part of SRK: %v", err)
+		return false, xerrors.Errorf("cannot read public part of SRK: %w", err)
 	}
 
 	if pub.Type != srkTemplate.Type {
@@ -188,14 +184,14 @@ func ProvisionStatus(tpm *tpm2.TPMContext) (ProvisionStatusAttributes, error) {
 	var out ProvisionStatusAttributes
 
 	if valid, err := checkForValidSRK(tpm); err != nil {
-		return 0, fmt.Errorf("cannot check for valid SRK: %v", err)
+		return 0, xerrors.Errorf("cannot check for valid SRK: %w", err)
 	} else if valid {
 		out |= AttrValidSRK
 	}
 
 	props, err := tpm.GetCapabilityTPMProperties(tpm2.PropertyMaxAuthFail, 3)
 	if err != nil {
-		return 0, fmt.Errorf("cannot fetch DA parameters: %v", err)
+		return 0, xerrors.Errorf("cannot fetch DA parameters: %w", err)
 	}
 	if props[0].Value == maxTries && props[1].Value == recoveryTime && props[2].Value == lockoutRecovery {
 		out |= AttrDAParamsOK
@@ -203,7 +199,7 @@ func ProvisionStatus(tpm *tpm2.TPMContext) (ProvisionStatusAttributes, error) {
 
 	props, err = tpm.GetCapabilityTPMProperties(tpm2.PropertyPermanent, 1)
 	if err != nil {
-		return 0, fmt.Errorf("cannot fetch permanent properties: %v", err)
+		return 0, xerrors.Errorf("cannot fetch permanent properties: %w", err)
 	}
 	if tpm2.PermanentAttributes(props[0].Value)&tpm2.AttrDisableClear > 0 {
 		out |= AttrOwnerClearDisabled

@@ -25,7 +25,6 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"strings"
 	"testing"
 )
 
@@ -117,7 +116,7 @@ func TestCreateDoesntReplace(t *testing.T) {
 	if err == nil {
 		t.Fatalf("SealKeyToTPM Create should fail if there is already a file with the same path")
 	}
-	if err.Error() != "cannot create new key data file: file already exists" {
+	if err != ErrKeyFileExists {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
@@ -289,7 +288,7 @@ func TestUpdateWithoutExisting(t *testing.T) {
 	if err == nil {
 		t.Fatalf("SealKeyToTPM Update should fail if there isn't a valid key data file")
 	}
-	if !strings.HasPrefix(err.Error(), "cannot open existing key data file to update: ") {
+	if err != ErrKeyFileDoesNotExist {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
