@@ -124,7 +124,7 @@ func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext, flu
 		switch e := err.(type) {
 		case *tpm2.TPMParameterError:
 			if e.Code == tpm2.ErrorTicket {
-				return nil, keyFileError{"integrity check of key data failed because the creation data or creation ticket aren't "+
+				return nil, keyFileError{"integrity check of key data failed because the creation data or creation ticket aren't " +
 					"cryptographically bound to the sealed key object"}
 			}
 		}
@@ -141,7 +141,7 @@ func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext, flu
 	}
 
 	if !bytes.Equal(h.Sum(nil), d.KeyCreationData.OutsideInfo) {
-		return nil, keyFileError{"integrity check of key data failed because the auxiliary data is not cryptographically bound to the "+
+		return nil, keyFileError{"integrity check of key data failed because the auxiliary data is not cryptographically bound to the " +
 			"sealed key object"}
 	}
 
