@@ -33,6 +33,12 @@ var pin string
 
 const (
 	masterKeyFilePath string = "/run/unlock.tmp"
+
+	genericExitCode            = 1
+	invalidKeyFileExitCode     = 2
+	tpmProvisioningErrExitCode = 3
+	tpmLockedOutExitCode       = 4
+	pinFailExitCode            = 5
 )
 
 func init() {
@@ -45,13 +51,13 @@ func main() {
 
 	if keyFile == "" {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device: missing -key-file\n")
-		os.Exit(1)
+		os.Exit(genericExitCode)
 	}
 
 	args := flag.Args()
 	if len(args) < 2 {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device: insufficient arguments\n")
-		os.Exit(1)
+		os.Exit(genericExitCode)
 	}
 
 	devicePath := args[0]
@@ -63,8 +69,8 @@ func main() {
 	} else {
 		f, err := os.Open(keyFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Cannot open input file: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(os.Stderr, "Cannot unlock device %s: cannot open key file: %v\n", devicePath, err)
+			os.Exit(invalidKeyFileExitCode)
 		}
 		in = f
 		defer in.Close()
@@ -80,14 +86,30 @@ func main() {
 	key, err := fdeutil.UnsealKeyFromTPM(tpm, in, pin)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: error unsealing key:: %v\n", devicePath, err)
-		os.Exit(1)
+		ret := genericExitCode
+		switch err {
+		case fdeutil.ErrProvisioning:
+			ret = tpmProvisioningErrExitCode
+		case fdeutil.ErrLockout:
+			ret = tpmLockedOutExitCode
+		case fdeutil.ErrPinFail:
+			ret = pinFailExitCode
+		case fdeutil.ErrPolicyRevoked:
+			ret = invalidKeyFileExitCode
+		case fdeutil.ErrPolicyFail:
+			ret = invalidKeyFileExitCode
+		default:
+			if _, ok := err.(fdeutil.InvalidKeyFileError); ok {
+				ret = invalidKeyFileExitCode
+			}
+		}
+		os.Exit(ret)
 	}
 
 	masterKeyFile, err := os.OpenFile(masterKeyFilePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: error creating temporary master key file: %v",
-			devicePath, err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: error creating temporary master key file: %v", devicePath, err)
+		os.Exit(genericExitCode)
 	}
 	defer func() {
 		defer os.Remove(masterKeyFilePath)
@@ -95,19 +117,16 @@ func main() {
 	}()
 
 	if _, err := masterKeyFile.Write(key); err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: error writing master key to temporary file: %v",
-			devicePath, err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: error writing master key to temporary file: %v", devicePath, err)
+		os.Exit(genericExitCode)
 	}
 
-	cmd := exec.Command("cryptsetup", "--type", "luks2", "--master-key-file", masterKeyFilePath, "open",
-		devicePath, name)
+	cmd := exec.Command("cryptsetup", "--type", "luks2", "--master-key-file", masterKeyFilePath, "open", devicePath, name)
 	cmd.Env = append(os.Environ(), "LD_PRELOAD=/lib/no-udev.so")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: cryptsetup execution failed: %v\n",
-			devicePath, err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: cryptsetup execution failed: %v\n", devicePath, err)
+		os.Exit(genericExitCode)
 	}
 }
