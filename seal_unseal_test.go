@@ -288,7 +288,10 @@ func TestUpdateWithoutExisting(t *testing.T) {
 	if err == nil {
 		t.Fatalf("SealKeyToTPM Update should fail if there isn't a valid key data file")
 	}
-	if err != ErrKeyFileDoesNotExist {
+	switch e := err.(type) {
+	case InvalidKeyFileError:
+		_ = e
+	default:
 		t.Errorf("Unexpected error: %v", err)
 	}
 

@@ -53,19 +53,27 @@ type keyData struct {
 	AuxData           auxData
 }
 
+type keyFileError struct {
+	msg string
+}
+
+func (e keyFileError) Error() string {
+	return e.msg
+}
+
 func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext, flushObjects bool) (
 	tpm2.ResourceContext, error) {
 	var version uint32
 	if err := tpm2.UnmarshalFromReader(buf, &version); err != nil {
-		return nil, InvalidKeyFileError{fmt.Sprintf("cannot unmarshal version number: %v", err)}
+		return nil, keyFileError{fmt.Sprintf("cannot unmarshal version number: %v", err)}
 	}
 
 	if version != currentVersion {
-		return nil, InvalidKeyFileError{fmt.Sprintf("unexpected version (%d)", version)}
+		return nil, keyFileError{fmt.Sprintf("unexpected version (%d)", version)}
 	}
 
 	if err := tpm2.UnmarshalFromReader(buf, d); err != nil {
-		return nil, InvalidKeyFileError{fmt.Sprintf("cannot unmarshal key data: %v", err)}
+		return nil, keyFileError{fmt.Sprintf("cannot unmarshal key data: %v", err)}
 	}
 
 	srkContext, err := tpm.WrapHandle(srkHandle)
@@ -80,16 +88,16 @@ func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext, flu
 	if err != nil {
 		invalidObject := false
 		switch e := err.(type) {
-		case tpm2.TPMParameterError:
+		case *tpm2.TPMParameterError:
 			_ = e
 			invalidObject = true
-		case tpm2.TPMError:
+		case *tpm2.TPMError:
 			if e.Code == tpm2.ErrorSensitive {
 				invalidObject = true
 			}
 		}
 		if invalidObject {
-			return nil, InvalidKeyFileError{fmt.Sprintf("cannot load sealed key object in to TPM: %v", err)}
+			return nil, keyFileError{fmt.Sprintf("cannot load sealed key object in to TPM: %v", err)}
 		}
 		return nil, xerrors.Errorf("cannot load sealed key object in to TPM: %w", err)
 	}
@@ -107,20 +115,20 @@ func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext, flu
 	// Verify that the creation data is cryptographically bound to the sealed key object
 	h := sha256.New()
 	if err := tpm2.MarshalToWriter(h, d.KeyCreationData); err != nil {
-		return nil, fmt.Errorf("cannot hash creation data for sealed key object: %v", err)
+		// We've just unmarshalled this - it shouldn't fail
+		panic(fmt.Sprintf("cannot hash creation data for sealed key object: %v", err))
 	}
 
 	_, _, err = tpm.CertifyCreation(nil, keyContext, nil, h.Sum(nil), nil, d.KeyCreationTicket, nil)
 	if err != nil {
 		switch e := err.(type) {
-		case tpm2.TPMParameterError:
+		case *tpm2.TPMParameterError:
 			if e.Code == tpm2.ErrorTicket {
-				return nil, InvalidKeyFileError{
-					"integrity check of key data failed because the creation data or creation ticket aren't cryptographically bound to the sealed " +
-						"key object"}
+				return nil, keyFileError{"integrity check of key data failed because the creation data or creation ticket aren't "+
+					"cryptographically bound to the sealed key object"}
 			}
 		}
-		return nil, xerrors.Errorf("cannot complete integrity checks as CertifyCreation failed: %v", err)
+		return nil, xerrors.Errorf("cannot complete integrity checks as CertifyCreation failed: %w", err)
 	}
 
 	// The creation data in the keyData is cryptographically bound to the sealed key object (ie, it is the
@@ -128,11 +136,12 @@ func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext, flu
 	// verify that the digest of the auxiliary data matches that provided in the creation data.
 	h = sha256.New()
 	if err := tpm2.MarshalToWriter(h, d.AuxData); err != nil {
-		return nil, fmt.Errorf("cannot hash auxiliary data: %v", err)
+		// We've just unmarshalled this - it shouldn't fail
+		panic(fmt.Sprintf("cannot hash auxiliary data for sealed key object: %v", err))
 	}
 
 	if !bytes.Equal(h.Sum(nil), d.KeyCreationData.OutsideInfo) {
-		return nil, InvalidKeyFileError{"integrity check of key data failed because the auxiliary data is not cryptographically bound to the " +
+		return nil, keyFileError{"integrity check of key data failed because the auxiliary data is not cryptographically bound to the "+
 			"sealed key object"}
 	}
 
@@ -142,14 +151,14 @@ func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext, flu
 	// comparing its name with the name recorded in the auxiliary data.
 	pinIndexContext, err := tpm.WrapHandle(d.AuxData.PolicyData.PinIndexHandle)
 	if err != nil {
-		if err == tpm2.ErrResourceDoesNotExist {
-			return nil, InvalidKeyFileError{"integrity check of key data failed because the NV index used for the PIN does not exist"}
+		if _, notFound := err.(tpm2.ResourceDoesNotExistError); notFound {
+			return nil, keyFileError{"integrity check of key data failed because the NV index used for the PIN does not exist on the TPM"}
 		}
-		return nil, xerrors.Errorf("cannot complete integrity checks: cannot obtain context for PIN NV index: %2", err)
+		return nil, xerrors.Errorf("cannot complete integrity checks: cannot obtain context for PIN NV index: %w", err)
 	}
 
 	if !bytes.Equal(d.AuxData.PinIndexName, pinIndexContext.Name()) {
-		return nil, InvalidKeyFileError{"integrity check of key data failed because the NV index used for the PIN is not cryptographically " +
+		return nil, keyFileError{"integrity check of key data failed because the NV index used for the PIN is not cryptographically " +
 			"bound to the sealed key object"}
 	}
 
@@ -157,15 +166,15 @@ func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext, flu
 	// object by comparing its name with the name recorded in the auxiliary data.
 	policyRevokeIndexContext, err := tpm.WrapHandle(d.AuxData.PolicyData.PolicyRevokeIndexHandle)
 	if err != nil {
-		if err == tpm2.ErrResourceDoesNotExist {
-			return nil, InvalidKeyFileError{"integrity check of key data failed because the NV index used for authorization policy " +
+		if _, notFound := err.(tpm2.ResourceDoesNotExistError); notFound {
+			return nil, keyFileError{"integrity check of key data failed because the NV index used for authorization policy " +
 				"revocation does not exist"}
 		}
 		return nil, xerrors.Errorf("cannot complete integrity checks: cannot obtain context for policy revocation NV index: %w", err)
 	}
 
 	if !bytes.Equal(d.AuxData.PolicyRevokeIndexName, policyRevokeIndexContext.Name()) {
-		return nil, InvalidKeyFileError{"integrity check of key data failed because the NV index used for authorization policy revocation " +
+		return nil, keyFileError{"integrity check of key data failed because the NV index used for authorization policy revocation " +
 			"is not cryptographically bound to the sealed key object"}
 	}
 

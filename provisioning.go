@@ -135,7 +135,7 @@ func RequestTPMClearUsingPPI() error {
 func checkForValidSRK(tpm *tpm2.TPMContext) (bool, error) {
 	srkContext, err := tpm.WrapHandle(srkHandle)
 	if err != nil {
-		if err == tpm2.ErrResourceDoesNotExist {
+		if _, notFound := err.(tpm2.ResourceDoesNotExistError); notFound {
 			return false, nil
 		}
 		return false, xerrors.Errorf("cannot create context for SRK: %w", err)

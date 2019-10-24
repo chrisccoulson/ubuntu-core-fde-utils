@@ -194,8 +194,8 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 		var existing keyData
 		if _, err := existing.loadAndIntegrityCheck(f, tpm, true); err != nil {
 			switch e := err.(type) {
-			case InvalidKeyFileError:
-				return e
+			case keyFileError:
+				return InvalidKeyFileError{e.msg}
 			}
 			return xerrors.Errorf("cannot load existing key data file: %w", err)
 		}
