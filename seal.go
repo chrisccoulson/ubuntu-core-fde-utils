@@ -317,7 +317,11 @@ func DeleteKey(tpm *tpm2.TPMContext, path string, ownerAuth interface{}) error {
 
 	var data keyData
 	if _, err := data.loadAndIntegrityCheck(f, tpm, true); err != nil {
-		return fmt.Errorf("cannot load key data file: %v", err)
+		switch e := err.(type) {
+		case keyFileError:
+			return InvalidKeyFileError{e.msg}
+		}
+		return xerrors.Errorf("cannot load key data file: %w", err)
 	}
 
 	// This can't fail, as loadAndIntegrity check creates these
