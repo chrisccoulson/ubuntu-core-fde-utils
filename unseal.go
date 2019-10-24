@@ -20,33 +20,17 @@
 package fdeutil
 
 import (
-	"errors"
-	"fmt"
 	"io"
 
 	"github.com/chrisccoulson/go-tpm2"
-)
 
-var (
-	// ErrLockout is returned from UnsealKeyFromTPM when the TPM is in dictionary-attack lockout mode. Until
-	// the TPM exits lockout mode, the key will need to be recovered via a mechanism that is independent of
-	// the TPM (eg, a recovery key)
-	ErrLockout = errors.New("the TPM is in DA lockout mode")
-
-	// ErrPinFail is returned from UnsealKeyFromTPM when the provided PIN is incorrect.
-	ErrPinFail = errors.New("the provided PIN is incorrect")
-
-	// ErrPolicyRevoked is returned from UnsealKeyFromTPM when the authorization policy for the key has been
-	// revoked. Unless there is another key object with an authorization policy that hasn't been revoked,
-	// the key will need to be recovered via a mechanism that is indepdendent of the TPM (eg, a recovery key).
-	// Once recovered, the key will need to be sealed to the TPM again with a new authorization policy.
-	ErrPolicyRevoked = errors.New("the authorization policy has been revoked")
+	"golang.org/x/xerrors"
 )
 
 func UnsealKeyFromTPM(tpm *tpm2.TPMContext, buf io.Reader, pin string) ([]byte, error) {
 	props, err := tpm.GetCapabilityTPMProperties(tpm2.PropertyPermanent, 1)
 	if err != nil {
-		return nil, fmt.Errorf("cannot fetch properties from TPM: %v", err)
+		return nil, xerrors.Errorf("cannot fetch properties from TPM: %w", err)
 	}
 
 	if tpm2.PermanentAttributes(props[0].Value)&tpm2.AttrInLockout > 0 {
@@ -57,40 +41,62 @@ func UnsealKeyFromTPM(tpm *tpm2.TPMContext, buf io.Reader, pin string) ([]byte, 
 	var data keyData
 	keyContext, err := data.loadAndIntegrityCheck(buf, tpm, false)
 	if err != nil {
-		return nil, fmt.Errorf("cannot load key data: %v", err)
+		var kfErr keyFileError
+		var rdneErr tpm2.ResourceDoesNotExistError
+		switch {
+		case xerrors.As(err, &kfErr):
+			// A keyFileError can be as a result of an improperly provisioned TPM - detect if
+			// the object at srkHandle is a valid primary key with the correct template. If it's
+			// not, then return a provisioning error.
+			if status, err := ProvisionStatus(tpm); err == nil && status&AttrValidSRK == 0 {
+				return nil, ErrProvisioning
+			}
+			return nil, InvalidKeyFileError{kfErr.msg}
+		case xerrors.As(err, &rdneErr):
+			if rdneErr.Handle == srkHandle {
+				// There's no object at srkHandle
+				return nil, ErrProvisioning
+			}
+		}
+		return nil, xerrors.Errorf("cannot load key data file: %w", err)
 	}
 	defer tpm.FlushContext(keyContext)
 
 	// Begin and execute policy session
-	srkContext, err := tpm.WrapHandle(srkHandle)
-	if err != nil {
-		return nil, fmt.Errorf("cannot create context for SRK handle: %v", err)
-	}
 
-	sessionContext, err :=
-		tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypePolicy, &paramEncryptAlg,
-			defaultHashAlgorithm, nil)
+	// This can't fail, as keyData.loadAndIntegrityCheck already created it
+	srkContext, _ := tpm.WrapHandle(srkHandle)
+
+	sessionContext, err := tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypePolicy, &paramEncryptAlg, defaultHashAlgorithm, nil)
 	if err != nil {
-		return nil, fmt.Errorf("cannot start policy session: %v", err)
+		return nil, xerrors.Errorf("cannot start policy session: %w", err)
 	}
 	defer tpm.FlushContext(sessionContext)
 
 	if err := executePolicySession(tpm, sessionContext, data.AuxData.PolicyData, pin); err != nil {
-		switch err {
-		case ErrPinFail:
-			fallthrough
-		case ErrPolicyRevoked:
-			return nil, err
-		default:
-			return nil, fmt.Errorf("cannot complete execution of policy session: %v", err)
+		var tpmErr *tpm2.TPMError
+		var tpmsErr *tpm2.TPMSessionError
+		switch {
+		case xerrors.As(err, &tpmErr):
+			if tpmErr.Code == tpm2.ErrorPolicy && tpmErr.Command == tpm2.CommandPolicyNV {
+				return nil, ErrPolicyRevoked
+			}
+		case xerrors.As(err, &tpmsErr):
+			if tpmsErr.Code == tpm2.ErrorAuthFail && tpmsErr.Command == tpm2.CommandPolicySecret {
+				return nil, ErrPinFail
+			}
 		}
+		return nil, xerrors.Errorf("cannot complete execution of policy session: %w", err)
 	}
 
 	// Unseal
 	session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrResponseEncrypt}
 	key, err := tpm.Unseal(keyContext, &session)
 	if err != nil {
-		return nil, fmt.Errorf("cannot unseal key: %v", err)
+		if e, ok := err.(*tpm2.TPMSessionError); ok && e.Code == tpm2.ErrorPolicyFail {
+			return nil, ErrPolicyFail
+		}
+		return nil, xerrors.Errorf("cannot unseal key: %w", err)
 	}
 
 	return key, nil

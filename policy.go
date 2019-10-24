@@ -204,37 +204,31 @@ func swallowPolicyORValueError(err error) error {
 }
 
 func wrapPolicyORError(err error, index int) error {
-	return fmt.Errorf("cannot execute PolicyOR assertion after PolicyPCR assertion against PCR%d: %v",
-		index, err)
+	return xerrors.Errorf("cannot execute PolicyOR assertion after PolicyPCR assertion against PCR%d: %w", index, err)
 }
 
 func wrapPolicyPCRError(err error, index int) error {
-	return fmt.Errorf("cannot execute PolicyPCR assertion against PCR%d: %v", index, err)
+	return xerrors.Errorf("cannot execute PolicyPCR assertion against PCR%d: %w", index, err)
 }
 
 func executePolicySessionPCRAssertions(tpm *tpm2.TPMContext, sessionContext tpm2.ResourceContext,
 	input *policyData) error {
-	if err := tpm.PolicyPCR(sessionContext, nil, makePCRSelectionList(input.SecureBootPCRAlg,
-		secureBootPCR)); err != nil {
+	if err := tpm.PolicyPCR(sessionContext, nil, makePCRSelectionList(input.SecureBootPCRAlg, secureBootPCR)); err != nil {
 		return wrapPolicyPCRError(err, secureBootPCR)
 	}
-	if err := tpm.PolicyOR(sessionContext,
-		ensureSufficientORDigests(input.SecureBootORDigests)); swallowPolicyORValueError(err) != nil {
+	if err := tpm.PolicyOR(sessionContext, ensureSufficientORDigests(input.SecureBootORDigests)); swallowPolicyORValueError(err) != nil {
 		return wrapPolicyORError(err, secureBootPCR)
 	}
 	if err := tpm.PolicyPCR(sessionContext, nil, makePCRSelectionList(input.GrubPCRAlg, grubPCR)); err != nil {
 		return wrapPolicyPCRError(err, grubPCR)
 	}
-	if err := tpm.PolicyOR(sessionContext,
-		ensureSufficientORDigests(input.GrubORDigests)); swallowPolicyORValueError(err) != nil {
+	if err := tpm.PolicyOR(sessionContext, ensureSufficientORDigests(input.GrubORDigests)); swallowPolicyORValueError(err) != nil {
 		return wrapPolicyORError(err, grubPCR)
 	}
-	if err := tpm.PolicyPCR(sessionContext, nil, makePCRSelectionList(input.SnapModelPCRAlg,
-		snapModelPCR)); err != nil {
+	if err := tpm.PolicyPCR(sessionContext, nil, makePCRSelectionList(input.SnapModelPCRAlg, snapModelPCR)); err != nil {
 		return wrapPolicyPCRError(err, snapModelPCR)
 	}
-	if err := tpm.PolicyOR(sessionContext,
-		ensureSufficientORDigests(input.SnapModelORDigests)); swallowPolicyORValueError(err) != nil {
+	if err := tpm.PolicyOR(sessionContext, ensureSufficientORDigests(input.SnapModelORDigests)); swallowPolicyORValueError(err) != nil {
 		return wrapPolicyORError(err, snapModelPCR)
 	}
 	return nil
@@ -243,52 +237,39 @@ func executePolicySessionPCRAssertions(tpm *tpm2.TPMContext, sessionContext tpm2
 func executePolicySession(tpm *tpm2.TPMContext, sessionContext tpm2.ResourceContext, input *policyData,
 	pin string) error {
 	if err := executePolicySessionPCRAssertions(tpm, sessionContext, input); err != nil {
-		return fmt.Errorf("cannot execute PCR assertions: %v", err)
+		return xerrors.Errorf("cannot execute PCR assertions: %w", err)
 	}
 
 	policyRevokeContext, err := tpm.WrapHandle(input.PolicyRevokeIndexHandle)
 	if err != nil {
-		return fmt.Errorf("cannot create context for policy revocation NV index: %v", err)
+		return xerrors.Errorf("cannot create context for policy revocation NV index: %w", err)
 	}
 
 	operandB := make([]byte, 8)
 	binary.BigEndian.PutUint64(operandB, input.PolicyRevokeCount)
-	if err := tpm.PolicyNV(policyRevokeContext, policyRevokeContext, sessionContext, operandB, 0,
-		tpm2.OpUnsignedLE, nil); err != nil {
-		switch e := err.(type) {
-		case *tpm2.TPMError:
-			if e.Code == tpm2.ErrorPolicy {
-				return ErrPolicyRevoked
-			}
-		}
-		return fmt.Errorf("cannot execute PolicyNV assertion: %v", err)
+	if err := tpm.PolicyNV(policyRevokeContext, policyRevokeContext, sessionContext, operandB, 0, tpm2.OpUnsignedLE, nil); err != nil {
+		return xerrors.Errorf("cannot execute PolicyNV assertion: %w", err)
 	}
 
 	srkContext, err := tpm.WrapHandle(srkHandle)
 	if err != nil {
-		return fmt.Errorf("cannot obtain context for SRK: %v", err)
+		return xerrors.Errorf("cannot obtain context for SRK: %w", err)
 	}
 	pinIndexContext, err := tpm.WrapHandle(input.PinIndexHandle)
 	if err != nil {
-		return fmt.Errorf("cannot obtain context for PIN NV index: %v", err)
+		return xerrors.Errorf("cannot obtain context for PIN NV index: %w", err)
 	}
 
-	pinSessionContext, err := tpm.StartAuthSession(srkContext, pinIndexContext, tpm2.SessionTypeHMAC, nil,
-		defaultHashAlgorithm, []byte(pin))
+	pinSessionContext, err :=
+		tpm.StartAuthSession(srkContext, pinIndexContext, tpm2.SessionTypeHMAC, nil, defaultHashAlgorithm, []byte(pin))
 	if err != nil {
-		return fmt.Errorf("cannot start HMAC session for PIN verification: %v", err)
+		return xerrors.Errorf("cannot start HMAC session for PIN verification: %w", err)
 	}
 	defer tpm.FlushContext(pinSessionContext)
 
 	pinSession := tpm2.Session{Context: pinSessionContext}
 	if _, _, err := tpm.PolicySecret(pinIndexContext, sessionContext, nil, nil, 0, &pinSession); err != nil {
-		switch e := err.(type) {
-		case *tpm2.TPMSessionError:
-			if e.Code() == tpm2.ErrorAuthFail {
-				return ErrPinFail
-			}
-		}
-		return fmt.Errorf("cannot execute PolicySecret assertion: %v", err)
+		return xerrors.Errorf("cannot execute PolicySecret assertion: %w", err)
 	}
 
 	return nil
