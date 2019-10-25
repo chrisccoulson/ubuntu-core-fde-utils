@@ -26,6 +26,8 @@ import (
 	"io/ioutil"
 	"os"
 	"testing"
+
+	"golang.org/x/xerrors"
 )
 
 func TestCreateAndUnseal(t *testing.T) {
@@ -288,10 +290,8 @@ func TestUpdateWithoutExisting(t *testing.T) {
 	if err == nil {
 		t.Fatalf("SealKeyToTPM Update should fail if there isn't a valid key data file")
 	}
-	switch e := err.(type) {
-	case InvalidKeyFileError:
-		_ = e
-	default:
+	var e *os.PathError
+	if !xerrors.As(err, &e) || !os.IsNotExist(e) {
 		t.Errorf("Unexpected error: %v", err)
 	}
 

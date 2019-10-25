@@ -124,7 +124,7 @@ func isNVIndexDefinedError(err error) bool {
 // If called with a non-nil create parameter, a new file will be created and this function will return a ErrKeyFileExists error if
 // there is already a file with the same name. In this mode, the caller is expected to provide handles at which NV indices should be
 // created for policy revocation and PIN support via the PolicyRevocationHandle and PinHandle fields of the CreationParams struct.
-// If either handle is already in use, a TPMResourceError error will be returned. The handles must be valid NV index handles
+// If either handle is already in use, a TPMResourceExistsError error will be returned. The handles must be valid NV index handles
 // (MSO == 0x01), and the choice of handle should take in to consideration the reserved indices from the "Registry of reserved TPM 2.0
 // handles and localities" specification. It is recommended that the handles are in the block reserved for owner objects (0x01800000 -
 // 0x01bfffff). When called in this mode, the owner authorization is also required, provided via the OwnerAuth of the CreationParams
@@ -134,8 +134,9 @@ func isNVIndexDefinedError(err error) bool {
 // If called with a nil create parameter, this function operates in "reseal" mode where the provided key is sealed in the same way as
 // the create mode, including with an updated authorization policy. However, in this mode, other resources (eg, NV indices) associated
 // with the key are preserved. In this mode, a valid key data file is expected to be at the location specified by dest, and NV indices
-// associated with the key data file are expected to be present on the TPM. If any of those don't exist, or the file contains invalid
-// components or fails any integrity checks, a InvalidKeyFileError will be returned.
+// associated with the key data file are expected to be present on the TPM. If the key data file cannot be opened, a wrapped
+// *os.PathError error will be returned. If the file contains invalid components, fails any integrity checks, or any associated TPM
+// resources are invalid, a InvalidKeyFileError will be returned.
 func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, params *SealParams, key []byte) error {
 	// Check that the key is the correct length
 	if len(key) != 64 {
@@ -186,9 +187,6 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 	} else {
 		f, err := os.Open(dest)
 		if err != nil {
-			if os.IsNotExist(err) {
-				return InvalidKeyFileError{"the key data file does not exist"}
-			}
 			return xerrors.Errorf("cannot open existing key data file to update: %w", err)
 		}
 		var existing keyData
@@ -309,9 +307,19 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 	return nil
 }
 
+// DeleteKey takes care of removing a key data file, along with its associated TPM resources. It expects the key data file at the
+// path specified to be valid. If the key data file cannot be opened, a wrapped *os.PathError error will be returned. If the file
+// contains invalid components, fails any integrity checks, or any associated TPM resources are invalid, a InvalidKeyFileError will
+// be returned. In this case, the key data file won't be deleted.
+//
+// This function requires knowledge of the storage hierarchy authorization value. If an incorrect authorization is provided, a
+// ErrOwnerAuthFail error will be returned and the key data file won't be deleted.
 func DeleteKey(tpm *tpm2.TPMContext, path string, ownerAuth interface{}) error {
 	f, err := os.Open(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return InvalidKeyFileError{"the key data file does not exist"}
+		}
 		return xerrors.Errorf("cannot open key data file: %w", err)
 	}
 
