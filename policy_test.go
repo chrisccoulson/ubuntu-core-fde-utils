@@ -630,7 +630,7 @@ func TestExecutePolicy(t *testing.T) {
 					t.Fatalf("Expected an error")
 				}
 				var e *tpm2.TPMSessionError
-				if !xerrors.As(err, &e) || e.Code != tpm2.ErrorAuthFail || e.Command != tpm2.CommandPolicySecret {
+				if !xerrors.As(err, &e) || e.Code() != tpm2.ErrorAuthFail || e.Command() != tpm2.CommandPolicySecret {
 					t.Errorf("Unexpected error: %v", err)
 				}
 			} else if err != nil {

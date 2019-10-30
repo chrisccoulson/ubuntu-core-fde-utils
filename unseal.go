@@ -42,7 +42,7 @@ func UnsealKeyFromTPM(tpm *tpm2.TPMContext, buf io.Reader, pin string) ([]byte, 
 	keyContext, err := data.loadAndIntegrityCheck(buf, tpm, false)
 	if err != nil {
 		var kfErr keyFileError
-		var rdneErr tpm2.ResourceDoesNotExistError
+		var ruErr tpm2.ResourceUnavailableError
 		switch {
 		case xerrors.As(err, &kfErr):
 			// A keyFileError can be as a result of an improperly provisioned TPM - detect if
@@ -52,8 +52,8 @@ func UnsealKeyFromTPM(tpm *tpm2.TPMContext, buf io.Reader, pin string) ([]byte, 
 				return nil, ErrProvisioning
 			}
 			return nil, InvalidKeyFileError{kfErr.msg}
-		case xerrors.As(err, &rdneErr):
-			if rdneErr.Handle == srkHandle {
+		case xerrors.As(err, &ruErr):
+			if ruErr.Handle == srkHandle {
 				// There's no object at srkHandle
 				return nil, ErrProvisioning
 			}
@@ -82,7 +82,7 @@ func UnsealKeyFromTPM(tpm *tpm2.TPMContext, buf io.Reader, pin string) ([]byte, 
 				return nil, ErrPolicyRevoked
 			}
 		case xerrors.As(err, &tpmsErr):
-			if tpmsErr.Code == tpm2.ErrorAuthFail && tpmsErr.Command == tpm2.CommandPolicySecret {
+			if tpmsErr.Code() == tpm2.ErrorAuthFail && tpmsErr.Command() == tpm2.CommandPolicySecret {
 				return nil, ErrPinFail
 			}
 		}
@@ -93,7 +93,7 @@ func UnsealKeyFromTPM(tpm *tpm2.TPMContext, buf io.Reader, pin string) ([]byte, 
 	session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrResponseEncrypt}
 	key, err := tpm.Unseal(keyContext, &session)
 	if err != nil {
-		if e, ok := err.(*tpm2.TPMSessionError); ok && e.Code == tpm2.ErrorPolicyFail {
+		if e, ok := err.(*tpm2.TPMSessionError); ok && e.Code() == tpm2.ErrorPolicyFail {
 			return nil, ErrPolicyFail
 		}
 		return nil, xerrors.Errorf("cannot unseal key: %w", err)
