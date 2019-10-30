@@ -181,7 +181,7 @@ func TestUpdateAndUnseal(t *testing.T) {
 	}
 }
 
-func TestPin(t *testing.T) {
+func TestUnsealWithPin(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
@@ -200,7 +200,7 @@ func TestPin(t *testing.T) {
 	key := make([]byte, 64)
 	rand.Read(key)
 
-	tmpDir, err := ioutil.TempDir("", "_TestPin_")
+	tmpDir, err := ioutil.TempDir("", "_TestUnsealWithPin_")
 	if err != nil {
 		t.Fatalf("Creating temporary directory failed: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestPin(t *testing.T) {
 	}
 }
 
-func TestRevoke(t *testing.T) {
+func TestUnsealRevoked(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
@@ -245,7 +245,7 @@ func TestRevoke(t *testing.T) {
 	key := make([]byte, 64)
 	rand.Read(key)
 
-	tmpDir, err := ioutil.TempDir("", "_TestRevoke_")
+	tmpDir, err := ioutil.TempDir("", "_TestUnsealRevoked_")
 	if err != nil {
 		t.Fatalf("Creating temporary directory failed: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestUpdateWithoutExisting(t *testing.T) {
 	}
 }
 
-func TestPinFail(t *testing.T) {
+func TestUnsealWithWrongPin(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
@@ -334,7 +334,7 @@ func TestPinFail(t *testing.T) {
 	key := make([]byte, 64)
 	rand.Read(key)
 
-	tmpDir, err := ioutil.TempDir("", "_TestPinFail_")
+	tmpDir, err := ioutil.TempDir("", "_TestUnsealWithWrongPin_")
 	if err != nil {
 		t.Fatalf("Creating temporary directory failed: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestPinFail(t *testing.T) {
 	}
 }
 
-func TestPolicyFail(t *testing.T) {
+func TestUnsealPolicyFail(t *testing.T) {
 	tpm, _ := openTPMSimulatorForTesting(t)
 	defer closeTPM(t, tpm)
 
@@ -386,7 +386,7 @@ func TestPolicyFail(t *testing.T) {
 	key := make([]byte, 64)
 	rand.Read(key)
 
-	tmpDir, err := ioutil.TempDir("", "_TestPolicyFail_")
+	tmpDir, err := ioutil.TempDir("", "_TestUnsealPolicyFail_")
 	if err != nil {
 		t.Fatalf("Creating temporary directory failed: %v", err)
 	}
@@ -413,6 +413,118 @@ func TestPolicyFail(t *testing.T) {
 		t.Fatalf("UnsealKeyFromTPM should have failed")
 	}
 	if err != ErrPolicyFail {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestUnsealLockout(t *testing.T) {
+	tpm := openTPMForTesting(t)
+	defer closeTPM(t, tpm)
+
+	if err := ProvisionTPM(tpm, nil); err != nil && err != ErrClearRequiresPPI {
+		t.Fatalf("Failed to provision TPM for test: %v", err)
+	}
+
+	status, err := ProvisionStatus(tpm)
+	if err != nil {
+		t.Fatalf("Cannot check provision status: %v", err)
+	}
+	if status&AttrValidSRK == 0 {
+		t.Fatalf("No valid SRK for test")
+	}
+
+	key := make([]byte, 64)
+	rand.Read(key)
+
+	tmpDir, err := ioutil.TempDir("", "_TestUnsealLockout_")
+	if err != nil {
+		t.Fatalf("Creating temporary directory failed: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dest := tmpDir + "/keydata"
+
+	if err := SealKeyToTPM(tpm, dest, &testCreationParams, nil, key); err != nil {
+		t.Fatalf("SealKeyToTPM failed: %v", err)
+	}
+	defer deleteKey(t, tpm, dest)
+
+	// Put the TPM in DA lockout mode
+	if err := tpm.DictionaryAttackParameters(tpm2.HandleLockout, 0, 7200, 86400, nil); err != nil {
+		t.Errorf("DictionaryAttackParameters failed: %v", err)
+	}
+	defer func() {
+		if err := tpm.DictionaryAttackParameters(tpm2.HandleLockout, 32, 7200, 86400, nil); err != nil {
+			t.Errorf("DictionaryAttackParameters failed: %v", err)
+		}
+		if err := tpm.DictionaryAttackLockReset(tpm2.HandleLockout, nil); err != nil {
+			t.Errorf("DictionaryAttackLockReset failed: %v", err)
+		}
+	}()
+
+	f, err := os.Open(dest)
+	if err != nil {
+		t.Fatalf("Failed to open key data file: %v", err)
+	}
+
+	_, err = UnsealKeyFromTPM(tpm, f, "")
+	if err == nil {
+		t.Fatalf("UnsealKeyFromTPM should have failed")
+	}
+	if err != ErrLockout {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestUnsealProvisioningError(t *testing.T) {
+	tpm := openTPMForTesting(t)
+	defer closeTPM(t, tpm)
+
+	if err := ProvisionTPM(tpm, nil); err != nil && err != ErrClearRequiresPPI {
+		t.Fatalf("Failed to provision TPM for test: %v", err)
+	}
+
+	status, err := ProvisionStatus(tpm)
+	if err != nil {
+		t.Fatalf("Cannot check provision status: %v", err)
+	}
+	if status&AttrValidSRK == 0 {
+		t.Fatalf("No valid SRK for test")
+	}
+
+	key := make([]byte, 64)
+	rand.Read(key)
+
+	tmpDir, err := ioutil.TempDir("", "_TestUnsealProvisioningError_")
+	if err != nil {
+		t.Fatalf("Creating temporary directory failed: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dest := tmpDir + "/keydata"
+
+	if err := SealKeyToTPM(tpm, dest, &testCreationParams, nil, key); err != nil {
+		t.Fatalf("SealKeyToTPM failed: %v", err)
+	}
+	defer deleteKey(t, tpm, dest)
+
+	srkContext, _ := tpm.WrapHandle(srkHandle)
+	if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkContext.Handle(), nil); err != nil {
+		t.Errorf("EvictControl failed: %v", err)
+	}
+	defer func() {
+	}()
+
+	f, err := os.Open(dest)
+	if err != nil {
+		t.Fatalf("Failed to open key data file: %v", err)
+	}
+
+	_, err = UnsealKeyFromTPM(tpm, f, "")
+	if err == nil {
+		t.Fatalf("UnsealKeyFromTPM should have failed")
+	}
+	if err != ErrProvisioning {
 		t.Errorf("Unexpected error: %v", err)
 	}
 }
