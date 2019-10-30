@@ -27,6 +27,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/chrisccoulson/go-tpm2"
+
 	"golang.org/x/xerrors"
 )
 
@@ -179,6 +181,59 @@ func TestUpdateAndUnseal(t *testing.T) {
 	}
 }
 
+func TestPin(t *testing.T) {
+	tpm := openTPMForTesting(t)
+	defer closeTPM(t, tpm)
+
+	if err := ProvisionTPM(tpm, nil); err != nil && err != ErrClearRequiresPPI {
+		t.Fatalf("Failed to provision TPM for test: %v", err)
+	}
+
+	status, err := ProvisionStatus(tpm)
+	if err != nil {
+		t.Fatalf("Cannot check provision status: %v", err)
+	}
+	if status&AttrValidSRK == 0 {
+		t.Fatalf("No valid SRK for test")
+	}
+
+	key := make([]byte, 64)
+	rand.Read(key)
+
+	tmpDir, err := ioutil.TempDir("", "_TestPin_")
+	if err != nil {
+		t.Fatalf("Creating temporary directory failed: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dest := tmpDir + "/keydata"
+
+	if err := SealKeyToTPM(tpm, dest, &testCreationParams, nil, key); err != nil {
+		t.Fatalf("SealKeyToTPM failed: %v", err)
+	}
+	defer deleteKey(t, tpm, dest)
+
+	testPIN := "1234"
+
+	if err := ChangePIN(tpm, dest, "", testPIN); err != nil {
+		t.Fatalf("ChangePIN failed: %v", err)
+	}
+
+	f, err := os.Open(dest)
+	if err != nil {
+		t.Fatalf("Failed to open key data file: %v", err)
+	}
+
+	keyUnsealed, err := UnsealKeyFromTPM(tpm, f, testPIN)
+	if err != nil {
+		t.Fatalf("UnsealKeyFromTPM failed: %v", err)
+	}
+
+	if !bytes.Equal(key, keyUnsealed) {
+		t.Errorf("TPM returned the wrong key")
+	}
+}
+
 func TestRevoke(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
@@ -257,5 +312,107 @@ func TestUpdateWithoutExisting(t *testing.T) {
 
 	if _, err := os.Stat(dest); err == nil || !os.IsNotExist(err) {
 		t.Errorf("SealKeyToTPM Update should not create a file where there isn't one")
+	}
+}
+
+func TestPinFail(t *testing.T) {
+	tpm := openTPMForTesting(t)
+	defer closeTPM(t, tpm)
+
+	if err := ProvisionTPM(tpm, nil); err != nil && err != ErrClearRequiresPPI {
+		t.Fatalf("Failed to provision TPM for test: %v", err)
+	}
+
+	status, err := ProvisionStatus(tpm)
+	if err != nil {
+		t.Fatalf("Cannot check provision status: %v", err)
+	}
+	if status&AttrValidSRK == 0 {
+		t.Fatalf("No valid SRK for test")
+	}
+
+	key := make([]byte, 64)
+	rand.Read(key)
+
+	tmpDir, err := ioutil.TempDir("", "_TestPinFail_")
+	if err != nil {
+		t.Fatalf("Creating temporary directory failed: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dest := tmpDir + "/keydata"
+
+	if err := SealKeyToTPM(tpm, dest, &testCreationParams, nil, key); err != nil {
+		t.Fatalf("SealKeyToTPM failed: %v", err)
+	}
+	defer deleteKey(t, tpm, dest)
+
+	testPIN := "1234"
+
+	if err := ChangePIN(tpm, dest, "", testPIN); err != nil {
+		t.Fatalf("ChangePIN failed: %v", err)
+	}
+
+	f, err := os.Open(dest)
+	if err != nil {
+		t.Fatalf("Failed to open key data file: %v", err)
+	}
+
+	_, err = UnsealKeyFromTPM(tpm, f, "")
+	if err == nil {
+		t.Fatalf("UnsealKeyFromTPM should have failed")
+	}
+	if err != ErrPinFail {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestPolicyFail(t *testing.T) {
+	tpm, _ := openTPMSimulatorForTesting(t)
+	defer closeTPM(t, tpm)
+
+	if err := ProvisionTPM(tpm, nil); err != nil && err != ErrClearRequiresPPI {
+		t.Fatalf("Failed to provision TPM for test: %v", err)
+	}
+
+	status, err := ProvisionStatus(tpm)
+	if err != nil {
+		t.Fatalf("Cannot check provision status: %v", err)
+	}
+	if status&AttrValidSRK == 0 {
+		t.Fatalf("No valid SRK for test")
+	}
+
+	key := make([]byte, 64)
+	rand.Read(key)
+
+	tmpDir, err := ioutil.TempDir("", "_TestPolicyFail_")
+	if err != nil {
+		t.Fatalf("Creating temporary directory failed: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dest := tmpDir + "/keydata"
+
+	if err := SealKeyToTPM(tpm, dest, &testCreationParams, nil, key); err != nil {
+		t.Fatalf("SealKeyToTPM failed: %v", err)
+	}
+	defer deleteKey(t, tpm, dest)
+
+	if _, err := tpm.PCREvent(7, tpm2.Event("foo"), nil); err != nil {
+		t.Errorf("PCREvent failed: %v", err)
+	}
+
+	f, err := os.Open(dest)
+	if err != nil {
+		t.Fatalf("Failed to open key data file: %v", err)
+	}
+
+	_, err = UnsealKeyFromTPM(tpm, f, "")
+	if err == nil {
+		t.Fatalf("UnsealKeyFromTPM should have failed")
+	}
+	if err != ErrPolicyFail {
+		t.Errorf("Unexpected error: %v", err)
 	}
 }

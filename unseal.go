@@ -77,13 +77,13 @@ func UnsealKeyFromTPM(tpm *tpm2.TPMContext, buf io.Reader, pin string) ([]byte, 
 		var tpmErr *tpm2.TPMError
 		var tpmsErr *tpm2.TPMSessionError
 		switch {
-		case xerrors.As(err, &tpmErr):
-			if tpmErr.Code == tpm2.ErrorPolicy && tpmErr.Command == tpm2.CommandPolicyNV {
-				return nil, ErrPolicyRevoked
-			}
 		case xerrors.As(err, &tpmsErr):
 			if tpmsErr.Code() == tpm2.ErrorAuthFail && tpmsErr.Command() == tpm2.CommandPolicySecret {
 				return nil, ErrPinFail
+			}
+		case xerrors.As(err, &tpmErr):
+			if tpmErr.Code == tpm2.ErrorPolicy && tpmErr.Command == tpm2.CommandPolicyNV {
+				return nil, ErrPolicyRevoked
 			}
 		}
 		return nil, xerrors.Errorf("cannot complete execution of policy session: %w", err)

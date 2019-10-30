@@ -123,7 +123,7 @@ func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext, flu
 	if err != nil {
 		var e *tpm2.TPMError
 		if xerrors.As(err, &e) && e.Code == tpm2.ErrorTicket {
-			return nil, keyFileError{"integrity check of key data failed because the creation data or creation ticket aren't "+
+			return nil, keyFileError{"integrity check of key data failed because the creation data or creation ticket aren't " +
 				"cryptographically bound to the sealed key object"}
 		}
 		return nil, xerrors.Errorf("cannot complete integrity checks as CertifyCreation failed: %w", err)
