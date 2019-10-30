@@ -121,12 +121,10 @@ func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext, flu
 
 	_, _, err = tpm.CertifyCreation(nil, keyContext, nil, h.Sum(nil), nil, d.KeyCreationTicket, nil)
 	if err != nil {
-		switch e := err.(type) {
-		case *tpm2.TPMParameterError:
-			if e.Code == tpm2.ErrorTicket {
-				return nil, keyFileError{"integrity check of key data failed because the creation data or creation ticket aren't " +
-					"cryptographically bound to the sealed key object"}
-			}
+		var e *tpm2.TPMError
+		if xerrors.As(err, &e) && e.Code == tpm2.ErrorTicket {
+			return nil, keyFileError{"integrity check of key data failed because the creation data or creation ticket aren't "+
+				"cryptographically bound to the sealed key object"}
 		}
 		return nil, xerrors.Errorf("cannot complete integrity checks as CertifyCreation failed: %w", err)
 	}
@@ -151,7 +149,7 @@ func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext, flu
 	// comparing its name with the name recorded in the auxiliary data.
 	pinIndexContext, err := tpm.WrapHandle(d.AuxData.PolicyData.PinIndexHandle)
 	if err != nil {
-		if _, notFound := err.(tpm2.ResourceDoesNotExistError); notFound {
+		if _, notFound := err.(tpm2.ResourceUnavailableError); notFound {
 			return nil, keyFileError{"integrity check of key data failed because the NV index used for the PIN does not exist on the TPM"}
 		}
 		return nil, xerrors.Errorf("cannot complete integrity checks: cannot obtain context for PIN NV index: %w", err)
@@ -166,7 +164,7 @@ func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext, flu
 	// object by comparing its name with the name recorded in the auxiliary data.
 	policyRevokeIndexContext, err := tpm.WrapHandle(d.AuxData.PolicyData.PolicyRevokeIndexHandle)
 	if err != nil {
-		if _, notFound := err.(tpm2.ResourceDoesNotExistError); notFound {
+		if _, notFound := err.(tpm2.ResourceUnavailableError); notFound {
 			return nil, keyFileError{"integrity check of key data failed because the NV index used for authorization policy " +
 				"revocation does not exist"}
 		}

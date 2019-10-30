@@ -30,7 +30,7 @@ func isAuthFailError(err error) bool {
 	if !xerrors.As(err, &sessionErr) {
 		return false
 	}
-	switch sessionErr.Code {
+	switch sessionErr.Code() {
 	case tpm2.ErrorAuthFail: // With DA implications
 		return true
 	case tpm2.ErrorBadAuth: // Without DA implications

@@ -196,7 +196,7 @@ func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData
 func swallowPolicyORValueError(err error) error {
 	switch e := err.(type) {
 	case *tpm2.TPMParameterError:
-		if e.Code == tpm2.ErrorValue && e.Command == tpm2.CommandPolicyOR {
+		if e.Code() == tpm2.ErrorValue && e.Command() == tpm2.CommandPolicyOR {
 			return nil
 		}
 	}
@@ -284,7 +284,7 @@ func executePolicySession(tpm *tpm2.TPMContext, sessionContext tpm2.ResourceCont
 	if _, _, err := tpm.PolicySecret(pinIndexContext, sessionContext, nil, nil, 0, &pinSession); err != nil {
 		switch e := err.(type) {
 		case *tpm2.TPMSessionError:
-			if e.Code == tpm2.ErrorAuthFail {
+			if e.Code() == tpm2.ErrorAuthFail {
 				return ErrPinFail
 			}
 		}
