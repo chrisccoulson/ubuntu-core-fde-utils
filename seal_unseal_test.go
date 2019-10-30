@@ -477,8 +477,11 @@ func TestUnsealLockout(t *testing.T) {
 }
 
 func TestUnsealProvisioningError(t *testing.T) {
-	tpm := openTPMForTesting(t)
-	defer closeTPM(t, tpm)
+	tpm, _ := openTPMSimulatorForTesting(t)
+	defer func() {
+		clearTPMWithPlatformAuth(t, tpm)
+		closeTPM(t, tpm)
+	}()
 
 	if err := ProvisionTPM(tpm, nil); err != nil && err != ErrClearRequiresPPI {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
@@ -506,14 +509,24 @@ func TestUnsealProvisioningError(t *testing.T) {
 	if err := SealKeyToTPM(tpm, dest, &testCreationParams, nil, key); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
-	defer deleteKey(t, tpm, dest)
+	defer func() {
+		if err := os.Remove(dest); err != nil {
+			t.Errorf("Remove failed: %v", err)
+		}
+		pinContext, _ := tpm.WrapHandle(testCreationParams.PinHandle)
+		policyRevokeContext, _ := tpm.WrapHandle(testCreationParams.PolicyRevocationHandle)
+		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, pinContext, nil); err != nil {
+			t.Errorf("NVUndefineSpace failed: %v", err)
+		}
+		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, policyRevokeContext, nil); err != nil {
+			t.Errorf("NVUndefineSpace failed: %v", err)
+		}
+	}()
 
 	srkContext, _ := tpm.WrapHandle(srkHandle)
 	if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkContext.Handle(), nil); err != nil {
 		t.Errorf("EvictControl failed: %v", err)
 	}
-	defer func() {
-	}()
 
 	f, err := os.Open(dest)
 	if err != nil {

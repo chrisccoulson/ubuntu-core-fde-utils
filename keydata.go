@@ -170,7 +170,7 @@ func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext, flu
 	}
 
 	if !bytes.Equal(d.AuxData.PolicyRevokeIndexName, policyRevokeIndexContext.Name()) {
-		return nil, keyFileError{"the NV index used for authorization policy revocation is not cryptographically bound to the sealed key "+
+		return nil, keyFileError{"the NV index used for authorization policy revocation is not cryptographically bound to the sealed key " +
 			"object"}
 	}
 
