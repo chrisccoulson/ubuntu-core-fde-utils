@@ -87,5 +87,12 @@ func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string) ([]byte, er
 		return nil, xerrors.Errorf("cannot unseal key: %w", err)
 	}
 
+	lock := false
+	if lock {
+		if err := lockAccess(tpm.TPMContext, data.StaticPolicyData); err != nil {
+			return nil, fmt.Errorf("cannot lock sealed key object from further access: %v", err)
+		}
+	}
+
 	return key, nil
 }
