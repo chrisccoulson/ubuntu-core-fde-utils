@@ -6,8 +6,8 @@ import (
 
 func isAuthFailError(err error) bool {
 	switch e := err.(type) {
-	case tpm2.TPMSessionError:
-		switch e.Code {
+	case *tpm2.TPMSessionError:
+		switch e.Code() {
 		case tpm2.ErrorAuthFail: // With DA implications
 			return true
 		case tpm2.ErrorBadAuth: // Without DA implications
@@ -19,7 +19,7 @@ func isAuthFailError(err error) bool {
 
 func isLockoutError(err error) bool {
 	switch e := err.(type) {
-	case tpm2.TPMWarning:
+	case *tpm2.TPMWarning:
 		if e.Code == tpm2.WarningLockout {
 			return true
 		}
