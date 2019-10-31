@@ -24,10 +24,11 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"os"
 
 	"github.com/chrisccoulson/go-tpm2"
+
+	"golang.org/x/xerrors"
 )
 
 // ProvisionStatusAttributes correspond to the state of the TPM with regards to provisioning for full disk
@@ -133,7 +134,7 @@ var (
 func ProvisionTPM(tpm *tpm2.TPMContext, mode ProvisionMode, newLockoutAuth, ownerAuth, lockoutAuth []byte) error {
 	status, err := ProvisionStatus(tpm)
 	if err != nil {
-		return fmt.Errorf("cannot determine the current status: %v", err)
+		return xerrors.Errorf("cannot determine the current status: %w", err)
 	}
 
 	if mode != ProvisionModeWithoutLockout && status&AttrLockoutAuthSet > 0 && len(lockoutAuth) == 0 {
@@ -154,7 +155,7 @@ func ProvisionTPM(tpm *tpm2.TPMContext, mode ProvisionMode, newLockoutAuth, owne
 			case isLockoutError(err):
 				return ErrInLockout
 			}
-			return fmt.Errorf("cannot clear the TPM: %v", err)
+			return xerrors.Errorf("cannot clear the TPM: %w", err)
 		}
 
 		lockoutAuth = nil
@@ -169,27 +170,24 @@ func ProvisionTPM(tpm *tpm2.TPMContext, mode ProvisionMode, newLockoutAuth, owne
 				if isAuthFailError(err) {
 					return ErrOwnerAuthFail
 				}
-				return fmt.Errorf("cannot evict existing object at handle required by storage "+
-					"root key: %v", err)
+				return xerrors.Errorf("cannot evict existing object at handle required by storage root key: %w", err)
 			}
 		} else if _, notFound := err.(tpm2.ResourceUnavailableError); !notFound {
-			return fmt.Errorf("cannot create context for object at handle required by storage "+
-				"root key: %v", err)
+			return xerrors.Errorf("cannot create context for object at handle required by storage root key: %w", err)
 		}
 
-		srkContext, _, _, _, _, _, err = tpm.CreatePrimary(tpm2.HandleOwner, nil, &srkTemplate, nil,
-			nil, ownerAuth)
+		srkContext, _, _, _, _, _, err = tpm.CreatePrimary(tpm2.HandleOwner, nil, &srkTemplate, nil, nil, ownerAuth)
 		if err != nil {
 			if isAuthFailError(err) {
 				return ErrOwnerAuthFail
 			}
-			return fmt.Errorf("cannot create storage root key: %v", err)
+			return xerrors.Errorf("cannot create storage root key: %w", err)
 		}
 		defer tpm.FlushContext(srkContext)
 
 		if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, ownerAuth); err != nil {
 			// Owner auth failure would have been caught by CreatePrimary
-			return fmt.Errorf("cannot make storage root key persistent: %v", err)
+			return xerrors.Errorf("cannot make storage root key persistent: %w", err)
 		}
 	}
 
@@ -197,39 +195,34 @@ func ProvisionTPM(tpm *tpm2.TPMContext, mode ProvisionMode, newLockoutAuth, owne
 		return nil
 	}
 
-	if err := tpm.DictionaryAttackParameters(tpm2.HandleLockout, maxTries, recoveryTime, lockoutRecovery,
-		lockoutAuth); err != nil {
+	if err := tpm.DictionaryAttackParameters(tpm2.HandleLockout, maxTries, recoveryTime, lockoutRecovery, lockoutAuth); err != nil {
 		switch {
 		case isAuthFailError(err):
 			return ErrLockoutAuthFail
 		case isLockoutError(err):
 			return ErrInLockout
 		}
-		return fmt.Errorf("cannot configure dictionary attack parameters: %v", err)
+		return xerrors.Errorf("cannot configure dictionary attack parameters: %w", err)
 	}
 
 	if err := tpm.ClearControl(tpm2.HandleLockout, true, lockoutAuth); err != nil {
 		// Lockout auth failure or lockout mode would have been caught by DictionaryAttackParameters
-		return fmt.Errorf("cannot disable owner clear: %v", err)
+		return xerrors.Errorf("cannot disable owner clear: %w", err)
 	}
 
-	srkContext, err := tpm.WrapHandle(srkHandle)
-	if err != nil {
-		return fmt.Errorf("cannot create context for storage root key: %v", err)
-	}
+	// This was either created by ProvisionStatus or by TPMContext.EvictControl if we needed to create a new one, so this can never fail
+	srkContext, _ := tpm.WrapHandle(srkHandle)
 	lockoutContext, _ := tpm.WrapHandle(tpm2.HandleLockout)
 	sessionContext, err :=
-		tpm.StartAuthSession(srkContext, lockoutContext, tpm2.SessionTypeHMAC, &paramEncryptAlg,
-			defaultHashAlgorithm, lockoutAuth)
+		tpm.StartAuthSession(srkContext, lockoutContext, tpm2.SessionTypeHMAC, &paramEncryptAlg, defaultHashAlgorithm, lockoutAuth)
 	if err != nil {
-		return fmt.Errorf("cannot start session for command parameter encryption: %v", err)
+		return xerrors.Errorf("cannot start session for command parameter encryption: %w", err)
 	}
 	defer tpm.FlushContext(sessionContext)
 
 	session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrCommandEncrypt, AuthValue: lockoutAuth}
-	if err := tpm.HierarchyChangeAuth(tpm2.HandleLockout, tpm2.Auth(newLockoutAuth), lockoutAuth,
-		&session); err != nil {
-		return fmt.Errorf("cannot set the lockout hierarchy authorization value: %v", err)
+	if err := tpm.HierarchyChangeAuth(tpm2.HandleLockout, tpm2.Auth(newLockoutAuth), lockoutAuth, &session); err != nil {
+		return xerrors.Errorf("cannot set the lockout hierarchy authorization value: %w", err)
 	}
 
 	return nil
@@ -238,12 +231,12 @@ func ProvisionTPM(tpm *tpm2.TPMContext, mode ProvisionMode, newLockoutAuth, owne
 func RequestTPMClearUsingPPI() error {
 	f, err := os.OpenFile(ppiPath, os.O_WRONLY, 0)
 	if err != nil {
-		return fmt.Errorf("cannot open request handle: %v", err)
+		return xerrors.Errorf("cannot open request handle: %w", err)
 	}
 	defer f.Close()
 
 	if _, err := f.WriteString(clearPPIRequest); err != nil {
-		return fmt.Errorf("cannot submit request: %v", err)
+		return xerrors.Errorf("cannot submit request: %w", err)
 	}
 
 	return nil
@@ -255,12 +248,12 @@ func checkForValidSRK(tpm *tpm2.TPMContext) (bool, error) {
 		if _, notFound := err.(tpm2.ResourceUnavailableError); notFound {
 			return false, nil
 		}
-		return false, fmt.Errorf("cannot create context for SRK: %v", err)
+		return false, xerrors.Errorf("cannot create context for SRK: %w", err)
 	}
 
 	pub, _, qualifiedName, err := tpm.ReadPublic(srkContext)
 	if err != nil {
-		return false, fmt.Errorf("cannot read public part of SRK: %v", err)
+		return false, xerrors.Errorf("cannot read public part of SRK: %w", err)
 	}
 
 	pub.Unique = tpm2.PublicIDU{}
@@ -296,14 +289,14 @@ func ProvisionStatus(tpm *tpm2.TPMContext) (ProvisionStatusAttributes, error) {
 	var out ProvisionStatusAttributes
 
 	if valid, err := checkForValidSRK(tpm); err != nil {
-		return 0, fmt.Errorf("cannot check for valid SRK: %v", err)
+		return 0, xerrors.Errorf("cannot check for valid SRK: %w", err)
 	} else if valid {
 		out |= AttrValidSRK
 	}
 
 	props, err := tpm.GetCapabilityTPMProperties(tpm2.PropertyMaxAuthFail, 3)
 	if err != nil {
-		return 0, fmt.Errorf("cannot fetch DA parameters: %v", err)
+		return 0, xerrors.Errorf("cannot fetch DA parameters: %w", err)
 	}
 	if props[0].Value <= maxTries && props[1].Value >= recoveryTime && props[2].Value >= lockoutRecovery {
 		out |= AttrDAParamsOK
@@ -311,7 +304,7 @@ func ProvisionStatus(tpm *tpm2.TPMContext) (ProvisionStatusAttributes, error) {
 
 	props, err = tpm.GetCapabilityTPMProperties(tpm2.PropertyPermanent, 1)
 	if err != nil {
-		return 0, fmt.Errorf("cannot fetch permanent properties: %v", err)
+		return 0, xerrors.Errorf("cannot fetch permanent properties: %w", err)
 	}
 	if tpm2.PermanentAttributes(props[0].Value)&tpm2.AttrDisableClear > 0 {
 		out |= AttrOwnerClearDisabled
