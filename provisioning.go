@@ -26,7 +26,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"reflect"
 
 	"github.com/chrisccoulson/go-tpm2"
 )
@@ -264,16 +263,11 @@ func checkForValidSRK(tpm *tpm2.TPMContext) (bool, error) {
 		return false, fmt.Errorf("cannot read public part of SRK: %v", err)
 	}
 
-	if pub.Type != srkTemplate.Type {
-		return false, nil
-	}
-	if pub.NameAlg != srkTemplate.NameAlg {
-		return false, nil
-	}
-	if pub.Attrs != srkTemplate.Attrs {
-		return false, nil
-	}
-	if !reflect.DeepEqual(pub.Params, srkTemplate.Params) {
+	pub.Unique = tpm2.PublicIDU{}
+
+	srkPubBytes, _ := tpm2.MarshalToBytes(pub)
+	srkTemplateBytes, _ := tpm2.MarshalToBytes(srkTemplate)
+	if !bytes.Equal(srkPubBytes, srkTemplateBytes) {
 		return false, nil
 	}
 
