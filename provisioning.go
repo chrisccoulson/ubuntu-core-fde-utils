@@ -23,16 +23,19 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
-	"fmt"
 	"os"
-	"reflect"
 
 	"github.com/chrisccoulson/go-tpm2"
 
 	"golang.org/x/xerrors"
 )
 
+// ProvisionStatusAttributes correspond to the state of the TPM with regards to provisioning for full disk
+// encryption.
 type ProvisionStatusAttributes int
+
+// ProvisionMode is used to control the behaviour of ProvisionTPM.
+type ProvisionMode int
 
 const (
 	ppiPath string = "/sys/class/tpm/tpm0/ppi/request"
@@ -45,10 +48,29 @@ const (
 )
 
 const (
+	// AttrValidSRK indicates that the TPM contains a valid primary key with the expected properties at the
+	// expected location.
 	AttrValidSRK ProvisionStatusAttributes = 1 << iota
-	AttrDAParamsOK
-	AttrOwnerClearDisabled
+
+	AttrDAParamsOK         // The dictionary attack lockout parameters are configured correctly.
+	AttrOwnerClearDisabled // The ability to clear the TPM with owner authorization is disabled.
+
+	// AttrLockoutAuthSet indicates that the lockout hierarchy has an authorization value defined. This
+	// doesn't necessarily mean that the authorization value is the same one that was originally provided
+	// to TPM - it could have been changed outside of our control.
 	AttrLockoutAuthSet
+)
+
+const (
+	// ProvisionModeClear specifies that the TPM should be fully provisioned after clearing it.
+	ProvisionModeClear ProvisionMode = iota
+
+	// ProvisionModeWithoutLockout specifies that the TPM should be refreshed without performing
+	// operations that require knowledge of the lockout hierarchy authorization value.
+	ProvisionModeWithoutLockout
+
+	// ProvisionModeFull specifies that the TPM should be fully provisioned without clearing it.
+	ProvisionModeFull
 )
 
 var (
@@ -68,51 +90,130 @@ var (
 				Exponent: 0}}}
 )
 
-func ProvisionTPM(tpm *tpm2.TPMContext, lockoutAuth []byte) error {
-	props, err := tpm.GetCapabilityTPMProperties(tpm2.PropertyPermanent, 1)
+// ProvisionTPM prepares the TPM associated with the tpm parameter for full disk encryption. The mode parameter
+// specifies the behaviour of this function.
+//
+// If mode is not ProvisionModeWithoutLockout, this function performs operations that require knowledge of the
+// lockout hierarchy authorization value. If no authorization value is provided via lockoutAuth but the TPM
+// indicates that the lockout hierarchy authorization value has previously been set, this will return a
+// ErrRequiresLockoutAuth error. In this case, either the function should be called with the lockout hierarchy
+// authorization (if it is known), or the TPM must be cleared via the physical presence interface by calling
+// RequestTPMClearUsingPPI and performing a system restart. If the wrong lockout hierarchy authorization value is
+// provided, then a ErrLockoutAuthFail error will be returned. If this happens, the TPM will have entered
+// dictionary attack lockout mode for the lockout hierarchy. Further calls will result in a ErrInLockout error
+// being returned. The only way to recover from this is to either wait for the pre-programmed recovery time to
+// expire, or to clear the TPM via the physical presence interface.
+//
+// If mode is ProvisionModeClear, this function will attempt to clear the TPM before provisioning it. If owner
+// clear has been disabled (which will be the case if the TPM has previously been provisioned with this function),
+// then ErrClearRequiresPPI will be returned. In this case, the TPM must be cleared via the physical presence
+// interface by calling RequestTPMClearUsingPPI and performing a system restart.
+//
+// This function will create and persist a storage root key if required, which requires knowledge of the
+// authorization value for the storage hierarchy. If called with mode set to ProvisionModeClear, or if called
+// just after clearing the TPM via the physical presence interface, the authorization value for the storage
+// hierarchy will be empty at the point that it is required. If called with any other mode and if the
+// authorization value for the storage hierarchy has previously been set, it will need to be provided via the
+// ownerAuth parameter. If the wrong value is provided for the storage hierarchy authorization, then a
+// ErrOwnerAuthFail error will be returned. If the correct authorization value is not known, then the only way
+// to recover from this is to call the function with mode set to ProvisionModeClear. If there is an object already
+// stored at the location used for the storage root key, and that object is not a primary key or doesn't have the
+// expected public template, then this function will evict it automatically from the TPM.
+//
+// If mode is not ProvisionModeWithoutLockout, the authorization value for the lockout hierarchy will be set to
+// newLockoutAuth
+func ProvisionTPM(tpm *tpm2.TPMContext, mode ProvisionMode, newLockoutAuth, ownerAuth, lockoutAuth []byte) error {
+	status, err := ProvisionStatus(tpm)
 	if err != nil {
-		return fmt.Errorf("cannot request permanent properties: %v", err)
+		return xerrors.Errorf("cannot determine the current status: %w", err)
 	}
 
-	p := tpm2.PermanentAttributes(props[0].Value)
-	if p&tpm2.AttrLockoutAuthSet > 0 || p&tpm2.AttrDisableClear > 0 {
-		return ErrClearRequiresPPI
+	if mode != ProvisionModeWithoutLockout && status&AttrLockoutAuthSet > 0 && len(lockoutAuth) == 0 {
+		// Don't needlessly trip the lockout hierarchy DA protection, as you only get one attempt
+		// at the lockout hierarchy authorization
+		return ErrRequiresLockoutAuth
 	}
 
-	if err := tpm.Clear(tpm2.HandleLockout, nil); err != nil {
-		return fmt.Errorf("cannot clear the TPM: %v", err)
+	if mode == ProvisionModeClear {
+		if status&AttrOwnerClearDisabled > 0 {
+			return ErrClearRequiresPPI
+		}
+
+		if err := tpm.Clear(tpm2.HandleLockout, lockoutAuth); err != nil {
+			switch {
+			case isAuthFailError(err):
+				return ErrLockoutAuthFail
+			case isLockoutError(err):
+				return ErrInLockout
+			}
+			return xerrors.Errorf("cannot clear the TPM: %w", err)
+		}
+
+		lockoutAuth = nil
+		ownerAuth = nil
+		status = 0
 	}
 
-	srkContext, _, _, _, _, _, err := tpm.CreatePrimary(tpm2.HandleOwner, nil, &srkTemplate, nil, nil, nil)
-	if err != nil {
-		return fmt.Errorf("cannot create storage root key: %v", err)
-	}
-	defer tpm.FlushContext(srkContext)
+	if status&AttrValidSRK == 0 {
+		srkContext, err := tpm.WrapHandle(srkHandle)
+		if err == nil {
+			if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, ownerAuth); err != nil {
+				if isAuthFailError(err) {
+					return ErrOwnerAuthFail
+				}
+				return xerrors.Errorf("cannot evict existing object at handle required by storage root key: %w", err)
+			}
+		} else if _, notFound := err.(tpm2.ResourceUnavailableError); !notFound {
+			return xerrors.Errorf("cannot create context for object at handle required by storage root key: %w", err)
+		}
 
-	if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, nil); err != nil {
-		return fmt.Errorf("cannot make storage root key persistent: %v", err)
+		srkContext, _, _, _, _, _, err = tpm.CreatePrimary(tpm2.HandleOwner, nil, &srkTemplate, nil, nil, ownerAuth)
+		if err != nil {
+			if isAuthFailError(err) {
+				return ErrOwnerAuthFail
+			}
+			return xerrors.Errorf("cannot create storage root key: %w", err)
+		}
+		defer tpm.FlushContext(srkContext)
+
+		if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, ownerAuth); err != nil {
+			// Owner auth failure would have been caught by CreatePrimary
+			return xerrors.Errorf("cannot make storage root key persistent: %w", err)
+		}
 	}
 
-	if err := tpm.DictionaryAttackParameters(tpm2.HandleLockout, maxTries, recoveryTime, lockoutRecovery,
-		nil); err != nil {
-		return fmt.Errorf("cannot configure DA parameters: %v", err)
+	if mode == ProvisionModeWithoutLockout {
+		return nil
 	}
 
-	if err := tpm.ClearControl(tpm2.HandleLockout, true, nil); err != nil {
-		return fmt.Errorf("cannot disable owner clear: %v", err)
+	if err := tpm.DictionaryAttackParameters(tpm2.HandleLockout, maxTries, recoveryTime, lockoutRecovery, lockoutAuth); err != nil {
+		switch {
+		case isAuthFailError(err):
+			return ErrLockoutAuthFail
+		case isLockoutError(err):
+			return ErrInLockout
+		}
+		return xerrors.Errorf("cannot configure dictionary attack parameters: %w", err)
 	}
 
+	if err := tpm.ClearControl(tpm2.HandleLockout, true, lockoutAuth); err != nil {
+		// Lockout auth failure or lockout mode would have been caught by DictionaryAttackParameters
+		return xerrors.Errorf("cannot disable owner clear: %w", err)
+	}
+
+	// This was either created by ProvisionStatus or by TPMContext.EvictControl if we needed to create a new one, so this can never fail
+	srkContext, _ := tpm.WrapHandle(srkHandle)
+	lockoutContext, _ := tpm.WrapHandle(tpm2.HandleLockout)
 	sessionContext, err :=
-		tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypeHMAC, &paramEncryptAlg, defaultHashAlgorithm,
-			nil)
+		tpm.StartAuthSession(srkContext, lockoutContext, tpm2.SessionTypeHMAC, &paramEncryptAlg, defaultHashAlgorithm, lockoutAuth)
 	if err != nil {
-		return fmt.Errorf("cannot start session for command parameter encryption: %v", err)
+		return xerrors.Errorf("cannot start session for command parameter encryption: %w", err)
 	}
 	defer tpm.FlushContext(sessionContext)
 
-	session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrCommandEncrypt}
-	if err := tpm.HierarchyChangeAuth(tpm2.HandleLockout, tpm2.Auth(lockoutAuth), nil, &session); err != nil {
-		return fmt.Errorf("cannot set the lockout hierarchy authorization value: %v", err)
+	session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrCommandEncrypt, AuthValue: lockoutAuth}
+	if err := tpm.HierarchyChangeAuth(tpm2.HandleLockout, tpm2.Auth(newLockoutAuth), lockoutAuth, &session); err != nil {
+		return xerrors.Errorf("cannot set the lockout hierarchy authorization value: %w", err)
 	}
 
 	return nil
@@ -121,12 +222,12 @@ func ProvisionTPM(tpm *tpm2.TPMContext, lockoutAuth []byte) error {
 func RequestTPMClearUsingPPI() error {
 	f, err := os.OpenFile(ppiPath, os.O_WRONLY, 0)
 	if err != nil {
-		return fmt.Errorf("cannot open request handle: %v", err)
+		return xerrors.Errorf("cannot open request handle: %w", err)
 	}
 	defer f.Close()
 
 	if _, err := f.WriteString(clearPPIRequest); err != nil {
-		return fmt.Errorf("cannot submit request: %v", err)
+		return xerrors.Errorf("cannot submit request: %w", err)
 	}
 
 	return nil
@@ -146,16 +247,11 @@ func checkForValidSRK(tpm *tpm2.TPMContext) (bool, error) {
 		return false, xerrors.Errorf("cannot read public part of SRK: %w", err)
 	}
 
-	if pub.Type != srkTemplate.Type {
-		return false, nil
-	}
-	if pub.NameAlg != srkTemplate.NameAlg {
-		return false, nil
-	}
-	if pub.Attrs != srkTemplate.Attrs {
-		return false, nil
-	}
-	if !reflect.DeepEqual(pub.Params, srkTemplate.Params) {
+	pub.Unique = tpm2.PublicIDU{}
+
+	srkPubBytes, _ := tpm2.MarshalToBytes(pub)
+	srkTemplateBytes, _ := tpm2.MarshalToBytes(srkTemplate)
+	if !bytes.Equal(srkPubBytes, srkTemplateBytes) {
 		return false, nil
 	}
 
@@ -193,7 +289,7 @@ func ProvisionStatus(tpm *tpm2.TPMContext) (ProvisionStatusAttributes, error) {
 	if err != nil {
 		return 0, xerrors.Errorf("cannot fetch DA parameters: %w", err)
 	}
-	if props[0].Value == maxTries && props[1].Value == recoveryTime && props[2].Value == lockoutRecovery {
+	if props[0].Value <= maxTries && props[1].Value >= recoveryTime && props[2].Value >= lockoutRecovery {
 		out |= AttrDAParamsOK
 	}
 

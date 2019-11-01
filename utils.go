@@ -26,7 +26,7 @@ import (
 )
 
 func isAuthFailError(err error) bool {
-	var sessionErr tpm2.TPMSessionError
+	var sessionErr *tpm2.TPMSessionError
 	if !xerrors.As(err, &sessionErr) {
 		return false
 	}
@@ -37,4 +37,9 @@ func isAuthFailError(err error) bool {
 		return true
 	}
 	return false
+}
+
+func isLockoutError(err error) bool {
+	var warning *tpm2.TPMWarning
+	return xerrors.As(err, &warning) && warning.Code == tpm2.WarningLockout
 }

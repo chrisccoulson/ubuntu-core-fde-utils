@@ -34,16 +34,8 @@ func TestCreateAndUnseal(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, nil); err != nil && err != ErrClearRequiresPPI {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
-	}
-
-	status, err := ProvisionStatus(tpm)
-	if err != nil {
-		t.Fatalf("Cannot check provision status: %v", err)
-	}
-	if status&AttrValidSRK == 0 {
-		t.Fatalf("No valid SRK for test")
 	}
 
 	key := make([]byte, 64)
@@ -81,16 +73,8 @@ func TestCreateDoesntReplace(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, nil); err != nil && err != ErrClearRequiresPPI {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
-	}
-
-	status, err := ProvisionStatus(tpm)
-	if err != nil {
-		t.Fatalf("Cannot check provision status: %v", err)
-	}
-	if status&AttrValidSRK == 0 {
-		t.Fatalf("No valid SRK for test")
 	}
 
 	key := make([]byte, 64)
@@ -136,16 +120,8 @@ func TestUpdateAndUnseal(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, nil); err != nil && err != ErrClearRequiresPPI {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
-	}
-
-	status, err := ProvisionStatus(tpm)
-	if err != nil {
-		t.Fatalf("Cannot check provision status: %v", err)
-	}
-	if status&AttrValidSRK == 0 {
-		t.Fatalf("No valid SRK for test")
 	}
 
 	key := make([]byte, 64)
@@ -207,16 +183,8 @@ func TestRevoke(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, nil); err != nil && err != ErrClearRequiresPPI {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
-	}
-
-	status, err := ProvisionStatus(tpm)
-	if err != nil {
-		t.Fatalf("Cannot check provision status: %v", err)
-	}
-	if status&AttrValidSRK == 0 {
-		t.Fatalf("No valid SRK for test")
 	}
 
 	key := make([]byte, 64)
@@ -263,16 +231,8 @@ func TestUpdateWithoutExisting(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, nil); err != nil && err != ErrClearRequiresPPI {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
-	}
-
-	status, err := ProvisionStatus(tpm)
-	if err != nil {
-		t.Fatalf("Cannot check provision status: %v", err)
-	}
-	if status&AttrValidSRK == 0 {
-		t.Fatalf("No valid SRK for test")
 	}
 
 	key := make([]byte, 64)

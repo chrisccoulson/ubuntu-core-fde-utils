@@ -25,19 +25,7 @@ import (
 	"github.com/chrisccoulson/go-tpm2"
 )
 
-func TestProvisionTPM(t *testing.T) {
-	tpm, tcti := openTPMSimulatorForTesting(t)
-	defer closeTPM(t, tpm)
-
-	resetTPMSimulator(t, tpm, tcti)
-	clearTPMWithPlatformAuth(t, tpm)
-
-	lockoutAuth := []byte("1234")
-
-	if err := ProvisionTPM(tpm, lockoutAuth); err != nil {
-		t.Fatalf("ProvisionTPM failed: %v", err)
-	}
-
+func validateSRK(t *testing.T, tpm *tpm2.TPMContext) {
 	srkContext, err := tpm.WrapHandle(srkHandle)
 	if err != nil {
 		t.Errorf("Cannot create context for SRK: %v", err)
@@ -80,71 +68,268 @@ func TestProvisionTPM(t *testing.T) {
 	if len(pub.Unique.RSA()) != 2048/8 {
 		t.Errorf("SRK has an unexpected RSA public modulus length")
 	}
+}
 
-	// Validate the DA parameters
-	props, err := tpm.GetCapabilityTPMProperties(tpm2.PropertyMaxAuthFail, 3)
-	if err != nil {
-		t.Fatalf("GetCapability failed: %v", err)
-	}
-	if props[0].Value != uint32(32) || props[1].Value != uint32(7200) || props[2].Value != uint32(86400) {
-		t.Errorf("ProvisionTPM didn't set the DA parameters correctly")
-	}
+func TestProvisionNewTPM(t *testing.T) {
+	tpm, tcti := openTPMSimulatorForTesting(t)
+	defer closeTPM(t, tpm)
 
-	// Verify that owner control is disabled, that the lockout hierarchy auth is set, and no other hierarchy
-	// auth is set
-	props, err = tpm.GetCapabilityTPMProperties(tpm2.PropertyPermanent, 1)
-	if err != nil {
-		t.Fatalf("GetCapability failed: %v", err)
-	}
-	if tpm2.PermanentAttributes(props[0].Value)&tpm2.AttrLockoutAuthSet == 0 {
-		t.Errorf("ProvisionTPM didn't set the lockout hierarchy auth")
-	}
-	if tpm2.PermanentAttributes(props[0].Value)&tpm2.AttrDisableClear == 0 {
-		t.Errorf("ProvisionTPM didn't disable owner clear")
-	}
-	if tpm2.PermanentAttributes(props[0].Value)&(tpm2.AttrOwnerAuthSet|tpm2.AttrEndorsementAuthSet) > 0 {
-		t.Errorf("ProvisionTPM returned with authorizations set for owner or endorsement hierarchies")
-	}
+	for _, data := range []struct {
+		desc string
+		mode ProvisionMode
+	}{
+		{
+			desc: "Clear",
+			mode: ProvisionModeClear,
+		},
+		{
+			desc: "Full",
+			mode: ProvisionModeFull,
+		},
+	} {
+		t.Run(data.desc, func(t *testing.T) {
+			resetTPMSimulator(t, tpm, tcti)
+			clearTPMWithPlatformAuth(t, tpm)
 
-	// Test the lockout hierarchy auth
-	if err := tpm.DictionaryAttackLockReset(tpm2.HandleLockout, lockoutAuth); err != nil {
-		t.Errorf("Use of the lockout hierarchy auth failed: %v", err)
-	}
+			lockoutAuth := []byte("1234")
 
-	// Make sure ProvisionTPM didn't leak transient objects
-	handles, err := tpm.GetCapabilityHandles(tpm2.HandleTypeTransient.BaseHandle(), tpm2.CapabilityMaxProperties)
-	if err != nil {
-		t.Fatalf("GetCapability failed: %v", err)
-	}
-	if len(handles) > 0 {
-		t.Errorf("ProvisionTPM leaked transient handles")
-	}
+			if err := ProvisionTPM(tpm, ProvisionModeClear, lockoutAuth, nil, nil); err != nil {
+				t.Fatalf("ProvisionTPM failed: %v", err)
+			}
 
-	handles, err = tpm.GetCapabilityHandles(tpm2.HandleTypeLoadedSession.BaseHandle(), tpm2.CapabilityMaxProperties)
-	if err != nil {
-		t.Fatalf("GetCapability failed: %v", err)
-	}
-	if len(handles) > 0 {
-		t.Errorf("ProvisionTPM leaked loaded session handles")
+			validateSRK(t, tpm)
+
+			// Validate the DA parameters
+			props, err := tpm.GetCapabilityTPMProperties(tpm2.PropertyMaxAuthFail, 3)
+			if err != nil {
+				t.Fatalf("GetCapability failed: %v", err)
+			}
+			if props[0].Value != uint32(32) || props[1].Value != uint32(7200) ||
+				props[2].Value != uint32(86400) {
+				t.Errorf("ProvisionTPM didn't set the DA parameters correctly")
+			}
+
+			// Verify that owner control is disabled, that the lockout hierarchy auth is set, and no
+			// other hierarchy auth is set
+			props, err = tpm.GetCapabilityTPMProperties(tpm2.PropertyPermanent, 1)
+			if err != nil {
+				t.Fatalf("GetCapability failed: %v", err)
+			}
+			if tpm2.PermanentAttributes(props[0].Value)&tpm2.AttrLockoutAuthSet == 0 {
+				t.Errorf("ProvisionTPM didn't set the lockout hierarchy auth")
+			}
+			if tpm2.PermanentAttributes(props[0].Value)&tpm2.AttrDisableClear == 0 {
+				t.Errorf("ProvisionTPM didn't disable owner clear")
+			}
+			if tpm2.PermanentAttributes(props[0].Value)&(tpm2.AttrOwnerAuthSet|
+				tpm2.AttrEndorsementAuthSet) > 0 {
+				t.Errorf("ProvisionTPM returned with authorizations set for owner or " +
+					"endorsement hierarchies")
+			}
+
+			// Test the lockout hierarchy auth
+			if err := tpm.DictionaryAttackLockReset(tpm2.HandleLockout, lockoutAuth); err != nil {
+				t.Errorf("Use of the lockout hierarchy auth failed: %v", err)
+			}
+
+			// Make sure ProvisionTPM didn't leak transient objects
+			handles, err := tpm.GetCapabilityHandles(tpm2.HandleTypeTransient.BaseHandle(),
+				tpm2.CapabilityMaxProperties)
+			if err != nil {
+				t.Fatalf("GetCapability failed: %v", err)
+			}
+			if len(handles) > 0 {
+				t.Errorf("ProvisionTPM leaked transient handles")
+			}
+
+			handles, err = tpm.GetCapabilityHandles(tpm2.HandleTypeLoadedSession.BaseHandle(),
+				tpm2.CapabilityMaxProperties)
+			if err != nil {
+				t.Fatalf("GetCapability failed: %v", err)
+			}
+			if len(handles) > 0 {
+				t.Errorf("ProvisionTPM leaked loaded session handles")
+			}
+		})
 	}
 }
 
-func TestProvisionAlreadyProvisioned(t *testing.T) {
+func TestProvisionErrorHandling(t *testing.T) {
+	tpm, tcti := openTPMSimulatorForTesting(t)
+	defer closeTPM(t, tpm)
+
+	authValue := []byte("1234")
+
+	setLockoutAuth := func(t *testing.T) {
+		if err := tpm.HierarchyChangeAuth(tpm2.HandleLockout, authValue, nil); err != nil {
+			t.Fatalf("HierarchyChangeAuth failed: %v", err)
+		}
+	}
+
+	for _, data := range []struct {
+		desc        string
+		mode        ProvisionMode
+		lockoutAuth []byte
+		prepare     func(*testing.T)
+		err         error
+	}{
+		{
+			desc: "ErrRequiresLockoutAuth1",
+			mode: ProvisionModeFull,
+			prepare: func(t *testing.T) {
+				setLockoutAuth(t)
+			},
+			err: ErrRequiresLockoutAuth,
+		},
+		{
+			desc: "ErrRequiresLockoutAuth2",
+			mode: ProvisionModeClear,
+			prepare: func(t *testing.T) {
+				setLockoutAuth(t)
+			},
+			err: ErrRequiresLockoutAuth,
+		},
+		{
+			desc: "ErrClearRequiresPPI",
+			mode: ProvisionModeClear,
+			prepare: func(t *testing.T) {
+				if err := tpm.ClearControl(tpm2.HandleLockout, true, nil); err != nil {
+					t.Fatalf("ClearControl failed: %v", err)
+				}
+				setLockoutAuth(t)
+			},
+			lockoutAuth: authValue,
+			err:         ErrClearRequiresPPI,
+		},
+		{
+			desc: "ErrLockoutAuthFail1",
+			mode: ProvisionModeFull,
+			prepare: func(t *testing.T) {
+				setLockoutAuth(t)
+			},
+			lockoutAuth: []byte("5678"),
+			err:         ErrLockoutAuthFail,
+		},
+		{
+			desc: "ErrLockoutAuthFail2",
+			mode: ProvisionModeClear,
+			prepare: func(t *testing.T) {
+				setLockoutAuth(t)
+			},
+			lockoutAuth: []byte("5678"),
+			err:         ErrLockoutAuthFail,
+		},
+		{
+			desc: "ErrInLockout1",
+			mode: ProvisionModeFull,
+			prepare: func(t *testing.T) {
+				setLockoutAuth(t)
+				tpm.HierarchyChangeAuth(tpm2.HandleLockout, nil, nil)
+			},
+			lockoutAuth: authValue,
+			err:         ErrInLockout,
+		},
+		{
+			desc: "ErrInLockout2",
+			mode: ProvisionModeClear,
+			prepare: func(t *testing.T) {
+				setLockoutAuth(t)
+				tpm.HierarchyChangeAuth(tpm2.HandleLockout, nil, nil)
+			},
+			lockoutAuth: authValue,
+			err:         ErrInLockout,
+		},
+		{
+			desc: "ErrOwnerAuthFail",
+			mode: ProvisionModeWithoutLockout,
+			prepare: func(t *testing.T) {
+				if err := tpm.HierarchyChangeAuth(tpm2.HandleOwner, authValue, nil); err != nil {
+					t.Fatalf("HierarchyChangeAuth failed: %v", err)
+				}
+			},
+			err: ErrOwnerAuthFail,
+		},
+	} {
+		t.Run(data.desc, func(t *testing.T) {
+			resetTPMSimulator(t, tpm, tcti)
+			clearTPMWithPlatformAuth(t, tpm)
+
+			data.prepare(t)
+
+			err := ProvisionTPM(tpm, data.mode, nil, nil, data.lockoutAuth)
+			if err == nil {
+				t.Fatalf("ProvisionTPM should have returned an error")
+			}
+			if err != data.err {
+				t.Errorf("ProvisionTPM returned an unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestRecreateSRK(t *testing.T) {
+	tpm, tcti := openTPMSimulatorForTesting(t)
+	defer closeTPM(t, tpm)
+
+	for _, data := range []struct {
+		desc string
+		mode ProvisionMode
+	}{
+		{
+			desc: "Full",
+			mode: ProvisionModeFull,
+		},
+		{
+			desc: "WithoutLockout",
+			mode: ProvisionModeWithoutLockout,
+		},
+	} {
+		t.Run(data.desc, func(t *testing.T) {
+			resetTPMSimulator(t, tpm, tcti)
+			clearTPMWithPlatformAuth(t, tpm)
+
+			lockoutAuth := []byte("1234")
+
+			if err := ProvisionTPM(tpm, ProvisionModeClear, lockoutAuth, nil, nil); err != nil {
+				t.Fatalf("ProvisionTPM failed: %v", err)
+			}
+
+			srkContext, err := tpm.WrapHandle(srkHandle)
+			if err != nil {
+				t.Fatalf("WrapHandle failed: %v", err)
+			}
+
+			if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkContext.Handle(),
+				nil); err != nil {
+				t.Errorf("EvictControl failed: %v", err)
+			}
+
+			if err := ProvisionTPM(tpm, data.mode, lockoutAuth, nil, lockoutAuth); err != nil {
+				t.Fatalf("ProvisionTPM failed: %v", err)
+			}
+
+			validateSRK(t, tpm)
+		})
+	}
+}
+
+func TestProvisionWithOwnerAuth(t *testing.T) {
 	tpm, _ := openTPMSimulatorForTesting(t)
 	defer closeTPM(t, tpm)
 
 	clearTPMWithPlatformAuth(t, tpm)
-	if err := ProvisionTPM(tpm, nil); err != nil {
+
+	testAuth := []byte("1234")
+
+	if err := tpm.HierarchyChangeAuth(tpm2.HandleOwner, testAuth, nil); err != nil {
+		t.Fatalf("HierarchyChangeAuth failed: %v", err)
+	}
+
+	if err := ProvisionTPM(tpm, ProvisionModeClear, nil, testAuth, nil); err != nil {
 		t.Fatalf("ProvisionTPM failed: %v", err)
 	}
 
-	err := ProvisionTPM(tpm, nil)
-	if err == nil {
-		t.Fatalf("ProvisionTPM should return an error when the TPM is already provisioned")
-	}
-	if err != ErrClearRequiresPPI {
-		t.Errorf("Unexpected error returned from ProvisionTPM: %v", err)
-	}
+	validateSRK(t, tpm)
 }
 
 func TestProvisionStatus(t *testing.T) {
@@ -163,7 +348,7 @@ func TestProvisionStatus(t *testing.T) {
 
 	lockoutAuth := []byte("1234")
 
-	if err := ProvisionTPM(tpm, lockoutAuth); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeClear, lockoutAuth, nil, nil); err != nil {
 		t.Fatalf("ProvisionTPM failed: %v", err)
 	}
 
@@ -237,7 +422,7 @@ func TestProvisionStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreatePrimary failed: %v", err)
 	}
-	defer tpm.FlushContext(primary)
+	defer flushContext(t, tpm, primary)
 
 	priv, pub, _, _, _, err := tpm.Create(primary, nil, &srkTemplate, nil, nil, nil)
 	if err != nil {
@@ -248,6 +433,7 @@ func TestProvisionStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
+	defer flushContext(t, tpm, context)
 
 	if _, err := tpm.EvictControl(tpm2.HandleOwner, context, srkHandle, nil); err != nil {
 		t.Errorf("EvictControl failed: %v", err)
