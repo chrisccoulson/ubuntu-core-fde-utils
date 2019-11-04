@@ -125,12 +125,15 @@ func makePCRSelectionList(alg tpm2.HashAlgorithmId, index int) tpm2.PCRSelection
 		tpm2.PCRSelection{Hash: alg, Select: tpm2.PCRSelectionData{index}}}
 }
 
-func computePCRDigest(alg tpm2.HashAlgorithmId, digests tpm2.DigestList) tpm2.Digest {
-	h := hashAlgToGoHash(alg)
-	for _, d := range digests {
-		h.Write(d)
-	}
-	return h.Sum(nil)
+func computePolicyPCRParams(policyAlg, pcrAlg tpm2.HashAlgorithmId, digest tpm2.Digest, index int) (tpm2.Digest, tpm2.PCRSelectionList) {
+	pcrs := makePCRSelectionList(pcrAlg, index)
+
+	pcrValues := make(tpm2.PCRValues)
+	pcrValues.EnsureBank(pcrAlg)
+	pcrValues[pcrAlg][index] = digest
+	pcrDigest, _ := tpm2.ComputePCRDigest(policyAlg, pcrs, pcrValues)
+
+	return pcrDigest, pcrs
 }
 
 func computePolicy(alg tpm2.HashAlgorithmId, input *policyComputeInput) (*policyData, tpm2.Digest, error) {
@@ -140,8 +143,7 @@ func computePolicy(alg tpm2.HashAlgorithmId, input *policyComputeInput) (*policy
 	secureBootORDigests := make(tpm2.DigestList, 0)
 	for _, digest := range input.secureBootPCRDigests {
 		trial, _ := tpm2.ComputeAuthPolicy(alg)
-		pcrs := makePCRSelectionList(input.secureBootPCRAlg, secureBootPCR)
-		pcrDigest := computePCRDigest(alg, tpm2.DigestList{digest})
+		pcrDigest, pcrs := computePolicyPCRParams(alg, input.secureBootPCRAlg, digest, secureBootPCR)
 		trial.PolicyPCR(pcrDigest, pcrs)
 		secureBootORDigests = append(secureBootORDigests, trial.GetDigest())
 	}
@@ -153,8 +155,7 @@ func computePolicy(alg tpm2.HashAlgorithmId, input *policyComputeInput) (*policy
 	for _, digest := range input.grubPCRDigests {
 		trial, _ := tpm2.ComputeAuthPolicy(alg)
 		trial.PolicyOR(ensureSufficientORDigests(secureBootORDigests))
-		pcrs := makePCRSelectionList(input.grubPCRAlg, grubPCR)
-		pcrDigest := computePCRDigest(alg, tpm2.DigestList{digest})
+		pcrDigest, pcrs := computePolicyPCRParams(alg, input.grubPCRAlg, digest, grubPCR)
 		trial.PolicyPCR(pcrDigest, pcrs)
 		grubORDigests = append(grubORDigests, trial.GetDigest())
 	}
@@ -166,8 +167,7 @@ func computePolicy(alg tpm2.HashAlgorithmId, input *policyComputeInput) (*policy
 	for _, digest := range input.snapModelPCRDigests {
 		trial, _ := tpm2.ComputeAuthPolicy(alg)
 		trial.PolicyOR(ensureSufficientORDigests(grubORDigests))
-		pcrs := makePCRSelectionList(input.snapModelPCRAlg, snapModelPCR)
-		pcrDigest := computePCRDigest(alg, tpm2.DigestList{digest})
+		pcrDigest, pcrs := computePolicyPCRParams(alg, input.snapModelPCRAlg, digest, snapModelPCR)
 		trial.PolicyPCR(pcrDigest, pcrs)
 		snapModelORDigests = append(snapModelORDigests, trial.GetDigest())
 	}

@@ -27,12 +27,12 @@ import (
 )
 
 var (
-	ErrClearRequiresPPI = errors.New("clearing requires the use of the Physical Presence Interface")
+	ErrClearRequiresPPI    = errors.New("clearing requires the use of the Physical Presence Interface")
 	ErrRequiresLockoutAuth = errors.New("the TPM indicates the lockout hierarchy has an authorization value, but one hasn't " +
 		"been provided")
 	ErrLockoutAuthFail = errors.New("an authorization check for the lockout hierarchy failed and the " +
 		"lockout hierarchy can not be used again for the configured recovery time")
-	ErrInLockout     = errors.New("the lockout hierarchy can not be used because it is in lockout mode")
+	ErrInLockout = errors.New("the lockout hierarchy can not be used because it is in lockout mode")
 
 	ErrProvisioning  = errors.New("the TPM is not correctly provisioned")
 	ErrKeyFileExists = errors.New("a key data file already exists at the specified path")
