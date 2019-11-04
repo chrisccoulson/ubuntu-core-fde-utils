@@ -99,7 +99,7 @@ type CreationParams struct {
 }
 
 func isNVIndexDefinedError(err error) bool {
-	var tpmError tpm2.TPMError
+	var tpmError *tpm2.TPMError
 	if !xerrors.As(err, &tpmError) {
 		return false
 	}
@@ -222,12 +222,12 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 			return fmt.Errorf("cannot compute secure boot policy digests: %v", err)
 		}
 	} else {
-		_, secureBootDigests, err = tpm.PCRRead(tpm2.PCRSelectionList{
-			tpm2.PCRSelection{Hash: defaultHashAlgorithm,
-				Select: tpm2.PCRSelectionData{secureBootPCR}}})
+		_, pcrValues, err := tpm.PCRRead(tpm2.PCRSelectionList{
+			tpm2.PCRSelection{Hash: defaultHashAlgorithm, Select: tpm2.PCRSelectionData{secureBootPCR}}})
 		if err != nil {
 			return xerrors.Errorf("cannot read secure boot PCR value: %w", err)
 		}
+		secureBootDigests = append(secureBootDigests, pcrValues[defaultHashAlgorithm][secureBootPCR])
 	}
 
 	// Use the PCR digests and NV index names to generate a single policy digest
@@ -249,12 +249,12 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 
 	// Define the template for the sealed key object, using the calculated policy digest
 	template := tpm2.Public{
-		Type:       tpm2.AlgorithmKeyedHash,
-		NameAlg:    tpm2.AlgorithmSHA256,
+		Type:       tpm2.ObjectTypeKeyedHash,
+		NameAlg:    tpm2.HashAlgorithmSHA256,
 		Attrs:      tpm2.AttrFixedTPM | tpm2.AttrFixedParent,
 		AuthPolicy: authPolicy,
 		Params: tpm2.PublicParamsU{
-			Data: &tpm2.KeyedHashParams{Scheme: tpm2.KeyedHashScheme{Scheme: tpm2.AlgorithmNull}}}}
+			Data: &tpm2.KeyedHashParams{Scheme: tpm2.KeyedHashScheme{Scheme: tpm2.KeyedHashSchemeNull}}}}
 	sensitive := tpm2.SensitiveCreate{Data: key}
 
 	// Marshal the auxiliary policy data to calculate a digest that can be stored in the CreationData returned

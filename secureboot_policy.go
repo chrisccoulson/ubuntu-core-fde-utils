@@ -304,7 +304,7 @@ type secureBootDbSet struct {
 }
 
 type secureBootPolicyGen struct {
-	alg    tpm2.AlgorithmId
+	alg    tpm2.HashAlgorithmId
 	params *SealParams
 
 	dbStack  []*secureBootDbSet
@@ -923,7 +923,7 @@ func (g *secureBootPolicyGen) run(secureBootEvents []classifiedEvent) (tpm2.Dige
 // a new key (and this function is called with both the old and new components present in params) - in
 // which case this can compute multiple digests that can be used in an OR policy to allow updates to be
 // applied atomically.
-func computeSecureBootPolicyDigests(tpm *tpm2.TPMContext, alg tpm2.AlgorithmId, params *SealParams) (
+func computeSecureBootPolicyDigests(tpm *tpm2.TPMContext, alg tpm2.HashAlgorithmId, params *SealParams) (
 	tpm2.DigestList, error) {
 	logPath := eventLogPath
 	if eventLogPathForTesting != "" {
@@ -954,7 +954,7 @@ func computeSecureBootPolicyDigests(tpm *tpm2.TPMContext, alg tpm2.AlgorithmId, 
 		return nil, fmt.Errorf("cannot read current secure boot policy PCR value from TPM: %v", err)
 	}
 	digestFromLog := log.ExpectedPCRValues[tcglog.PCRIndex(secureBootPCR)][tcglog.AlgorithmId(alg)]
-	if !bytes.Equal(digests[0], digestFromLog) {
+	if !bytes.Equal(digests[alg][secureBootPCR], digestFromLog) {
 		return nil, fmt.Errorf("secure boot policy PCR value is not consistent with the events from the "+
 			"event log (TPM value: %x, value calculated from replaying log: %x)", digests[0],
 			digestFromLog)

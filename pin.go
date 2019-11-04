@@ -30,7 +30,7 @@ import (
 )
 
 const (
-	pinNvIndexNameAlgorithm tpm2.AlgorithmId = tpm2.AlgorithmSHA256
+	pinNvIndexNameAlgorithm tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
 )
 
 func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interface{}) (tpm2.ResourceContext, tpm2.DigestList, error) {
@@ -50,17 +50,16 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interf
 
 	// Create and load a signing key
 	template := tpm2.Public{
-		Type:    tpm2.AlgorithmRSA,
-		NameAlg: tpm2.AlgorithmSHA256,
-		Attrs: tpm2.AttrFixedTPM | tpm2.AttrFixedParent | tpm2.AttrSensitiveDataOrigin |
-			tpm2.AttrUserWithAuth | tpm2.AttrSign,
+		Type:    tpm2.ObjectTypeRSA,
+		NameAlg: tpm2.HashAlgorithmSHA256,
+		Attrs: tpm2.AttrFixedTPM | tpm2.AttrFixedParent | tpm2.AttrSensitiveDataOrigin | tpm2.AttrUserWithAuth | tpm2.AttrSign,
 		Params: tpm2.PublicParamsU{
 			Data: &tpm2.RSAParams{
-				Symmetric: tpm2.SymDefObject{Algorithm: tpm2.AlgorithmNull},
+				Symmetric: tpm2.SymDefObject{Algorithm: tpm2.SymObjectAlgorithmNull},
 				Scheme: tpm2.RSAScheme{
-					Scheme: tpm2.AlgorithmRSAPSS,
+					Scheme: tpm2.RSASchemeRSAPSS,
 					Details: tpm2.AsymSchemeU{
-						Data: &tpm2.SigSchemeRSAPSS{HashAlg: tpm2.AlgorithmSHA256}}},
+						Data: &tpm2.SigSchemeRSAPSS{HashAlg: tpm2.HashAlgorithmSHA256}}},
 				KeyBits:  2048,
 				Exponent: 0}}}
 	priv, pub, _, _, _, err := tpm.Create(srkContext, nil, &template, nil, nil, nil)
@@ -75,20 +74,20 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interf
 
 	// The NV index requires 2 policies - one for writing in order to initialize, and one for changing the
 	// auth value. Create the one for writing first
-	trial, _ := tpm2.ComputeAuthPolicy(tpm2.AlgorithmSHA256)
+	trial, _ := tpm2.ComputeAuthPolicy(tpm2.HashAlgorithmSHA256)
 	trial.PolicySigned(key, nil)
 	authPolicy1 := trial.GetDigest()
 
 	// The second policy is for changing the auth value which requires the admin role, so we use
 	// PolicyCommandCode for this
-	trial, _ = tpm2.ComputeAuthPolicy(tpm2.AlgorithmSHA256)
+	trial, _ = tpm2.ComputeAuthPolicy(tpm2.HashAlgorithmSHA256)
 	trial.PolicyCommandCode(tpm2.CommandNVChangeAuth)
 	trial.PolicyAuthValue()
 	authPolicy2 := trial.GetDigest()
 
 	authPolicies := tpm2.DigestList{authPolicy1, authPolicy2}
 
-	trial, _ = tpm2.ComputeAuthPolicy(tpm2.AlgorithmSHA256)
+	trial, _ = tpm2.ComputeAuthPolicy(tpm2.HashAlgorithmSHA256)
 	trial.PolicyOR(authPolicies)
 	authPolicy := trial.GetDigest()
 
@@ -117,7 +116,7 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interf
 	defer tpm.FlushContext(sessionContext)
 
 	// Compute a digest for signing with our key
-	h := hashAlgToGoHash(tpm2.AlgorithmSHA256)
+	h := hashAlgToGoHash(tpm2.HashAlgorithmSHA256)
 	h.Write(sessionContext.(tpm2.SessionContext).NonceTPM())
 	binary.Write(h, binary.BigEndian, int32(0))
 
@@ -165,8 +164,7 @@ func performPINChange(tpm *tpm2.TPMContext, handle tpm2.Handle, policies tpm2.Di
 		return fmt.Errorf("cannot create context for PIN NV index: %v", err)
 	}
 
-	sessionContext, err := tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypePolicy, &paramEncryptAlg,
-		pinNvIndexNameAlgorithm, nil)
+	sessionContext, err := tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypePolicy, &paramEncryptAlg, pinNvIndexNameAlgorithm, nil)
 	if err != nil {
 		return fmt.Errorf("cannot start auth session: %v", err)
 	}
