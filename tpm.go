@@ -251,7 +251,7 @@ func readEkCert(tpm *tpm2.TPMContext, ownerAuth []byte) (*x509.Certificate, erro
 			if !isAuthFailError(err) {
 				return nil, xerrors.Errorf("cannot read index: %w", err)
 			} else if ekCertPub.Attrs&tpm2.AttrNVOwnerRead == 0 {
-				return nil, tpm2.ResourceUnavailableError{ekCertHandle}
+				return nil, tpm2.ResourceUnavailableError{Handle: ekCertHandle}
 			}
 		} else {
 			return cert, nil
