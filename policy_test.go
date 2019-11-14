@@ -204,7 +204,21 @@ func TestExecutePolicy(t *testing.T) {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	_, pinPolicies, err := createPinNvIndex(tpm.TPMContext, testCreationParams.PinHandle, nil)
+	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultHashAlgorithm, nil)
+	if err != nil {
+		t.Fatalf("StartAuthSession failed: %v", err)
+	}
+	sessionFlushed := false
+	defer func() {
+		if sessionFlushed {
+			return
+		}
+		flushContext(t, tpm, sessionContext)
+	}()
+
+	session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrContinueSession}
+
+	_, pinPolicies, err := createPinNvIndex(tpm, testCreationParams.PinHandle, nil, &session)
 	if err != nil {
 		t.Fatalf("createPinNvIndex failed: %v", err)
 	}
@@ -218,7 +232,7 @@ func TestExecutePolicy(t *testing.T) {
 		}
 	}()
 
-	policyRevokeIndex, err := createPolicyRevocationNvIndex(tpm.TPMContext, testCreationParams.PolicyRevocationHandle, nil)
+	policyRevokeIndex, err := createPolicyRevocationNvIndex(tpm.TPMContext, testCreationParams.PolicyRevocationHandle, nil, &session)
 	if err != nil {
 		t.Fatalf("createPolicyRevocationNvIndex failed: %v", err)
 	}
@@ -231,6 +245,8 @@ func TestExecutePolicy(t *testing.T) {
 			t.Errorf("NVUndefineSpace failed: %v", err)
 		}
 	}()
+	flushContext(t, tpm, sessionContext)
+	sessionFlushed = true
 
 	var policyRevokeCount uint64
 	if c, err := tpm.NVReadCounter(policyRevokeIndex, policyRevokeIndex, nil); err != nil {

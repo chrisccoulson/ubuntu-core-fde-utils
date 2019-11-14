@@ -86,23 +86,33 @@ func getDigestSize(alg tpm2.HashAlgorithmId) uint {
 	return uint(known.size)
 }
 
-func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interface{}) (tpm2.ResourceContext, error) {
+func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte, session *tpm2.Session) (tpm2.ResourceContext, error) {
 	public := tpm2.NVPublic{
 		Index:   handle,
 		NameAlg: tpm2.HashAlgorithmSHA256,
 		Attrs:   tpm2.MakeNVAttributes(tpm2.AttrNVAuthWrite|tpm2.AttrNVAuthRead, tpm2.NVTypeCounter),
 		Size:    8}
 
-	if err := tpm.NVDefineSpace(tpm2.HandleOwner, nil, &public, ownerAuth); err != nil {
+	if err := tpm.NVDefineSpace(tpm2.HandleOwner, nil, &public, session.WithAuthValue(ownerAuth)); err != nil {
 		return nil, xerrors.Errorf("cannot define NV space: %w", err)
 	}
+
+	// NVDefineSpace was integrity protected, so we know that we have an index with the expected public area at the handle we specified
+	// at this point.
 
 	context, err := tpm.WrapHandle(handle)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot obtain context for new NV index: %w", err)
 	}
 
-	if err := tpm.NVIncrement(context, context, nil); err != nil {
+	// The name associated with context is read back from the TPM with no integrity protection, so we don't know if it's correct yet.
+	// We need to check that it's consistent with the NV index we created before adding it to an authorization policy.
+
+	// Initialize the index. This command is integrity protected so it will fail if the name associated with context doesn't
+	// correspond to the NV index. Success here confirms that the name associated with context corresponds to the actual NV index
+	// that we created. Calling the ResourceContext.Name() method on it will return a value that can be safely used to compute an
+	// authorization policy.
+	if err := tpm.NVIncrement(context, context, session); err != nil {
 		return nil, xerrors.Errorf("cannot increment new NV index: %w", err)
 	}
 

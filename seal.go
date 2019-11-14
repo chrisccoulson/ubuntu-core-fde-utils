@@ -94,7 +94,7 @@ type SealParams struct {
 type CreationParams struct {
 	PolicyRevocationHandle tpm2.Handle
 	PinHandle              tpm2.Handle
-	OwnerAuth              interface{}
+	OwnerAuth              []byte
 }
 
 func isNVIndexDefinedError(err error) bool {
@@ -142,11 +142,28 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 		return fmt.Errorf("expected a key length of 512 bits (got %d)", len(key)*8)
 	}
 
-	if status, err := ProvisionStatus(tpm); err != nil {
-		return xerrors.Errorf("cannot determine the current provisioning status of the TPM: %w", err)
-	} else if status&AttrValidSRK == 0 {
+	// Verify we have an endorsment key (used by createPinNvIndex).
+	_, err := tpm.EkContext()
+	if err != nil {
+		return err
+	}
+
+	// Use the HMAC session created when the connection was opened rather than creating a new one.
+	session, err := tpm.HmacSession()
+	if err != nil {
+		return err
+	}
+
+	// Validate that we have a valid SRK at the expected location. We want to do this because if we seal against a non-primary key or
+	// a primary key that's created from a different template (even if it has the properties we desire - ie, it is restricted and
+	// non-duplicable), then a future call to ProvisionTPM will make the disk encryption key non-recoverable.
+	if ok, err := hasValidSRK(tpm.TPMContext, session); err != nil {
+		return err
+	} else if !ok {
 		return ErrProvisioning
 	}
+	// This can't fail now
+	srkContext, _ := tpm.WrapHandle(srkHandle)
 
 	var pinIndex tpm2.ResourceContext
 	var pinIndexPolicies tpm2.DigestList
@@ -154,15 +171,13 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 
 	var policyRevokeIndex tpm2.ResourceContext
 
-	var err error
-
 	// If we are creating a new sealed key object, create the associated NV indices
 	if create != nil {
 		if _, err := os.Stat(dest); err == nil || !os.IsNotExist(err) {
 			return ErrKeyFileExists
 		}
 
-		pinIndex, pinIndexPolicies, err = createPinNvIndex(tpm.TPMContext, create.PinHandle, create.OwnerAuth)
+		pinIndex, pinIndexPolicies, err = createPinNvIndex(tpm, create.PinHandle, create.OwnerAuth, session)
 		if err != nil {
 			switch {
 			case isNVIndexDefinedError(err):
@@ -173,7 +188,7 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 			return xerrors.Errorf("cannot create new pin NV index: %w", err)
 		}
 
-		policyRevokeIndex, err = createPolicyRevocationNvIndex(tpm.TPMContext, create.PolicyRevocationHandle, create.OwnerAuth)
+		policyRevokeIndex, err = createPolicyRevocationNvIndex(tpm.TPMContext, create.PolicyRevocationHandle, create.OwnerAuth, session)
 		if err != nil {
 			switch {
 			case isNVIndexDefinedError(err):
@@ -181,7 +196,7 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 			case isAuthFailError(err):
 				return AuthFailError{tpm2.HandleOwner}
 			}
-			return xerrors.Errorf("cannot create revocation counter: %w", err)
+			return xerrors.Errorf("cannot create policy revocation NV counter: %w", err)
 		}
 	} else {
 		f, err := os.Open(dest)
@@ -217,8 +232,9 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 		}
 	}
 
+	// Obtain the revoke count for the new authorization policy
 	var nextPolicyRevokeCount uint64
-	if c, err := tpm.NVReadCounter(policyRevokeIndex, policyRevokeIndex, nil); err != nil {
+	if c, err := tpm.NVReadCounter(policyRevokeIndex, policyRevokeIndex, session); err != nil {
 		return xerrors.Errorf("cannot read revocation counter: %w", err)
 	} else {
 		nextPolicyRevokeCount = c + 1
@@ -257,7 +273,7 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 		return fmt.Errorf("cannot compute authorization policy: %v", err)
 	}
 
-	// Define the template for the sealed key object, using the calculated policy digest
+	// Define the template for the sealed key object, using the computed policy digest
 	template := tpm2.Public{
 		Type:       tpm2.ObjectTypeKeyedHash,
 		NameAlg:    tpm2.HashAlgorithmSHA256,
@@ -267,19 +283,10 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 			Data: &tpm2.KeyedHashParams{Scheme: tpm2.KeyedHashScheme{Scheme: tpm2.KeyedHashSchemeNull}}}}
 	sensitive := tpm2.SensitiveCreate{Data: key}
 
-	// This can't fail, as ProvisionStatus already created it
-	srkContext, _ := tpm.WrapHandle(srkHandle)
-
-	// Create a session for command parameter encryption
-	sessionContext, err := tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypeHMAC, &paramEncryptAlg, defaultHashAlgorithm, nil)
-	if err != nil {
-		return xerrors.Errorf("cannot create session for encryption: %w", err)
-	}
-	defer tpm.FlushContext(sessionContext)
-
-	// Now create the sealed key object
-	session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrCommandEncrypt}
-	priv, pub, _, _, _, err := tpm.Create(srkContext, &sensitive, &template, nil, nil, nil, &session)
+	// Now create the sealed key object. The command is integrity protected so if the object at the handle we expect the SRK to reside
+	// at has a different name (ie, if we're connected via a resource manager and somebody swapped the object with another one), this
+	// command will fail. We take advantage of parameter encryption here too.
+	priv, pub, _, _, _, err := tpm.Create(srkContext, &sensitive, &template, nil, nil, nil, session.AddAttrs(tpm2.AttrCommandEncrypt))
 	if err != nil {
 		return xerrors.Errorf("cannot create sealed data object for key: %w", err)
 	}
@@ -298,7 +305,7 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 		return xerrors.Errorf("cannot write key data file: %v", err)
 	}
 
-	if err := tpm.NVIncrement(policyRevokeIndex, policyRevokeIndex, nil); err != nil {
+	if err := tpm.NVIncrement(policyRevokeIndex, policyRevokeIndex, session); err != nil {
 		return xerrors.Errorf("cannot revoke old authorization policies: %w", err)
 	}
 

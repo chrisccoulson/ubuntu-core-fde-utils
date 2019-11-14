@@ -20,6 +20,9 @@
 package fdeutil
 
 import (
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -33,7 +36,7 @@ const (
 	pinNvIndexNameAlgorithm tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
 )
 
-func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interface{}) (tpm2.ResourceContext, tpm2.DigestList, error) {
+func createPinNvIndex(tpm *TPMConnection, handle tpm2.Handle, ownerAuth []byte, hmacSession *tpm2.Session) (tpm2.ResourceContext, tpm2.DigestList, error) {
 	// To prevent someone with knowledge of the owner authorization (which is empty unless someone has taken
 	// ownership of the TPM) from resetting the PIN by just undefining and redifining a new NV index with the
 	// same properties, require the NV index to be written to and only allow writes with a signed
@@ -43,16 +46,15 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interf
 	// sealed key object. Without the private part of the signing key, it is impossible to create a new NV
 	// index with the same name.
 
-	srkContext, err := tpm.WrapHandle(srkHandle)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot create context for SRK: %w", err)
+		return nil, nil, xerrors.Errorf("cannot create signing key for initializing NV index: %w", err)
 	}
 
-	// Create and load a signing key
-	template := tpm2.Public{
+	keyPublic := tpm2.Public{
 		Type:    tpm2.ObjectTypeRSA,
 		NameAlg: tpm2.HashAlgorithmSHA256,
-		Attrs:   tpm2.AttrFixedTPM | tpm2.AttrFixedParent | tpm2.AttrSensitiveDataOrigin | tpm2.AttrUserWithAuth | tpm2.AttrSign,
+		Attrs:   tpm2.AttrSensitiveDataOrigin | tpm2.AttrUserWithAuth | tpm2.AttrSign,
 		Params: tpm2.PublicParamsU{
 			Data: &tpm2.RSAParams{
 				Symmetric: tpm2.SymDefObject{Algorithm: tpm2.SymObjectAlgorithmNull},
@@ -61,21 +63,18 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interf
 					Details: tpm2.AsymSchemeU{
 						Data: &tpm2.SigSchemeRSAPSS{HashAlg: tpm2.HashAlgorithmSHA256}}},
 				KeyBits:  2048,
-				Exponent: 0}}}
-	priv, pub, _, _, _, err := tpm.Create(srkContext, nil, &template, nil, nil, nil)
+				Exponent: uint32(key.E)}},
+		Unique: tpm2.PublicIDU{Data: tpm2.PublicKeyRSA(key.N.Bytes())}}
+
+	keyName, err := keyPublic.Name()
 	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot create signing key for initializing NV index: %w", err)
+		return nil, nil, xerrors.Errorf("cannot compute name of signing key for initializing NV index: %w", err)
 	}
-	key, _, err := tpm.Load(srkContext, priv, pub, nil)
-	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot load signing key to initialize NV index: %2", err)
-	}
-	defer tpm.FlushContext(key)
 
 	// The NV index requires 2 policies - one for writing in order to initialize, and one for changing the
 	// auth value. Create the one for writing first
 	trial, _ := tpm2.ComputeAuthPolicy(tpm2.HashAlgorithmSHA256)
-	trial.PolicySigned(key.Name(), nil)
+	trial.PolicySigned(keyName, nil)
 	authPolicy1 := trial.GetDigest()
 
 	// The second policy is for changing the auth value which requires the admin role, so we use
@@ -99,50 +98,80 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interf
 		AuthPolicy: authPolicy,
 		Size:       0}
 
-	if err := tpm.NVDefineSpace(tpm2.HandleOwner, nil, &nvPublic, ownerAuth); err != nil {
+	if err := tpm.NVDefineSpace(tpm2.HandleOwner, nil, &nvPublic, hmacSession.WithAuthValue(ownerAuth)); err != nil {
 		return nil, nil, xerrors.Errorf("cannot define NV space: %w", err)
 	}
+
+	// NVDefineSpace was integrity protected, so we know that we have an index with the expected public area at the handle we specified
+	// at this point.
 
 	context, err := tpm.WrapHandle(handle)
 	if err != nil {
 		return nil, nil, xerrors.Errorf("cannot obtain context for new NV index: %w", err)
 	}
 
-	// Begin a session to initialize the index
-	sessionContext, err := tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypePolicy, nil, pinNvIndexNameAlgorithm, nil)
+	// The name associated with context is read back from the TPM with no integrity protection, so we don't know if it's correct yet.
+	// We need to check that it's consistent with the NV index we created before adding it to an authorization policy.
+
+	// Begin a session to initialize the index.
+	ekContext, err := tpm.EkContext()
 	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot begin authorization session to initialize NV index: %w", err)
+		return nil, nil, xerrors.Errorf("cannot obtain context for EK: %w", err)
 	}
-	defer tpm.FlushContext(sessionContext)
+	policySessionContext, err := tpm.StartAuthSession(ekContext, nil, tpm2.SessionTypePolicy, nil, pinNvIndexNameAlgorithm, nil)
+	if err != nil {
+		return nil, nil, xerrors.Errorf("cannot begin policy session to initialize NV index: %w", err)
+	}
+	defer tpm.FlushContext(policySessionContext)
 
 	// Compute a digest for signing with our key
 	h := hashAlgToGoHash(tpm2.HashAlgorithmSHA256)
-	h.Write(sessionContext.(tpm2.SessionContext).NonceTPM())
+	h.Write(policySessionContext.(tpm2.SessionContext).NonceTPM())
 	binary.Write(h, binary.BigEndian, int32(0))
 
 	// Sign the digest
-	signature, err := tpm.Sign(key, h.Sum(nil), nil, nil, nil)
+	sig, err := rsa.SignPSS(rand.Reader, key, crypto.SHA256, h.Sum(nil), &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash})
 	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot produce signed authorization to initialize NV index: %w", err)
+		return nil, nil, xerrors.Errorf("cannot provide signature for initializing NV index: %w", err)
 	}
 
+	// Load the public part of the key in to the TPM. There's no integrity protection for this command as if it's altered in
+	// transit then either the signature verification fails or the policy digest will not match the one associated with the NV
+	// index.
+	keyLoaded, _, err := tpm.LoadExternal(nil, &keyPublic, tpm2.HandleEndorsement)
+	if err != nil {
+		return nil, nil, xerrors.Errorf("cannot load public part of key used to initialize NV index to the TPM: %w", err)
+	}
+	defer tpm.FlushContext(keyLoaded)
+
+	signature := tpm2.Signature{
+		SigAlg: tpm2.SigSchemeAlgRSAPSS,
+		Signature: tpm2.SignatureU{
+			Data: &tpm2.SignatureRSAPSS{
+				Hash: tpm2.HashAlgorithmSHA256,
+				Sig:  tpm2.PublicKeyRSA(sig)}}}
+
 	// Execute the policy assertions
-	if _, _, err := tpm.PolicySigned(key, sessionContext, true, nil, nil, 0, signature); err != nil {
+	if _, _, err := tpm.PolicySigned(keyLoaded, policySessionContext, true, nil, nil, 0, &signature); err != nil {
 		return nil, nil, xerrors.Errorf("cannot execute PolicySigned assertion to initialize NV index: %w", err)
 	}
-	if err := tpm.PolicyOR(sessionContext, authPolicies); err != nil {
+	if err := tpm.PolicyOR(policySessionContext, authPolicies); err != nil {
 		return nil, nil, xerrors.Errorf("cannot execute PolicyOR assertion to initialize NV index: %w", err)
 	}
 
-	// Initialize the index
-	session := tpm2.Session{Context: sessionContext}
-	if err := tpm.NVWrite(context, context, nil, 0, &session); err != nil {
+	// Initialize the index. This command is integrity protected so it will fail if the name associated with context doesn't
+	// correspond to the NV index. Success here confirms that the name associated with context corresponds to the actual NV index
+	// that we created. Calling the ResourceContext.Name() method on it will return a value that can be safely used to compute an
+	// authorization policy.
+	if err := tpm.NVWrite(context, context, nil, 0, &tpm2.Session{Context: policySessionContext}); err != nil {
 		return nil, nil, xerrors.Errorf("cannot initialize NV index: %w", err)
 	}
 
-	// Verify that the index now has the written attribute - if it doesn't for some reason, then it would
-	// be trivial for someone to recreate the index with the same properties in order to remove the PIN
-	nvPub, _, err := tpm.NVReadPublic(context)
+	// Verify that the index now has the written attribute - if it doesn't for some reason, then it would be trivial for someone
+	// to recreate the index with the same properties in order to remove the PIN. Pass a session in here for integrity protection.
+	// This really should never actually fail, as the HMAC check success from the previous NVWrite is a guarantee that the command
+	// executed on the TPM.
+	nvPub, _, err := tpm.NVReadPublic(context, hmacSession.AddAttrs(tpm2.AttrAudit))
 	if err != nil {
 		return nil, nil, xerrors.Errorf("cannot read NV index public area: %w", err)
 	}
