@@ -282,7 +282,8 @@ func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte,
 		return xerrors.Errorf("cannot configure dictionary attack parameters: %w", err)
 	}
 
-	if err := tpm.ClearControl(tpm2.HandleLockout, true, lockoutAuth); err != nil {
+	// Disable owner clear
+	if err := tpm.ClearControl(tpm2.HandleLockout, true, session.WithAuthValue(lockoutAuth)); err != nil {
 		// Lockout auth failure or lockout mode would have been caught by DictionaryAttackParameters
 		return xerrors.Errorf("cannot disable owner clear: %w", err)
 	}
