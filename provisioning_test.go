@@ -542,9 +542,9 @@ func TestProvisionStatus(t *testing.T) {
 	if err != nil {
 		t.Errorf("ProvisionStatus failed: %v", err)
 	}
-	expected := AttrValidSRK | AttrDAParamsOK | AttrOwnerClearDisabled | AttrLockoutAuthSet
+	expected := AttrValidEK | AttrValidSRK | AttrDAParamsOK | AttrOwnerClearDisabled | AttrLockoutAuthSet
 	if status != expected {
-		t.Errorf("Unexpected status")
+		t.Errorf("Unexpected status %d", status)
 	}
 
 	if err := tpm.HierarchyChangeAuth(tpm2.HandleLockout, nil, lockoutAuth); err != nil {
@@ -555,9 +555,9 @@ func TestProvisionStatus(t *testing.T) {
 	if err != nil {
 		t.Errorf("ProvisionStatus failed: %v", err)
 	}
-	expected = AttrValidSRK | AttrDAParamsOK | AttrOwnerClearDisabled
+	expected = AttrValidEK | AttrValidSRK | AttrDAParamsOK | AttrOwnerClearDisabled
 	if status != expected {
-		t.Errorf("Unexpected status")
+		t.Errorf("Unexpected status %d", status)
 	}
 
 	if err := tpm.ClearControl(tpm2.HandlePlatform, false, nil); err != nil {
@@ -568,9 +568,9 @@ func TestProvisionStatus(t *testing.T) {
 	if err != nil {
 		t.Errorf("ProvisionStatus failed: %v", err)
 	}
-	expected = AttrValidSRK | AttrDAParamsOK
+	expected = AttrValidEK | AttrValidSRK | AttrDAParamsOK
 	if status != expected {
-		t.Errorf("Unexpected status")
+		t.Errorf("Unexpected status %d", status)
 	}
 
 	if err := tpm.DictionaryAttackParameters(tpm2.HandleLockout, 3, 0, 0, nil); err != nil {
@@ -581,9 +581,9 @@ func TestProvisionStatus(t *testing.T) {
 	if err != nil {
 		t.Errorf("ProvisionStatus failed: %v", err)
 	}
-	expected = AttrValidSRK
+	expected = AttrValidEK | AttrValidSRK
 	if status != expected {
-		t.Errorf("Unexpected status")
+		t.Errorf("Unexpected status %d", status)
 	}
 
 	srkContext, err := tpm.WrapHandle(srkHandle)
@@ -599,9 +599,27 @@ func TestProvisionStatus(t *testing.T) {
 	if err != nil {
 		t.Errorf("ProvisionStatus failed: %v", err)
 	}
+	expected = AttrValidEK
+	if status != expected {
+		t.Errorf("Unexpected status %d", status)
+	}
+
+	ekContext, err := tpm.WrapHandle(ekHandle)
+	if err != nil {
+		t.Fatalf("WrapHandle failed: %v", err)
+	}
+
+	if _, err := tpm.EvictControl(tpm2.HandleOwner, ekContext, ekContext.Handle(), nil); err != nil {
+		t.Errorf("EvictControl failed: %v", err)
+	}
+
+	status, err = ProvisionStatus(tpm)
+	if err != nil {
+		t.Errorf("ProvisionStatus failed: %v", err)
+	}
 	expected = 0
 	if status != expected {
-		t.Errorf("Unexpected status")
+		t.Errorf("Unexpected status %d", status)
 	}
 
 	primary, _, _, _, _, _, err := tpm.CreatePrimary(tpm2.HandleOwner, nil, &srkTemplate, nil, nil, nil)
@@ -631,6 +649,6 @@ func TestProvisionStatus(t *testing.T) {
 	}
 	expected = 0
 	if status != expected {
-		t.Errorf("Unexpected status")
+		t.Errorf("Unexpected status %d", status)
 	}
 }

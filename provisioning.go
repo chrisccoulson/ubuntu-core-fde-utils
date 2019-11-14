@@ -54,6 +54,9 @@ const (
 	// expected location.
 	AttrValidSRK ProvisionStatusAttributes = 1 << iota
 
+	// AttrValidEK indicates that the TPM contains a valid endorsement key at the expected location
+	AttrValidEK
+
 	AttrDAParamsOK         // The dictionary attack lockout parameters are configured correctly.
 	AttrOwnerClearDisabled // The ability to clear the TPM with owner authorization is disabled.
 
@@ -351,24 +354,34 @@ func isObjectPrimaryKeyWithTemplate(tpm *tpm2.TPMContext, hierarchy tpm2.Handle,
 	return true, nil
 }
 
-func checkForValidSRK(tpm *tpm2.TPMContext) (bool, error) {
+func hasValidSRK(tpm *tpm2.TPMContext, session *tpm2.Session) (bool, error) {
 	srkContext, err := tpm.WrapHandle(srkHandle)
 	if err != nil {
-		if _, notFound := err.(tpm2.ResourceUnavailableError); notFound {
+		if _, unavail := err.(tpm2.ResourceUnavailableError); unavail {
 			return false, nil
 		}
-		return false, xerrors.Errorf("cannot create context for SRK: %w", err)
+		return false, xerrors.Errorf("cannot obtain context for SRK: %w", err)
 	}
 
-	return isObjectPrimaryKeyWithTemplate(tpm, tpm2.HandleOwner, srkContext, &srkTemplate, nil)
+	if ok, err := isObjectPrimaryKeyWithTemplate(tpm, tpm2.HandleOwner, srkContext, &srkTemplate, session); err != nil {
+		return false, xerrors.Errorf("cannot determine if object at SRK handle is a primary key in the storage hierarchy: %w", err)
+	} else if !ok {
+		return false, nil
+	}
+
+	return true, nil
 }
 
 func ProvisionStatus(tpm *TPMConnection) (ProvisionStatusAttributes, error) {
 	var out ProvisionStatusAttributes
 
-	if valid, err := checkForValidSRK(tpm.TPMContext); err != nil {
-		return 0, xerrors.Errorf("cannot check for valid SRK: %w", err)
-	} else if valid {
+	if _, err := tpm.EkContext(); err == nil {
+		out |= AttrValidEK
+	}
+
+	if ok, err := hasValidSRK(tpm.TPMContext, nil); err != nil {
+		return 0, err
+	} else if ok {
 		out |= AttrValidSRK
 	}
 
