@@ -128,6 +128,14 @@ func (t *TPMConnection) safeAcquireEkContext() error {
 		return xerrors.Errorf("cannot obtain context for endorsement key: %w", err)
 	}
 
+	if ok, err := isObjectPrimaryKeyWithTemplate(t.TPMContext, tpm2.HandleEndorsement, ekContext, &ekTemplate, nil); err != nil {
+		return xerrors.Errorf("cannot determine if object is a primary key in the endorsement hierarchy: %w", err)
+	} else if !ok {
+		// This is a bit hacky, but this error type is caught in SecureConnectToDefaultTPM and turned in to a ErrProvisioning
+		// error, which makes sense.
+		return xerrors.Errorf("cannot obtain context for a valid endorsement key: %w", tpm2.ResourceUnavailableError{Handle: ekHandle})
+	}
+
 	cert := t.verifiedEkCertChain[0]
 
 	// Obtain the RSA public key from the endorsement certificate
