@@ -611,11 +611,11 @@ func TestExecutePolicy(t *testing.T) {
 			}
 
 			if data.pinDefine != "" {
-				if err := performPINChange(tpm.TPMContext, pinIndex.Handle(), pinPolicies, "", data.pinDefine); err != nil {
+				if err := performPINChange(tpm, pinIndex.Handle(), pinPolicies, "", data.pinDefine); err != nil {
 					t.Fatalf("performPINChange failed: %v", err)
 				}
 				defer func() {
-					if err := performPINChange(tpm.TPMContext, pinIndex.Handle(), pinPolicies, data.pinDefine, ""); err != nil {
+					if err := performPINChange(tpm, pinIndex.Handle(), pinPolicies, data.pinDefine, ""); err != nil {
 						t.Errorf("Resetting PIN failed: %v", err)
 					}
 				}()

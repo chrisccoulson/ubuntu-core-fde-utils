@@ -182,20 +182,20 @@ func createPinNvIndex(tpm *TPMConnection, handle tpm2.Handle, ownerAuth []byte, 
 	return context, authPolicies, nil
 }
 
-func performPINChange(tpm *tpm2.TPMContext, handle tpm2.Handle, policies tpm2.DigestList, oldAuth,
-	newAuth string) error {
-	srkContext, err := tpm.WrapHandle(srkHandle)
+func performPINChange(tpm *TPMConnection, handle tpm2.Handle, policies tpm2.DigestList, oldAuth, newAuth string) error {
+	hmacSession, err := tpm.HmacSession()
 	if err != nil {
-		return fmt.Errorf("cannot create context for SRK handle: %v", err)
+		return err
 	}
+
 	pinIndexContext, err := tpm.WrapHandle(handle)
 	if err != nil {
 		return fmt.Errorf("cannot create context for PIN NV index: %v", err)
 	}
 
-	sessionContext, err := tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypePolicy, &paramEncryptAlg, pinNvIndexNameAlgorithm, nil)
+	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, pinNvIndexNameAlgorithm, nil)
 	if err != nil {
-		return fmt.Errorf("cannot start auth session: %v", err)
+		return fmt.Errorf("cannot start policy session: %v", err)
 	}
 	defer tpm.FlushContext(sessionContext)
 
@@ -211,9 +211,8 @@ func performPINChange(tpm *tpm2.TPMContext, handle tpm2.Handle, policies tpm2.Di
 
 	session := tpm2.Session{
 		Context:   sessionContext,
-		Attrs:     tpm2.AttrCommandEncrypt,
 		AuthValue: []byte(oldAuth)}
-	if err := tpm.NVChangeAuth(pinIndexContext, tpm2.Auth(newAuth), &session); err != nil {
+	if err := tpm.NVChangeAuth(pinIndexContext, tpm2.Auth(newAuth), &session, hmacSession.AddAttrs(tpm2.AttrCommandEncrypt)); err != nil {
 		return fmt.Errorf("cannot change authorization value for NV index: %v", err)
 	}
 
@@ -232,8 +231,7 @@ func ChangePIN(tpm *TPMConnection, path string, oldAuth, newAuth string) error {
 		return fmt.Errorf("cannot load key data file: %v", err)
 	}
 
-	if err := performPINChange(tpm.TPMContext, data.PolicyData.PinIndexHandle, data.PinIndexPolicyORDigests, oldAuth,
-		newAuth); err != nil {
+	if err := performPINChange(tpm, data.PolicyData.PinIndexHandle, data.PinIndexPolicyORDigests, oldAuth, newAuth); err != nil {
 		return err
 	}
 
