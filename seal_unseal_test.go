@@ -446,6 +446,80 @@ func TestUnsealLockout(t *testing.T) {
 	}
 }
 
+func TestSealWithProvisioningError(t *testing.T) {
+	tpm := openTPMForTesting(t)
+	defer closeTPM(t, tpm)
+
+	key := make([]byte, 64)
+	rand.Read(key)
+
+	tmpDir, err := ioutil.TempDir("", "_TestSealWithProvisioningError_")
+	if err != nil {
+		t.Fatalf("Creating temporary directory failed: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dest := tmpDir + "/keydata"
+
+	prepare := func(t *testing.T) {
+		if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+			t.Fatalf("Failed to provision TPM for test: %v", err)
+		}
+	}
+
+	run := func(t *testing.T) {
+		err = SealKeyToTPM(tpm, dest, &testCreationParams, nil, key)
+		if err == nil {
+			t.Fatalf("SealKeyToTPM should have failed")
+		}
+		if err != ErrProvisioning {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	}
+
+	t.Run("NoSRK", func(t *testing.T) {
+		prepare(t)
+		srkContext, _ := tpm.WrapHandle(srkHandle)
+		if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkContext.Handle(), nil); err != nil {
+			t.Fatalf("EvictControl failed: %v", err)
+		}
+		run(t)
+	})
+
+	t.Run("InvalidSRK", func(t *testing.T) {
+		prepare(t)
+		srkContext, _ := tpm.WrapHandle(srkHandle)
+		priv, pub, _, _, _, err := tpm.Create(srkContext, nil, &srkTemplate, nil, nil, nil)
+		if err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+
+		fakeSrkContext, _, err := tpm.Load(srkContext, priv, pub, nil)
+		if err != nil {
+			t.Fatalf("Load failed: %v", err)
+		}
+		defer flushContext(t, tpm, fakeSrkContext)
+
+		if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkContext.Handle(), nil); err != nil {
+			t.Fatalf("EvictControl failed: %v", err)
+		}
+		if _, err := tpm.EvictControl(tpm2.HandleOwner, fakeSrkContext, srkHandle, nil); err != nil {
+			t.Fatalf("EvictControl failed: %v", err)
+		}
+
+		run(t)
+	})
+
+	t.Run("NoEK", func(t *testing.T) {
+		prepare(t)
+		ekContext, _ := tpm.WrapHandle(ekHandle)
+		if _, err := tpm.EvictControl(tpm2.HandleOwner, ekContext, ekContext.Handle(), nil); err != nil {
+			t.Fatalf("EvictControl failed: %v", err)
+		}
+		run(t)
+	})
+}
+
 func TestUnsealProvisioningError(t *testing.T) {
 	tpm, _ := openTPMSimulatorForTesting(t)
 	defer func() {
@@ -453,9 +527,12 @@ func TestUnsealProvisioningError(t *testing.T) {
 		closeTPM(t, tpm)
 	}()
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
-		t.Fatalf("Failed to provision TPM for test: %v", err)
+	prepare := func(t *testing.T) {
+		if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+			t.Fatalf("Failed to provision TPM for test: %v", err)
+		}
 	}
+	prepare(t)
 
 	key := make([]byte, 64)
 	rand.Read(key)
@@ -485,21 +562,51 @@ func TestUnsealProvisioningError(t *testing.T) {
 		}
 	}()
 
-	srkContext, _ := tpm.WrapHandle(srkHandle)
-	if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkContext.Handle(), nil); err != nil {
-		t.Errorf("EvictControl failed: %v", err)
+	run := func(t *testing.T) {
+		f, err := os.Open(dest)
+		if err != nil {
+			t.Fatalf("Failed to open key data file: %v", err)
+		}
+
+		_, err = UnsealKeyFromTPM(tpm, f, "")
+		if err == nil {
+			t.Fatalf("UnsealKeyFromTPM should have failed")
+		}
+		if err != ErrProvisioning {
+			t.Errorf("Unexpected error: %v", err)
+		}
 	}
 
-	f, err := os.Open(dest)
-	if err != nil {
-		t.Fatalf("Failed to open key data file: %v", err)
-	}
+	t.Run("NoSRK", func(t *testing.T) {
+		prepare(t)
+		srkContext, _ := tpm.WrapHandle(srkHandle)
+		if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkContext.Handle(), nil); err != nil {
+			t.Fatalf("EvictControl failed: %v", err)
+		}
+		run(t)
+	})
 
-	_, err = UnsealKeyFromTPM(tpm, f, "")
-	if err == nil {
-		t.Fatalf("UnsealKeyFromTPM should have failed")
-	}
-	if err != ErrProvisioning {
-		t.Errorf("Unexpected error: %v", err)
-	}
+	t.Run("InvalidSRK", func(t *testing.T) {
+		prepare(t)
+		srkContext, _ := tpm.WrapHandle(srkHandle)
+		priv, pub, _, _, _, err := tpm.Create(srkContext, nil, &srkTemplate, nil, nil, nil)
+		if err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+
+		fakeSrkContext, _, err := tpm.Load(srkContext, priv, pub, nil)
+		if err != nil {
+			t.Fatalf("Load failed: %v", err)
+		}
+		defer flushContext(t, tpm, fakeSrkContext)
+
+		if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkContext.Handle(), nil); err != nil {
+			t.Fatalf("EvictControl failed: %v", err)
+		}
+		if _, err := tpm.EvictControl(tpm2.HandleOwner, fakeSrkContext, srkHandle, nil); err != nil {
+			t.Fatalf("EvictControl failed: %v", err)
+		}
+
+		run(t)
+	})
 }
