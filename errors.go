@@ -41,15 +41,6 @@ var (
 
 	// ErrPinFail is returned from UnsealKeyFromTPM if the provided PIN is incorrect.
 	ErrPinFail = errors.New("the provided PIN is incorrect")
-
-	// ErrPolicyRevoked is returned from UnsealKeyFromTPM if the authorization policy for the key has been
-	// revoked. Unless there is another key object with an authorization policy that hasn't been revoked,
-	// the key will need to be recovered via a mechanism that is indepdendent of the TPM (eg, a recovery key).
-	// Once recovered, the key will need to be sealed to the TPM again with a new authorization policy.
-	ErrPolicyRevoked = errors.New("the authorization policy has been revoked")
-
-	// ErrPolicyFail is returned from UnsealKeyFromTPM if the authorization policy check fails.
-	ErrPolicyFail = errors.New("the authorization policy check failed")
 )
 
 type TPMResourceExistsError struct {

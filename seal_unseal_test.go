@@ -269,7 +269,9 @@ func TestUnsealRevoked(t *testing.T) {
 	if err == nil {
 		t.Fatalf("UnsealKeyFromTPM should have failed")
 	}
-	if err != ErrPolicyRevoked {
+	if _, ok := err.(InvalidKeyFileError); !ok || err.Error() != "invalid key data file: encountered an error whilst executing the "+
+		"authorization policy assertions: cannot execute PolicyNV assertion: TPM returned an error whilst executing command "+
+		"TPM_CC_PolicyNV: TPM_RC_POLICY (policy failure in math operation or an invalid authPolicy value)" {
 		t.Errorf("Unexpected error: %v", err)
 	}
 }
@@ -388,7 +390,7 @@ func TestUnsealPolicyFail(t *testing.T) {
 	if err == nil {
 		t.Fatalf("UnsealKeyFromTPM should have failed")
 	}
-	if err != ErrPolicyFail {
+	if _, ok := err.(InvalidKeyFileError); !ok || err.Error() != "invalid key data file: the authorization policy check failed during unsealing" {
 		t.Errorf("Unexpected error: %v", err)
 	}
 }

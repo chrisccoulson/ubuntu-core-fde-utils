@@ -94,10 +94,6 @@ func main() {
 			ret = tpmLockedOutExitCode
 		case fdeutil.ErrPinFail:
 			ret = pinFailExitCode
-		case fdeutil.ErrPolicyRevoked:
-			ret = invalidKeyFileExitCode
-		case fdeutil.ErrPolicyFail:
-			ret = invalidKeyFileExitCode
 		default:
 			if _, ok := err.(fdeutil.InvalidKeyFileError); ok {
 				ret = invalidKeyFileExitCode

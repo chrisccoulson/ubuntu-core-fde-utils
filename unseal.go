@@ -20,6 +20,7 @@
 package fdeutil
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/chrisccoulson/go-tpm2"
@@ -72,26 +73,18 @@ func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string) ([]byte, er
 	defer tpm.FlushContext(sessionContext)
 
 	if err := executePolicySession(tpm, sessionContext, data.PolicyData, pin); err != nil {
-		var tpmErr *tpm2.TPMError
 		var tpmsErr *tpm2.TPMSessionError
-		switch {
-		case xerrors.As(err, &tpmsErr):
-			if tpmsErr.Code() == tpm2.ErrorAuthFail && tpmsErr.Command() == tpm2.CommandPolicySecret {
-				return nil, ErrPinFail
-			}
-		case xerrors.As(err, &tpmErr):
-			if tpmErr.Code == tpm2.ErrorPolicy && tpmErr.Command == tpm2.CommandPolicyNV {
-				return nil, ErrPolicyRevoked
-			}
+		if xerrors.As(err, &tpmsErr) && tpmsErr.Code() == tpm2.ErrorAuthFail && tpmsErr.Command() == tpm2.CommandPolicySecret {
+			return nil, ErrPinFail
 		}
-		return nil, xerrors.Errorf("cannot complete execution of policy session: %w", err)
+		return nil, InvalidKeyFileError{fmt.Sprintf("encountered an error whilst executing the authorization policy assertions: %v", err)}
 	}
 
 	// Unseal
 	key, err := tpm.Unseal(keyContext, &tpm2.Session{Context: sessionContext}, hmacSession.AddAttrs(tpm2.AttrResponseEncrypt))
 	if err != nil {
 		if e, ok := err.(*tpm2.TPMSessionError); ok && e.Code() == tpm2.ErrorPolicyFail {
-			return nil, ErrPolicyFail
+			return nil, InvalidKeyFileError{"the authorization policy check failed during unsealing"}
 		}
 		return nil, xerrors.Errorf("cannot unseal key: %w", err)
 	}
