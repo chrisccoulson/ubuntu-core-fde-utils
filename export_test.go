@@ -26,10 +26,8 @@ import (
 func NewKeydata() *keyData {
 	// XXX: mock this so that its actually useful and can be marshalled
 	return &keyData{
-		KeyPrivate:        []byte("key-private"),
-		KeyPublic:         &tpm2.Public{},
-		KeyCreationData:   &tpm2.CreationData{},
-		KeyCreationTicket: &tpm2.TkCreation{},
+		KeyPrivate: []byte("key-private"),
+		KeyPublic:  &tpm2.Public{},
 	}
 }
 

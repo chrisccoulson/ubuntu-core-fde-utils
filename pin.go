@@ -198,14 +198,13 @@ func ChangePIN(tpm *TPMConnection, path string, oldAuth, newAuth string) error {
 	}
 	defer f.Close()
 
-	var data keyData
-	_, err = data.loadAndIntegrityCheck(f, tpm.TPMContext, true)
+	data, err := readKeyData(f)
 	if err != nil {
-		return fmt.Errorf("cannot load DEK file: %v", err)
+		return fmt.Errorf("cannot load key data file: %v", err)
 	}
 
-	if err := performPINChange(tpm.TPMContext, data.AuxData.PolicyData.PinIndexHandle,
-		data.AuxData.PinIndexPolicyORDigests, oldAuth, newAuth); err != nil {
+	if err := performPINChange(tpm.TPMContext, data.PolicyData.PinIndexHandle, data.PinIndexPolicyORDigests, oldAuth,
+		newAuth); err != nil {
 		return err
 	}
 

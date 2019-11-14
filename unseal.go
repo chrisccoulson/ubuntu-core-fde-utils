@@ -38,25 +38,21 @@ func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string) ([]byte, er
 	}
 
 	// Load the key data
-	var data keyData
-	keyContext, err := data.loadAndIntegrityCheck(buf, tpm.TPMContext, false)
+	keyContext, data, err := loadKeyData(tpm.TPMContext, buf)
 	if err != nil {
 		var kfErr keyFileError
-		var ruErr tpm2.ResourceUnavailableError
-		switch {
-		case xerrors.As(err, &kfErr):
+		if xerrors.As(err, &kfErr) {
 			// A keyFileError can be as a result of an improperly provisioned TPM - detect if
 			// the object at srkHandle is a valid primary key with the correct template. If it's
 			// not, then return a provisioning error.
 			if status, err := ProvisionStatus(tpm); err == nil && status&AttrValidSRK == 0 {
 				return nil, ErrProvisioning
 			}
-			return nil, InvalidKeyFileError{kfErr.msg}
-		case xerrors.As(err, &ruErr):
-			if ruErr.Handle == srkHandle {
-				// There's no object at srkHandle
-				return nil, ErrProvisioning
-			}
+			return nil, InvalidKeyFileError{kfErr.err.Error()}
+		}
+		var ruErr tpm2.ResourceUnavailableError
+		if xerrors.As(err, &ruErr) {
+			return nil, ErrProvisioning
 		}
 		return nil, xerrors.Errorf("cannot load key data file: %w", err)
 	}
@@ -64,7 +60,7 @@ func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string) ([]byte, er
 
 	// Begin and execute policy session
 
-	// This can't fail, as keyData.loadAndIntegrityCheck already created it
+	// This can't fail, as loadKeyData already created it
 	srkContext, _ := tpm.WrapHandle(srkHandle)
 
 	sessionContext, err := tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypePolicy, &paramEncryptAlg, defaultHashAlgorithm, nil)
@@ -73,7 +69,7 @@ func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string) ([]byte, er
 	}
 	defer tpm.FlushContext(sessionContext)
 
-	if err := executePolicySession(tpm.TPMContext, sessionContext, data.AuxData.PolicyData, pin); err != nil {
+	if err := executePolicySession(tpm.TPMContext, sessionContext, data.PolicyData, pin); err != nil {
 		var tpmErr *tpm2.TPMError
 		var tpmsErr *tpm2.TPMSessionError
 		switch {
