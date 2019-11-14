@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	srkHandle tpm2.Handle = 0x81000000
+	srkHandle tpm2.Handle = 0x81000001
 	ekHandle  tpm2.Handle = 0x81010001
 
 	// SHA-256 is mandatory to exist on every PC-Client TPM

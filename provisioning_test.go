@@ -46,7 +46,7 @@ func validateSRK(t *testing.T, tpm *TPMConnection) {
 	if pub.NameAlg != tpm2.HashAlgorithmSHA256 {
 		t.Errorf("SRK has unexpected name algorithm")
 	}
-	if pub.Attrs != tpm2.AttrFixedTPM|tpm2.AttrFixedParent|tpm2.AttrSensitiveDataOrigin|tpm2.AttrUserWithAuth|tpm2.AttrRestricted|
+	if pub.Attrs != tpm2.AttrFixedTPM|tpm2.AttrFixedParent|tpm2.AttrSensitiveDataOrigin|tpm2.AttrUserWithAuth|tpm2.AttrNoDA|tpm2.AttrRestricted|
 		tpm2.AttrDecrypt {
 		t.Errorf("SRK has unexpected attributes")
 	}
