@@ -323,10 +323,15 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 // AuthFailError error will be returned and the key data file won't be deleted.
 //
 // This function requires the TPM to be correctly provisioned, else a ErrProvisioningError error will be returned.
-func DeleteKey(tpm *TPMConnection, path string, ownerAuth interface{}) error {
-	if status, err := ProvisionStatus(tpm); err != nil {
-		return xerrors.Errorf("cannot determine the current provisioning status of the TPM: %w", err)
-	} else if status&AttrValidSRK == 0 {
+func DeleteKey(tpm *TPMConnection, path string, ownerAuth []byte) error {
+	hmacSession, err := tpm.HmacSession()
+	if err != nil {
+		return err
+	}
+
+	if ok, err := hasValidSRK(tpm.TPMContext, hmacSession); err != nil {
+		return err
+	} else if !ok {
 		return ErrProvisioning
 	}
 
@@ -346,7 +351,7 @@ func DeleteKey(tpm *TPMConnection, path string, ownerAuth interface{}) error {
 	tpm.FlushContext(keyContext)
 
 	if policyRevokeContext, err := tpm.WrapHandle(data.PolicyData.PolicyRevokeIndexHandle); err == nil {
-		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, policyRevokeContext, ownerAuth); err != nil {
+		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, policyRevokeContext, hmacSession.WithAuthValue(ownerAuth)); err != nil {
 			if isAuthFailError(err) {
 				return AuthFailError{tpm2.HandleOwner}
 			}
@@ -355,7 +360,7 @@ func DeleteKey(tpm *TPMConnection, path string, ownerAuth interface{}) error {
 	}
 
 	if pinContext, err := tpm.WrapHandle(data.PolicyData.PinIndexHandle); err == nil {
-		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, pinContext, ownerAuth); err != nil {
+		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, pinContext, hmacSession.WithAuthValue(ownerAuth)); err != nil {
 			if isAuthFailError(err) {
 				return AuthFailError{tpm2.HandleOwner}
 			}
@@ -364,7 +369,7 @@ func DeleteKey(tpm *TPMConnection, path string, ownerAuth interface{}) error {
 	}
 
 	if err := os.Remove(path); err != nil {
-		return xerrors.Errorf("cannot remove key data file: %v", err)
+		return xerrors.Errorf("cannot remove key data file: %w", err)
 	}
 
 	return nil
