@@ -165,6 +165,8 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 	// This can't fail now
 	srkContext, _ := tpm.WrapHandle(srkHandle)
 
+	// At this point, we know that srkContext corresponds to a valid shared SRK
+
 	var pinIndex tpm2.ResourceContext
 	var pinIndexPolicies tpm2.DigestList
 	var askForPinHint bool

@@ -29,6 +29,7 @@ import (
 )
 
 func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string) ([]byte, error) {
+	// Check if the TPM is in lockout mode
 	props, err := tpm.GetCapabilityTPMProperties(tpm2.PropertyPermanent, 1)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot fetch properties from TPM: %w", err)
