@@ -612,7 +612,7 @@ func TestExecutePolicy(t *testing.T) {
 			}
 			defer flushContext(t, tpm, sessionContext)
 
-			err = executePolicySession(tpm.TPMContext, sessionContext, policyData, data.pinInput)
+			err = executePolicySession(tpm, sessionContext, policyData, data.pinInput)
 			if data.input.policyRevokeCount < policyRevokeCount {
 				if err == nil {
 					t.Fatalf("Expected an error")

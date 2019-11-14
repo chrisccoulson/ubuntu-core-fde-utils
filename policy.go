@@ -234,9 +234,8 @@ func executePolicySessionPCRAssertions(tpm *tpm2.TPMContext, sessionContext tpm2
 	return nil
 }
 
-func executePolicySession(tpm *tpm2.TPMContext, sessionContext tpm2.ResourceContext, input *policyData,
-	pin string) error {
-	if err := executePolicySessionPCRAssertions(tpm, sessionContext, input); err != nil {
+func executePolicySession(tpm *TPMConnection, sessionContext tpm2.ResourceContext, input *policyData, pin string) error {
+	if err := executePolicySessionPCRAssertions(tpm.TPMContext, sessionContext, input); err != nil {
 		return xerrors.Errorf("cannot execute PCR assertions: %w", err)
 	}
 
@@ -251,24 +250,17 @@ func executePolicySession(tpm *tpm2.TPMContext, sessionContext tpm2.ResourceCont
 		return xerrors.Errorf("cannot execute PolicyNV assertion: %w", err)
 	}
 
-	srkContext, err := tpm.WrapHandle(srkHandle)
-	if err != nil {
-		return xerrors.Errorf("cannot obtain context for SRK: %w", err)
-	}
 	pinIndexContext, err := tpm.WrapHandle(input.PinIndexHandle)
 	if err != nil {
 		return xerrors.Errorf("cannot obtain context for PIN NV index: %w", err)
 	}
-
-	pinSessionContext, err :=
-		tpm.StartAuthSession(srkContext, pinIndexContext, tpm2.SessionTypeHMAC, nil, defaultHashAlgorithm, []byte(pin))
+	// Use the HMAC session created when the connection was opened rather than creating a new one.
+	pinSession, err := tpm.HmacSession()
 	if err != nil {
-		return xerrors.Errorf("cannot start HMAC session for PIN verification: %w", err)
+		return xerrors.Errorf("cannot obtain HMAC session for PIN verification: %w", err)
 	}
-	defer tpm.FlushContext(pinSessionContext)
 
-	pinSession := tpm2.Session{Context: pinSessionContext}
-	if _, _, err := tpm.PolicySecret(pinIndexContext, sessionContext, nil, nil, 0, &pinSession); err != nil {
+	if _, _, err := tpm.PolicySecret(pinIndexContext, sessionContext, nil, nil, 0, pinSession.WithAuthValue([]byte(pin))); err != nil {
 		return xerrors.Errorf("cannot execute PolicySecret assertion: %w", err)
 	}
 

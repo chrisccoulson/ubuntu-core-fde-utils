@@ -37,6 +37,12 @@ func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string) ([]byte, er
 		return nil, ErrLockout
 	}
 
+	// Use the HMAC session created when the connection was opened for parameter encryption rather than creating a new one.
+	hmacSession, err := tpm.HmacSession()
+	if err != nil {
+		return nil, err
+	}
+
 	// Load the key data
 	keyContext, data, err := loadKeyData(tpm.TPMContext, buf)
 	if err != nil {
@@ -45,7 +51,7 @@ func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string) ([]byte, er
 			// A keyFileError can be as a result of an improperly provisioned TPM - detect if
 			// the object at srkHandle is a valid primary key with the correct template. If it's
 			// not, then return a provisioning error.
-			if status, err := ProvisionStatus(tpm); err == nil && status&AttrValidSRK == 0 {
+			if ok, err := hasValidSRK(tpm.TPMContext, hmacSession); err == nil && !ok {
 				return nil, ErrProvisioning
 			}
 			return nil, InvalidKeyFileError{kfErr.err.Error()}
@@ -59,17 +65,13 @@ func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string) ([]byte, er
 	defer tpm.FlushContext(keyContext)
 
 	// Begin and execute policy session
-
-	// This can't fail, as loadKeyData already created it
-	srkContext, _ := tpm.WrapHandle(srkHandle)
-
-	sessionContext, err := tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypePolicy, &paramEncryptAlg, defaultHashAlgorithm, nil)
+	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, defaultHashAlgorithm, nil)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot start policy session: %w", err)
 	}
 	defer tpm.FlushContext(sessionContext)
 
-	if err := executePolicySession(tpm.TPMContext, sessionContext, data.PolicyData, pin); err != nil {
+	if err := executePolicySession(tpm, sessionContext, data.PolicyData, pin); err != nil {
 		var tpmErr *tpm2.TPMError
 		var tpmsErr *tpm2.TPMSessionError
 		switch {
@@ -86,8 +88,7 @@ func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string) ([]byte, er
 	}
 
 	// Unseal
-	session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrResponseEncrypt}
-	key, err := tpm.Unseal(keyContext, &session)
+	key, err := tpm.Unseal(keyContext, &tpm2.Session{Context: sessionContext}, hmacSession.AddAttrs(tpm2.AttrResponseEncrypt))
 	if err != nil {
 		if e, ok := err.(*tpm2.TPMSessionError); ok && e.Code() == tpm2.ErrorPolicyFail {
 			return nil, ErrPolicyFail
