@@ -22,7 +22,7 @@
 			"revisionTime": "2019-09-06T18:49:57Z"
 		},
 		{
-			"checksumSHA1": "89YJCAgJAXBIjqzqeXiiO4cEuVo=",
+			"checksumSHA1": "ogoo3Fatp+IFS6WbaVX4sir4qlA=",
 			"path": "github.com/godbus/dbus",
 			"revision": "6eb4cf171088115fc4f087cb8a302859c601a546",
 			"revisionTime": "2019-07-26T03:53:44Z"
@@ -40,16 +40,28 @@
 			"revisionTime": "2019-08-12T09:09:36Z"
 		},
 		{
+			"checksumSHA1": "2oDnNscNh8PCY1SXlMEf8DZbQzQ=",
+			"path": "github.com/snapcore/snapd/arch",
+			"revision": "91736321bcbb23d831f1be7f54724528095f98fc",
+			"revisionTime": "2019-11-14T12:47:01Z"
+		},
+		{
 			"checksumSHA1": "xRtnXbK6hrWpsGCRG8WfyWVhjSc=",
 			"path": "github.com/snapcore/snapd/cmd/cmdutil",
 			"revision": "6341e63d82dabb39a0a834fb956fa26dc06a2788",
 			"revisionTime": "2019-09-14T15:45:38Z"
 		},
 		{
-			"checksumSHA1": "3anxpq/J8MUCJO7to/W4frpA35Y=",
+			"checksumSHA1": "eQ/ZmYriiV7H17HVA+w/y+OvHM8=",
 			"path": "github.com/snapcore/snapd/dirs",
 			"revision": "c1cd87df460bee8cdcc1f77786c9bd30e27e7ea2",
 			"revisionTime": "2019-09-11T18:46:24Z"
+		},
+		{
+			"checksumSHA1": "/S5tsHXhReE+HaxTTj+6ykkxUuI=",
+			"path": "github.com/snapcore/snapd/httputil",
+			"revision": "91736321bcbb23d831f1be7f54724528095f98fc",
+			"revisionTime": "2019-11-14T12:47:01Z"
 		},
 		{
 			"checksumSHA1": "4Ie673xc3PJbxsnujxe8bCifr4I=",
@@ -130,7 +142,7 @@
 			"revisionTime": "2019-09-11T18:46:24Z"
 		},
 		{
-			"checksumSHA1": "fL1WN8qr9Y9Ns/AlhhZJW1gAKro=",
+			"checksumSHA1": "vUqQUo808714J6/QPSpknOe7c/8=",
 			"path": "github.com/snapcore/snapd/testutil",
 			"revision": "c1cd87df460bee8cdcc1f77786c9bd30e27e7ea2",
 			"revisionTime": "2019-09-11T18:46:24Z"
@@ -172,10 +184,16 @@
 			"revisionTime": "2019-10-05T12:30:33Z"
 		},
 		{
-			"checksumSHA1": "538I8ghUdvZa25NxgMUDpq14Qic=",
+			"checksumSHA1": "CEFTYXtWmgSh+3Ik1NmDaJcz4E0=",
 			"path": "gopkg.in/check.v1",
 			"revision": "20d25e2804050c1cd24a7eea1e7a6447dd0e74ec",
 			"revisionTime": "2016-12-08T18:13:25Z"
+		},
+		{
+			"checksumSHA1": "e5X6+yC/8PS/M2j+Y9Z0cSdDEYI=",
+			"path": "gopkg.in/retry.v1",
+			"revision": "cd7d3b308163f575bf3e14623edd50ef2b90b877",
+			"revisionTime": "2019-05-15T07:55:55Z"
 		},
 		{
 			"checksumSHA1": "t95/FNK2nGCx3e6IARbO7OrcCuY=",
