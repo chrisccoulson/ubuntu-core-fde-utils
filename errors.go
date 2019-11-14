@@ -30,12 +30,11 @@ var (
 	ErrClearRequiresPPI    = errors.New("clearing requires the use of the Physical Presence Interface")
 	ErrRequiresLockoutAuth = errors.New("the TPM indicates the lockout hierarchy has an authorization value, but one hasn't " +
 		"been provided")
-	ErrInLockout = errors.New("the lockout hierarchy can not be used because it is in lockout mode")
 
 	ErrProvisioning  = errors.New("the TPM is not correctly provisioned")
 	ErrKeyFileExists = errors.New("a key data file already exists at the specified path")
 
-	// ErrLockout is returned from UnsealKeyFromTPM when the TPM is in dictionary-attack lockout mode. Until
+	// ErrLockout is returned from any function when the TPM is in dictionary-attack lockout mode. Until
 	// the TPM exits lockout mode, the key will need to be recovered via a mechanism that is independent of
 	// the TPM (eg, a recovery key)
 	ErrLockout = errors.New("the TPM is in DA lockout mode")

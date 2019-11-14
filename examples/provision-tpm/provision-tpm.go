@@ -100,7 +100,7 @@ func main() {
 				"The TPM indicates that the lockout hierarchy has an authorization value. "+
 					"Either re-run with -lockout-auth <auth> or request to clear the TPM "+
 					"with -request-clear if the authorization value isn't known\n")
-		case fdeutil.ErrInLockout:
+		case fdeutil.ErrLockout:
 			fmt.Fprintf(os.Stderr,
 				"The lockout hierarchy is in dictionary attack lockout mode. Either wait for "+
 					"the recovery time to expire, or request to clear the TPM with "+

@@ -285,7 +285,7 @@ func TestProvisionErrorHandling(t *testing.T) {
 				tpm.HierarchyChangeAuth(tpm2.HandleLockout, nil, nil)
 			},
 			lockoutAuth: authValue,
-			err:         ErrInLockout,
+			err:         ErrLockout,
 		},
 		{
 			desc: "ErrInLockout2",
@@ -295,7 +295,7 @@ func TestProvisionErrorHandling(t *testing.T) {
 				tpm.HierarchyChangeAuth(tpm2.HandleLockout, nil, nil)
 			},
 			lockoutAuth: authValue,
-			err:         ErrInLockout,
+			err:         ErrLockout,
 		},
 		{
 			desc: "ErrOwnerAuthFail",

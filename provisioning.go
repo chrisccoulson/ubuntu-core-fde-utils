@@ -182,7 +182,7 @@ func ProvisionTPM(tpm *tpm2.TPMContext, mode ProvisionMode, newLockoutAuth []byt
 			case isAuthFailError(err):
 				return AuthFailError{tpm2.HandleLockout}
 			case isLockoutError(err):
-				return ErrInLockout
+				return ErrLockout
 			}
 			return xerrors.Errorf("cannot clear the TPM: %w", err)
 		}
@@ -259,7 +259,7 @@ func ProvisionTPM(tpm *tpm2.TPMContext, mode ProvisionMode, newLockoutAuth []byt
 		case isAuthFailError(err):
 			return AuthFailError{tpm2.HandleLockout}
 		case isLockoutError(err):
-			return ErrInLockout
+			return ErrLockout
 		}
 		return xerrors.Errorf("cannot configure dictionary attack parameters: %w", err)
 	}
