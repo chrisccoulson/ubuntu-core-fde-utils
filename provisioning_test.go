@@ -184,6 +184,19 @@ func TestProvisionNewTPM(t *testing.T) {
 			}
 
 			hmacSession, err := tpm.HmacSession()
+			if err != nil {
+				t.Fatalf("No initial HMAC session: %v", err)
+			}
+			if hmacSession.Context.Handle().Type() != tpm2.HandleTypeHMACSession {
+				t.Errorf("Invalid HMAC session handle")
+			}
+			ekContext, err := tpm.EkContext()
+			if err != nil {
+				t.Fatalf("No EK context: %v", err)
+			}
+			if ekContext.Handle().Type() != tpm2.HandleTypePersistent {
+				t.Errorf("Invalid EK handle")
+			}
 
 			// Make sure ProvisionTPM didn't leak transient objects
 			handles, err := tpm.GetCapabilityHandles(tpm2.HandleTypeTransient.BaseHandle(),
@@ -364,9 +377,19 @@ func TestRecreateEK(t *testing.T) {
 				t.Fatalf("ProvisionTPM failed: %v", err)
 			}
 
-			ekContext, err := tpm.WrapHandle(ekHandle)
+			ekContext, err := tpm.EkContext()
 			if err != nil {
-				t.Fatalf("WrapHandle failed: %v", err)
+				t.Fatalf("No EK context: %v", err)
+			}
+			if ekContext.Handle().Type() != tpm2.HandleTypePersistent {
+				t.Errorf("Invalid EK handle type")
+			}
+			hmacSession, err := tpm.HmacSession()
+			if err != nil {
+				t.Fatalf("No initial HMAC session")
+			}
+			if hmacSession.Context.Handle().Type() != tpm2.HandleTypeHMACSession {
+				t.Errorf("Invalid HMAC session handle")
 			}
 
 			if _, err := tpm.EvictControl(tpm2.HandleOwner, ekContext, ekContext.Handle(), nil); err != nil {
@@ -378,6 +401,27 @@ func TestRecreateEK(t *testing.T) {
 			}
 
 			validateEK(t, tpm)
+
+			hmacSession2, err := tpm.HmacSession()
+			if err != nil {
+				t.Fatalf("No initial HMAC session")
+			}
+			if hmacSession2.Context.Handle().Type() != tpm2.HandleTypeHMACSession {
+				t.Errorf("Invalid HMAC session handle")
+			}
+			ekContext2, err := tpm.EkContext()
+			if err != nil {
+				t.Fatalf("No EK context: %v", err)
+			}
+			if ekContext2.Handle().Type() != tpm2.HandleTypePersistent {
+				t.Errorf("Invalid EK handle")
+			}
+			if hmacSession.Context.Handle() != tpm2.HandleUnassigned {
+				t.Errorf("Original HMAC session should have been flushed")
+			}
+			if ekContext.Handle() != tpm2.HandleUnassigned {
+				t.Errorf("Original EK context should have been evicted")
+			}
 		})
 	}
 }

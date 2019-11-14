@@ -125,6 +125,11 @@ type ProvisionAuths struct {
 // function with mode set to ProvisionModeClear. If there is an object already stored at the location used for the endorsement key
 // then this function will evict it automatically from the TPM.
 //
+// If the TPM connection was established by calling SecureConnectToDefaultUnprovisionedTPM, this function will attempt to create
+// an authorization session salted with a value protected with the public part of the endorsement key from the verified endorsement
+// certificate. If this fails because the private part of the newly created endorsement key cannot retrieve the salt, a
+// TPMVerificationError error will be returned.
+//
 // This function will create and persist a storage root key, which requires knowledge of the authorization value for the storage
 // hierarchy. If called with mode set to ProvisionModeClear, or if called just after clearing the TPM via the physical presence
 // interface, the authorization value for the storage hierarchy will be empty at the point that it is required. If called with any
@@ -156,12 +161,21 @@ func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte,
 		return ErrRequiresLockoutAuth
 	}
 
+	// Create an initial session for HMAC authorizations
+	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultHashAlgorithm, nil)
+	if err != nil {
+		return xerrors.Errorf("cannot start session: %w", err)
+	}
+	defer tpm.FlushContext(sessionContext)
+
+	session := &tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrContinueSession}
+
 	if mode == ProvisionModeClear {
 		if status&AttrOwnerClearDisabled > 0 {
 			return ErrClearRequiresPPI
 		}
 
-		if err := tpm.Clear(tpm2.HandleLockout, lockoutAuth); err != nil {
+		if err := tpm.Clear(tpm2.HandleLockout, session.WithAuthValue(lockoutAuth)); err != nil {
 			switch {
 			case isAuthFailError(err):
 				return AuthFailError{tpm2.HandleLockout}
@@ -181,7 +195,7 @@ func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte,
 	// Provision an endorsement key
 	ekContext, err := tpm.WrapHandle(ekHandle)
 	if err == nil {
-		if _, err := tpm.EvictControl(tpm2.HandleOwner, ekContext, ekHandle, ownerAuth); err != nil {
+		if _, err := tpm.EvictControl(tpm2.HandleOwner, ekContext, ekHandle, session.WithAuthValue(ownerAuth)); err != nil {
 			if isAuthFailError(err) {
 				return AuthFailError{tpm2.HandleOwner}
 			}
@@ -191,7 +205,8 @@ func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte,
 		return xerrors.Errorf("cannot create context for object at handle required by endorsement key: %w", err)
 	}
 
-	ekContext, _, _, _, _, _, err = tpm.CreatePrimary(tpm2.HandleEndorsement, nil, &ekTemplate, nil, nil, endorsementAuth)
+	ekContext, _, _, _, _, _, err = tpm.CreatePrimary(tpm2.HandleEndorsement, nil, &ekTemplate, nil, nil,
+		session.WithAuthValue(endorsementAuth))
 	if err != nil {
 		if isAuthFailError(err) {
 			return AuthFailError{tpm2.HandleEndorsement}
@@ -200,13 +215,16 @@ func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte,
 	}
 	defer tpm.FlushContext(ekContext)
 
-	if _, err := tpm.EvictControl(tpm2.HandleOwner, ekContext, ekHandle, ownerAuth); err != nil {
+	if _, err := tpm.EvictControl(tpm2.HandleOwner, ekContext, ekHandle, session.WithAuthValue(ownerAuth)); err != nil {
 		if isAuthFailError(err) {
 			return AuthFailError{tpm2.HandleOwner}
 		}
 		return xerrors.Errorf("cannot make endorsement key persistent: %w", err)
 	}
 
+	// Close the existing session and create a new session that's salted with a value protected with the newly provisioned EK.
+	// This will have a symmetric algorithm for parameter encryption during HierarchyChangeAuth.
+	tpm.FlushContext(sessionContext)
 	if err := tpm.acquireEkContextAndVerifyTPM(); err != nil {
 		var verifyErr verificationError
 		if xerrors.As(err, &verifyErr) {
@@ -214,11 +232,12 @@ func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte,
 		}
 		return xerrors.Errorf("cannot acquire public area of the key associated with the TPM's endorsement certificate: %w", err)
 	}
+	session, _ = tpm.HmacSession()
 
 	// Provision a storage root key
 	srkContext, err := tpm.WrapHandle(srkHandle)
 	if err == nil {
-		if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, ownerAuth); err != nil {
+		if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, session.WithAuthValue(ownerAuth)); err != nil {
 			if isAuthFailError(err) {
 				return AuthFailError{tpm2.HandleOwner}
 			}
@@ -228,7 +247,7 @@ func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte,
 		return xerrors.Errorf("cannot create context for object at handle required by storage root key: %w", err)
 	}
 
-	srkContext, _, _, _, _, _, err = tpm.CreatePrimary(tpm2.HandleOwner, nil, &srkTemplate, nil, nil, ownerAuth)
+	srkContext, _, _, _, _, _, err = tpm.CreatePrimary(tpm2.HandleOwner, nil, &srkTemplate, nil, nil, session.WithAuthValue(ownerAuth))
 	if err != nil {
 		if isAuthFailError(err) {
 			return AuthFailError{tpm2.HandleOwner}
@@ -237,7 +256,7 @@ func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte,
 	}
 	defer tpm.FlushContext(srkContext)
 
-	if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, ownerAuth); err != nil {
+	if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, session.WithAuthValue(ownerAuth)); err != nil {
 		// Owner auth failure would have been caught by CreatePrimary
 		return xerrors.Errorf("cannot make storage root key persistent: %w", err)
 	}
@@ -246,7 +265,11 @@ func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte,
 		return nil
 	}
 
-	if err := tpm.DictionaryAttackParameters(tpm2.HandleLockout, maxTries, recoveryTime, lockoutRecovery, lockoutAuth); err != nil {
+	// Perform actions that require the lockout hierarchy authorization.
+
+	// Set the DA parameters.
+	if err := tpm.DictionaryAttackParameters(tpm2.HandleLockout, maxTries, recoveryTime, lockoutRecovery,
+		session.WithAuthValue(lockoutAuth)); err != nil {
 		switch {
 		case isAuthFailError(err):
 			return AuthFailError{tpm2.HandleLockout}
@@ -261,18 +284,9 @@ func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte,
 		return xerrors.Errorf("cannot disable owner clear: %w", err)
 	}
 
-	// This was either created by ProvisionStatus or by TPMContext.EvictControl if we needed to create a new one, so this can never fail
-	srkContext, _ = tpm.WrapHandle(srkHandle)
-	lockoutContext, _ := tpm.WrapHandle(tpm2.HandleLockout)
-	sessionContext, err :=
-		tpm.StartAuthSession(srkContext, lockoutContext, tpm2.SessionTypeHMAC, &paramEncryptAlg, defaultHashAlgorithm, lockoutAuth)
-	if err != nil {
-		return xerrors.Errorf("cannot start session for command parameter encryption: %w", err)
-	}
-	defer tpm.FlushContext(sessionContext)
-
-	session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrCommandEncrypt, AuthValue: lockoutAuth}
-	if err := tpm.HierarchyChangeAuth(tpm2.HandleLockout, tpm2.Auth(newLockoutAuth), lockoutAuth, &session); err != nil {
+	// Set the lockout hierarchy authorization.
+	if err := tpm.HierarchyChangeAuth(tpm2.HandleLockout, tpm2.Auth(newLockoutAuth),
+		session.WithAuthValue(lockoutAuth).AddAttrs(tpm2.AttrCommandEncrypt)); err != nil {
 		return xerrors.Errorf("cannot set the lockout hierarchy authorization value: %w", err)
 	}
 
