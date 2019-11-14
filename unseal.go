@@ -27,7 +27,7 @@ import (
 	"golang.org/x/xerrors"
 )
 
-func UnsealKeyFromTPM(tpm *tpm2.TPMContext, buf io.Reader, pin string) ([]byte, error) {
+func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string) ([]byte, error) {
 	props, err := tpm.GetCapabilityTPMProperties(tpm2.PropertyPermanent, 1)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot fetch properties from TPM: %w", err)
@@ -39,7 +39,7 @@ func UnsealKeyFromTPM(tpm *tpm2.TPMContext, buf io.Reader, pin string) ([]byte, 
 
 	// Load the key data
 	var data keyData
-	keyContext, err := data.loadAndIntegrityCheck(buf, tpm, false)
+	keyContext, err := data.loadAndIntegrityCheck(buf, tpm.TPMContext, false)
 	if err != nil {
 		var kfErr keyFileError
 		var ruErr tpm2.ResourceUnavailableError
@@ -73,7 +73,7 @@ func UnsealKeyFromTPM(tpm *tpm2.TPMContext, buf io.Reader, pin string) ([]byte, 
 	}
 	defer tpm.FlushContext(sessionContext)
 
-	if err := executePolicySession(tpm, sessionContext, data.AuxData.PolicyData, pin); err != nil {
+	if err := executePolicySession(tpm.TPMContext, sessionContext, data.AuxData.PolicyData, pin); err != nil {
 		var tpmErr *tpm2.TPMError
 		var tpmsErr *tpm2.TPMSessionError
 		switch {

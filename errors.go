@@ -76,3 +76,23 @@ type AuthFailError struct {
 func (e AuthFailError) Error() string {
 	return fmt.Sprintf("an authorization check failed for the hierarchy associated with %v", e.Handle)
 }
+
+// InvalidIntermediateCertsFileError is returned from SecureConnectToDefaultTPM if the specified file providing intermediate
+// certificates for EK cert verification is invalid.
+type InvalidIntermediateCertsFileError struct {
+	msg string
+}
+
+func (e InvalidIntermediateCertsFileError) Error() string {
+	return fmt.Sprintf("invalid intermedate certs file: %s", e.msg)
+}
+
+// TPMVerificationError is returned from SecureConnectToDefaultTPM is the TPM doesn't contain a EK cert, or verification of the
+// EK certificate fails, or the verified EK certificate doesn't belong to the TPM that is being connected to.
+type TPMVerificationError struct {
+	msg string
+}
+
+func (e TPMVerificationError) Error() string {
+	return fmt.Sprintf("verification of the TPM failed: %s", e.msg)
+}

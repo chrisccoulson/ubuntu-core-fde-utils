@@ -4,5 +4,6 @@ examples/provision-status/provision-status
 examples/provision-tpm/provision-tpm
 examples/seal-key/seal-key
 examples/unseal-key/unseal-key
+examples/verify-tpm/verify-tpm
 unlock/unlock
 vendor/*/

@@ -75,7 +75,7 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interf
 	// The NV index requires 2 policies - one for writing in order to initialize, and one for changing the
 	// auth value. Create the one for writing first
 	trial, _ := tpm2.ComputeAuthPolicy(tpm2.HashAlgorithmSHA256)
-	trial.PolicySigned(key, nil)
+	trial.PolicySigned(key.Name(), nil)
 	authPolicy1 := trial.GetDigest()
 
 	// The second policy is for changing the auth value which requires the admin role, so we use
@@ -191,7 +191,7 @@ func performPINChange(tpm *tpm2.TPMContext, handle tpm2.Handle, policies tpm2.Di
 	return nil
 }
 
-func ChangePIN(tpm *tpm2.TPMContext, path string, oldAuth, newAuth string) error {
+func ChangePIN(tpm *TPMConnection, path string, oldAuth, newAuth string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("cannot open key data file: %v", err)
@@ -199,12 +199,12 @@ func ChangePIN(tpm *tpm2.TPMContext, path string, oldAuth, newAuth string) error
 	defer f.Close()
 
 	var data keyData
-	_, err = data.loadAndIntegrityCheck(f, tpm, true)
+	_, err = data.loadAndIntegrityCheck(f, tpm.TPMContext, true)
 	if err != nil {
 		return fmt.Errorf("cannot load DEK file: %v", err)
 	}
 
-	if err := performPINChange(tpm, data.AuxData.PolicyData.PinIndexHandle,
+	if err := performPINChange(tpm.TPMContext, data.AuxData.PolicyData.PinIndexHandle,
 		data.AuxData.PinIndexPolicyORDigests, oldAuth, newAuth); err != nil {
 		return err
 	}

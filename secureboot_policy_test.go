@@ -267,7 +267,7 @@ func TestClassifySecureBootEvents(t *testing.T) {
 	}
 }
 
-func replayLogToTPM(t *testing.T, tpm *tpm2.TPMContext, tcti *tpm2.TctiMssim, logPath string) {
+func replayLogToTPM(t *testing.T, tpm *TPMConnection, tcti *tpm2.TctiMssim, logPath string) {
 	f, err := os.Open(logPath)
 	if err != nil {
 		t.Fatalf("Open failed: %v\n", err)
@@ -698,7 +698,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 				dbxPathForTesting = ""
 			}()
 
-			digests, err := computeSecureBootPolicyDigests(tpm, tpm2.HashAlgorithmSHA256, data.params)
+			digests, err := computeSecureBootPolicyDigests(tpm.TPMContext, tpm2.HashAlgorithmSHA256, data.params)
 			if data.err != "" {
 				if err == nil {
 					t.Fatalf("Expected computeSecureBootPolicyDigests to fail")

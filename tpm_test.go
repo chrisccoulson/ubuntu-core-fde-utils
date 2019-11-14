@@ -38,19 +38,19 @@ var (
 	mssimPlatformPort = flag.Uint("mssim-platform-port", 2322, "")
 )
 
-func deleteKey(t *testing.T, tpm *tpm2.TPMContext, path string) {
+func deleteKey(t *testing.T, tpm *TPMConnection, path string) {
 	if err := DeleteKey(tpm, path, nil); err != nil {
 		t.Errorf("DeleteKey failed: %v", err)
 	}
 }
 
-func flushContext(t *testing.T, tpm *tpm2.TPMContext, context tpm2.ResourceContext) {
+func flushContext(t *testing.T, tpm *TPMConnection, context tpm2.ResourceContext) {
 	if err := tpm.FlushContext(context); err != nil {
 		t.Errorf("FlushContext failed: %v", err)
 	}
 }
 
-func openTPMSimulatorForTesting(t *testing.T) (*tpm2.TPMContext, *tpm2.TctiMssim) {
+func openTPMSimulatorForTesting(t *testing.T) (*TPMConnection, *tpm2.TctiMssim) {
 	if !*useMssim {
 		t.SkipNow()
 	}
@@ -59,23 +59,35 @@ func openTPMSimulatorForTesting(t *testing.T) (*tpm2.TPMContext, *tpm2.TctiMssim
 		t.Fatalf("Cannot specify both -use-tpm and -use-mssim")
 	}
 
-	tcti, err := tpm2.OpenMssim(*mssimHost, *mssimTpmPort, *mssimPlatformPort)
-	if err != nil {
-		t.Fatalf("Failed to open mssim connection: %v", err)
+	var tcti *tpm2.TctiMssim
+
+	connectToDefaultTPM = func() (*tpm2.TPMContext, error) {
+		var err error
+		tcti, err = tpm2.OpenMssim(*mssimHost, *mssimTpmPort, *mssimPlatformPort)
+		if err != nil {
+			t.Fatalf("Failed to open mssim connection: %v", err)
+		}
+
+		tpm, _ := tpm2.NewTPMContext(tcti)
+
+		if err := tpm.Startup(tpm2.StartupClear); err != nil {
+			tpmError, isTpmError := err.(*tpm2.TPMError)
+			if !isTpmError || tpmError.Code != tpm2.ErrorInitialize {
+				t.Fatalf("Startup failed: %v", err)
+			}
+		}
+		return tpm, nil
 	}
 
-	tpm, _ := tpm2.NewTPMContext(tcti)
-	if err := tpm.Startup(tpm2.StartupClear); err != nil {
-		tpmError, isTpmError := err.(*tpm2.TPMError)
-		if !isTpmError || tpmError.Code != tpm2.ErrorInitialize {
-			t.Fatalf("Startup failed: %v", err)
-		}
+	tpm, err := ConnectToDefaultTPM()
+	if err != nil {
+		t.Fatalf("ConnectToDefaultTPM failed: %v", err)
 	}
 
 	return tpm, tcti
 }
 
-func openTPMForTesting(t *testing.T) *tpm2.TPMContext {
+func openTPMForTesting(t *testing.T) *TPMConnection {
 	if !*useTpm {
 		tpm, _ := openTPMSimulatorForTesting(t)
 		return tpm
@@ -85,17 +97,26 @@ func openTPMForTesting(t *testing.T) *tpm2.TPMContext {
 		t.Fatalf("Cannot specify both -use-tpm and -use-mssim")
 	}
 
-	tcti, err := tpm2.OpenTPMDevice(*tpmPathForTest)
-	if err != nil {
-		t.Fatalf("Failed to open the TPM device: %v", err)
+	connectToDefaultTPM = func() (*tpm2.TPMContext, error) {
+		tcti, err := tpm2.OpenTPMDevice(*tpmPathForTest)
+		if err != nil {
+			t.Fatalf("Failed to open the TPM device: %v", err)
+		}
+
+		tpm, _ := tpm2.NewTPMContext(tcti)
+		return tpm, nil
 	}
 
-	tpm, _ := tpm2.NewTPMContext(tcti)
+	tpm, err := ConnectToDefaultTPM()
+	if err != nil {
+		t.Fatalf("ConnectToDefaultTPM failed: %v", err)
+	}
+
 	return tpm
 }
 
 // clearTPM clears the TPM with platform hierarchy authorization - something that we can only do on the simulator
-func clearTPMWithPlatformAuth(t *testing.T, tpm *tpm2.TPMContext) {
+func clearTPMWithPlatformAuth(t *testing.T, tpm *TPMConnection) {
 	if err := tpm.ClearControl(tpm2.HandlePlatform, false, nil); err != nil {
 		t.Fatalf("ClearControl failed: %v", err)
 	}
@@ -104,7 +125,14 @@ func clearTPMWithPlatformAuth(t *testing.T, tpm *tpm2.TPMContext) {
 	}
 }
 
-func resetTPMSimulator(t *testing.T, tpm *tpm2.TPMContext, tcti *tpm2.TctiMssim) {
+func resetTPMSimulator(t *testing.T, tpm *TPMConnection, tcti *tpm2.TctiMssim) {
+	wasProvisioned := false
+	if _, err := tpm.EkContext(); err == nil {
+		if _, err := tpm.HmacSession(); err == nil {
+			wasProvisioned = true
+		}
+	}
+
 	if err := tpm.Shutdown(tpm2.StartupClear); err != nil {
 		t.Fatalf("Shutdown failed: %v", err)
 	}
@@ -114,9 +142,13 @@ func resetTPMSimulator(t *testing.T, tpm *tpm2.TPMContext, tcti *tpm2.TctiMssim)
 	if err := tpm.Startup(tpm2.StartupClear); err != nil {
 		t.Fatalf("Startup failed: %v", err)
 	}
+
+	if err := tpm.acquireEkContextAndVerifyTPM(); err != nil && wasProvisioned {
+		t.Fatalf("Failed to restore TPMConnection after reset: %v", err)
+	}
 }
 
-func closeTPM(t *testing.T, tpm *tpm2.TPMContext) {
+func closeTPM(t *testing.T, tpm *TPMConnection) {
 	if *useMssim {
 		if err := tpm.Shutdown(tpm2.StartupClear); err != nil {
 			t.Errorf("Shutdown failed: %v", err)

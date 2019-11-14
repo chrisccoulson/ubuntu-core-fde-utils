@@ -26,7 +26,7 @@ import (
 	"github.com/chrisccoulson/go-tpm2"
 )
 
-func validateSRK(t *testing.T, tpm *tpm2.TPMContext) {
+func validateSRK(t *testing.T, tpm *TPMConnection) {
 	srkContext, err := tpm.WrapHandle(srkHandle)
 	if err != nil {
 		t.Errorf("Cannot create context for SRK: %v", err)
@@ -71,7 +71,7 @@ func validateSRK(t *testing.T, tpm *tpm2.TPMContext) {
 	}
 }
 
-func validateEK(t *testing.T, tpm *tpm2.TPMContext) {
+func validateEK(t *testing.T, tpm *TPMConnection) {
 	ekContext, err := tpm.WrapHandle(ekHandle)
 	if err != nil {
 		t.Errorf("Cannot create context for EK: %v", err)
@@ -183,6 +183,8 @@ func TestProvisionNewTPM(t *testing.T) {
 				t.Errorf("Use of the lockout hierarchy auth failed: %v", err)
 			}
 
+			hmacSession, err := tpm.HmacSession()
+
 			// Make sure ProvisionTPM didn't leak transient objects
 			handles, err := tpm.GetCapabilityHandles(tpm2.HandleTypeTransient.BaseHandle(),
 				tpm2.CapabilityMaxProperties)
@@ -198,7 +200,7 @@ func TestProvisionNewTPM(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GetCapability failed: %v", err)
 			}
-			if len(handles) > 0 {
+			if len(handles) > 1 || (len(handles) > 0 && handles[0] != hmacSession.Context.Handle()) {
 				t.Errorf("ProvisionTPM leaked loaded session handles")
 			}
 		})

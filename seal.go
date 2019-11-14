@@ -137,7 +137,7 @@ func isNVIndexDefinedError(err error) bool {
 // associated with the key data file are expected to be present on the TPM. If the key data file cannot be opened, a wrapped
 // *os.PathError error will be returned. If the file contains invalid components, fails any integrity checks, or any associated TPM
 // resources are invalid, a InvalidKeyFileError will be returned.
-func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, params *SealParams, key []byte) error {
+func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, params *SealParams, key []byte) error {
 	// Check that the key is the correct length
 	if len(key) != 64 {
 		return fmt.Errorf("expected a key length of 512 bits (got %d)", len(key)*8)
@@ -163,7 +163,7 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 			return ErrKeyFileExists
 		}
 
-		pinIndex, pinIndexPolicies, err = createPinNvIndex(tpm, create.PinHandle, create.OwnerAuth)
+		pinIndex, pinIndexPolicies, err = createPinNvIndex(tpm.TPMContext, create.PinHandle, create.OwnerAuth)
 		if err != nil {
 			switch {
 			case isNVIndexDefinedError(err):
@@ -174,7 +174,7 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 			return xerrors.Errorf("cannot create new pin NV index: %w", err)
 		}
 
-		policyRevokeIndex, err = createPolicyRevocationNvIndex(tpm, create.PolicyRevocationHandle, create.OwnerAuth)
+		policyRevokeIndex, err = createPolicyRevocationNvIndex(tpm.TPMContext, create.PolicyRevocationHandle, create.OwnerAuth)
 		if err != nil {
 			switch {
 			case isNVIndexDefinedError(err):
@@ -190,7 +190,7 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 			return xerrors.Errorf("cannot open existing key data file to update: %w", err)
 		}
 		var existing keyData
-		if _, err := existing.loadAndIntegrityCheck(f, tpm, true); err != nil {
+		if _, err := existing.loadAndIntegrityCheck(f, tpm.TPMContext, true); err != nil {
 			switch e := err.(type) {
 			case keyFileError:
 				return InvalidKeyFileError{e.msg}
@@ -217,7 +217,7 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 	// Compute PCR digests
 	var secureBootDigests tpm2.DigestList
 	if params != nil {
-		secureBootDigests, err = computeSecureBootPolicyDigests(tpm, defaultHashAlgorithm, params)
+		secureBootDigests, err = computeSecureBootPolicyDigests(tpm.TPMContext, defaultHashAlgorithm, params)
 		if err != nil {
 			return fmt.Errorf("cannot compute secure boot policy digests: %v", err)
 		}
@@ -316,7 +316,7 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 // AuthFailError error will be returned and the key data file won't be deleted.
 //
 // This function requires the TPM to be correctly provisioned, else a ErrProvisioningError error will be returned.
-func DeleteKey(tpm *tpm2.TPMContext, path string, ownerAuth interface{}) error {
+func DeleteKey(tpm *TPMConnection, path string, ownerAuth interface{}) error {
 	if status, err := ProvisionStatus(tpm); err != nil {
 		return xerrors.Errorf("cannot determine the current provisioning status of the TPM: %w", err)
 	} else if status&AttrValidSRK == 0 {
@@ -332,7 +332,7 @@ func DeleteKey(tpm *tpm2.TPMContext, path string, ownerAuth interface{}) error {
 	}
 
 	var data keyData
-	if _, err := data.loadAndIntegrityCheck(f, tpm, true); err != nil {
+	if _, err := data.loadAndIntegrityCheck(f, tpm.TPMContext, true); err != nil {
 		switch e := err.(type) {
 		case keyFileError:
 			return InvalidKeyFileError{e.msg}

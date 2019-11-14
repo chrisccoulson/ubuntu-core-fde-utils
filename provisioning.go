@@ -23,6 +23,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"os"
 
 	"github.com/chrisccoulson/go-tpm2"
@@ -88,24 +90,6 @@ var (
 				Scheme:   tpm2.RSAScheme{Scheme: tpm2.RSASchemeNull},
 				KeyBits:  2048,
 				Exponent: 0}}}
-
-	ekTemplate = tpm2.Public{
-		Type:    tpm2.ObjectTypeRSA,
-		NameAlg: tpm2.HashAlgorithmSHA256,
-		Attrs: tpm2.AttrFixedTPM | tpm2.AttrFixedParent | tpm2.AttrSensitiveDataOrigin | tpm2.AttrAdminWithPolicy | tpm2.AttrRestricted |
-			tpm2.AttrDecrypt,
-		AuthPolicy: []byte{0x83, 0x71, 0x97, 0x67, 0x44, 0x84, 0xb3, 0xf8, 0x1a, 0x90, 0xcc, 0x8d, 0x46, 0xa5, 0xd7, 0x24, 0xfd, 0x52, 0xd7,
-			0x6e, 0x06, 0x52, 0x0b, 0x64, 0xf2, 0xa1, 0xda, 0x1b, 0x33, 0x14, 0x69, 0xaa},
-		Params: tpm2.PublicParamsU{
-			Data: &tpm2.RSAParams{
-				Symmetric: tpm2.SymDefObject{
-					Algorithm: tpm2.SymObjectAlgorithmAES,
-					KeyBits:   tpm2.SymKeyBitsU{Data: uint16(128)},
-					Mode:      tpm2.SymModeU{Data: tpm2.SymModeCFB}},
-				Scheme:   tpm2.RSAScheme{Scheme: tpm2.RSASchemeNull},
-				KeyBits:  2048,
-				Exponent: 0}},
-		Unique: tpm2.PublicIDU{Data: make(tpm2.PublicKeyRSA, 256)}}
 )
 
 type ProvisionAuths struct {
@@ -151,7 +135,7 @@ type ProvisionAuths struct {
 // then this function will evict it automatically from the TPM.
 //
 // If mode is not ProvisionModeWithoutLockout, the authorization value for the lockout hierarchy will be set to newLockoutAuth
-func ProvisionTPM(tpm *tpm2.TPMContext, mode ProvisionMode, newLockoutAuth []byte, auths *ProvisionAuths) error {
+func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte, auths *ProvisionAuths) error {
 	status, err := ProvisionStatus(tpm)
 	if err != nil {
 		return xerrors.Errorf("cannot determine the current status: %w", err)
@@ -221,6 +205,14 @@ func ProvisionTPM(tpm *tpm2.TPMContext, mode ProvisionMode, newLockoutAuth []byt
 			return AuthFailError{tpm2.HandleOwner}
 		}
 		return xerrors.Errorf("cannot make endorsement key persistent: %w", err)
+	}
+
+	if err := tpm.acquireEkContextAndVerifyTPM(); err != nil {
+		var verifyErr verificationError
+		if xerrors.As(err, &verifyErr) {
+			return TPMVerificationError{fmt.Sprintf("cannot verify TPM: %v", err)}
+		}
+		return xerrors.Errorf("cannot acquire public area of the key associated with the TPM's endorsement certificate: %w", err)
 	}
 
 	// Provision a storage root key
@@ -301,37 +293,38 @@ func RequestTPMClearUsingPPI() error {
 	return nil
 }
 
-func checkForValidSRK(tpm *tpm2.TPMContext) (bool, error) {
-	srkContext, err := tpm.WrapHandle(srkHandle)
-	if err != nil {
-		if _, notFound := err.(tpm2.ResourceUnavailableError); notFound {
-			return false, nil
-		}
-		return false, xerrors.Errorf("cannot create context for SRK: %w", err)
+func isObjectPrimaryKeyWithTemplate(tpm *tpm2.TPMContext, hierarchy tpm2.Handle, context tpm2.ResourceContext,
+	template *tpm2.Public, session *tpm2.Session) (bool, error) {
+	var auditSession *tpm2.Session
+	if session != nil {
+		auditSession = session.AddAttrs(tpm2.AttrAudit)
 	}
 
-	pub, _, qualifiedName, err := tpm.ReadPublic(srkContext)
+	pub, name, qualifiedName, err := tpm.ReadPublic(context, auditSession)
 	if err != nil {
-		return false, xerrors.Errorf("cannot read public part of SRK: %w", err)
+		return false, xerrors.Errorf("cannot read public area of object: %w", err)
+	}
+	if !bytes.Equal(name, context.Name()) {
+		return false, errors.New("public area does not match ResourceContext")
 	}
 
-	pub.Unique = tpm2.PublicIDU{}
+	pub.Unique = template.Unique
 
-	srkPubBytes, _ := tpm2.MarshalToBytes(pub)
-	srkTemplateBytes, _ := tpm2.MarshalToBytes(srkTemplate)
-	if !bytes.Equal(srkPubBytes, srkTemplateBytes) {
+	pubBytes, _ := tpm2.MarshalToBytes(pub)
+	templateBytes, _ := tpm2.MarshalToBytes(template)
+	if !bytes.Equal(pubBytes, templateBytes) {
 		return false, nil
 	}
 
-	owner, _ := tpm.WrapHandle(tpm2.HandleOwner)
+	parent, _ := tpm.WrapHandle(hierarchy)
 
 	// Determine if this is a primary key by validating its qualified name. From the spec, the qualified name
 	// of key B (QNb) which is a child of key A is QNb = Hb(QNa || NAMEb). Key A in this case should be
 	// the storage primary seed, which has a qualified name matching its name (and the name is the handle
 	// for the storage hierarchy)
 	h := sha256.New()
-	h.Write(owner.Name())
-	h.Write(srkContext.Name())
+	h.Write(parent.Name())
+	h.Write(context.Name())
 
 	alg := make([]byte, 2)
 	binary.BigEndian.PutUint16(alg, uint16(tpm2.HashAlgorithmSHA256))
@@ -344,10 +337,22 @@ func checkForValidSRK(tpm *tpm2.TPMContext) (bool, error) {
 	return true, nil
 }
 
-func ProvisionStatus(tpm *tpm2.TPMContext) (ProvisionStatusAttributes, error) {
+func checkForValidSRK(tpm *tpm2.TPMContext) (bool, error) {
+	srkContext, err := tpm.WrapHandle(srkHandle)
+	if err != nil {
+		if _, notFound := err.(tpm2.ResourceUnavailableError); notFound {
+			return false, nil
+		}
+		return false, xerrors.Errorf("cannot create context for SRK: %w", err)
+	}
+
+	return isObjectPrimaryKeyWithTemplate(tpm, tpm2.HandleOwner, srkContext, &srkTemplate, nil)
+}
+
+func ProvisionStatus(tpm *TPMConnection) (ProvisionStatusAttributes, error) {
 	var out ProvisionStatusAttributes
 
-	if valid, err := checkForValidSRK(tpm); err != nil {
+	if valid, err := checkForValidSRK(tpm.TPMContext); err != nil {
 		return 0, xerrors.Errorf("cannot check for valid SRK: %w", err)
 	} else if valid {
 		out |= AttrValidSRK

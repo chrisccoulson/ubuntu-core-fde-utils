@@ -177,9 +177,9 @@ func computePolicy(alg tpm2.HashAlgorithmId, input *policyComputeInput) (*policy
 
 	operandB := make([]byte, 8)
 	binary.BigEndian.PutUint64(operandB, input.policyRevokeCount)
-	trial.PolicyNV(input.policyRevokeIndex, operandB, 0, tpm2.OpUnsignedLE)
+	trial.PolicyNV(input.policyRevokeIndex.Name(), operandB, 0, tpm2.OpUnsignedLE)
 
-	trial.PolicySecret(input.pinIndex, nil)
+	trial.PolicySecret(input.pinIndex.Name(), nil)
 
 	return &policyData{Algorithm: alg,
 		SecureBootPCRAlg:        input.secureBootPCRAlg,
