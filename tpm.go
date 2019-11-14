@@ -158,7 +158,7 @@ func FetchAndSaveEkIntermediateCerts(tpm *tpm2.TPMContext, dest string, ownerAut
 	cert, err := readEkCert(tpm, ownerAuth)
 	if err != nil {
 		if isAuthFailError(err) {
-			return ErrOwnerAuthFail
+			return AuthFailError{tpm2.HandleOwner}
 		}
 		return xerrors.Errorf("cannot obtain endorsement certificate from TPM: %w", err)
 	}

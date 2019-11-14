@@ -36,7 +36,7 @@ func TestCreateAndUnseal(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
@@ -75,7 +75,7 @@ func TestCreateDoesntReplace(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
@@ -122,7 +122,7 @@ func TestUpdateAndUnseal(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
@@ -185,7 +185,7 @@ func TestUnsealWithPin(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
@@ -230,7 +230,7 @@ func TestUnsealRevoked(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
@@ -278,7 +278,7 @@ func TestUpdateWithoutExisting(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
@@ -311,7 +311,7 @@ func TestUnsealWithWrongPin(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
@@ -355,7 +355,7 @@ func TestUnsealPolicyFail(t *testing.T) {
 	tpm, _ := openTPMSimulatorForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
@@ -397,7 +397,7 @@ func TestUnsealLockout(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
@@ -451,7 +451,7 @@ func TestUnsealProvisioningError(t *testing.T) {
 		closeTPM(t, tpm)
 	}()
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 

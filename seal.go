@@ -128,7 +128,7 @@ func isNVIndexDefinedError(err error) bool {
 // (MSO == 0x01), and the choice of handle should take in to consideration the reserved indices from the "Registry of reserved TPM 2.0
 // handles and localities" specification. It is recommended that the handles are in the block reserved for owner objects (0x01800000 -
 // 0x01bfffff). When called in this mode, the owner authorization is also required, provided via the OwnerAuth of the CreationParams
-// struct. If the provided owner authorization is incorrect, a ErrOwnerAuthFail error will be returned. On a TPM that has been newly
+// struct. If the provided owner authorization is incorrect, a AuthFailError error will be returned. On a TPM that has been newly
 // provisioned with ProvisionTPM, the owner authorization is empty and the nil value can be passed here.
 //
 // If called with a nil create parameter, this function operates in "reseal" mode where the provided key is sealed in the same way as
@@ -169,7 +169,7 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 			case isNVIndexDefinedError(err):
 				return TPMResourceExistsError{create.PinHandle}
 			case isAuthFailError(err):
-				return ErrOwnerAuthFail
+				return AuthFailError{tpm2.HandleOwner}
 			}
 			return xerrors.Errorf("cannot create new pin NV index: %w", err)
 		}
@@ -180,7 +180,7 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 			case isNVIndexDefinedError(err):
 				return TPMResourceExistsError{create.PolicyRevocationHandle}
 			case isAuthFailError(err):
-				return ErrOwnerAuthFail
+				return AuthFailError{tpm2.HandleOwner}
 			}
 			return xerrors.Errorf("cannot create revocation counter: %w", err)
 		}
@@ -313,7 +313,7 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 // be returned. In this case, the key data file won't be deleted.
 //
 // This function requires knowledge of the storage hierarchy authorization value. If an incorrect authorization is provided, a
-// ErrOwnerAuthFail error will be returned and the key data file won't be deleted.
+// AuthFailError error will be returned and the key data file won't be deleted.
 //
 // This function requires the TPM to be correctly provisioned, else a ErrProvisioningError error will be returned.
 func DeleteKey(tpm *tpm2.TPMContext, path string, ownerAuth interface{}) error {
@@ -346,13 +346,13 @@ func DeleteKey(tpm *tpm2.TPMContext, path string, ownerAuth interface{}) error {
 
 	if err := tpm.NVUndefineSpace(tpm2.HandleOwner, policyRevokeContext, ownerAuth); err != nil {
 		if isAuthFailError(err) {
-			return ErrOwnerAuthFail
+			return AuthFailError{tpm2.HandleOwner}
 		}
 		return xerrors.Errorf("cannot undefine policy revocation NV index: %w", err)
 	}
 	if err := tpm.NVUndefineSpace(tpm2.HandleOwner, pinContext, ownerAuth); err != nil {
 		if isAuthFailError(err) {
-			return ErrOwnerAuthFail
+			return AuthFailError{tpm2.HandleOwner}
 		}
 		return xerrors.Errorf("cannot undefine NV index for PIN: %w", err)
 	}

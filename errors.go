@@ -30,14 +30,10 @@ var (
 	ErrClearRequiresPPI    = errors.New("clearing requires the use of the Physical Presence Interface")
 	ErrRequiresLockoutAuth = errors.New("the TPM indicates the lockout hierarchy has an authorization value, but one hasn't " +
 		"been provided")
-	ErrLockoutAuthFail = errors.New("an authorization check for the lockout hierarchy failed and the " +
-		"lockout hierarchy can not be used again for the configured recovery time")
 	ErrInLockout = errors.New("the lockout hierarchy can not be used because it is in lockout mode")
 
 	ErrProvisioning  = errors.New("the TPM is not correctly provisioned")
 	ErrKeyFileExists = errors.New("a key data file already exists at the specified path")
-
-	ErrOwnerAuthFail = errors.New("an authorization check for the storage hierarchy failed")
 
 	// ErrLockout is returned from UnsealKeyFromTPM when the TPM is in dictionary-attack lockout mode. Until
 	// the TPM exits lockout mode, the key will need to be recovered via a mechanism that is independent of
@@ -71,4 +67,13 @@ type InvalidKeyFileError struct {
 
 func (e InvalidKeyFileError) Error() string {
 	return fmt.Sprintf("invalid key data file: %s", e.msg)
+}
+
+// AuthFailError is returned when an authorization fails.
+type AuthFailError struct {
+	Handle tpm2.Handle
+}
+
+func (e AuthFailError) Error() string {
+	return fmt.Sprintf("an authorization check failed for the hierarchy associated with %v", e.Handle)
 }
