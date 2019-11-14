@@ -37,11 +37,6 @@ const (
 )
 
 var (
-	paramEncryptAlg = tpm2.SymDef{
-		Algorithm: tpm2.SymAlgorithmAES,
-		KeyBits:   tpm2.SymKeyBitsU{Data: uint16(128)},
-		Mode:      tpm2.SymModeU{Data: tpm2.SymModeCFB}}
-
 	ekTemplate = tpm2.Public{
 		Type:    tpm2.ObjectTypeRSA,
 		NameAlg: tpm2.HashAlgorithmSHA256,
