@@ -20,6 +20,8 @@
 package fdeutil
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -205,7 +207,7 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 		if err != nil {
 			return xerrors.Errorf("cannot open existing key data file to update: %w", err)
 		}
-		existing, err := readKeyData(f)
+		existing, err := readAndIntegrityCheckKeyData(tpm.TPMContext, f, session)
 		if err != nil {
 			switch e := err.(type) {
 			case keyFileError:
@@ -221,6 +223,9 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 			}
 			return xerrors.Errorf("cannot obtain context for PIN NV index: %w", err)
 		}
+		if !bytes.Equal(existing.BoundData.PinIndexName, pinIndex.Name()) {
+			return InvalidKeyFileError{"the PIN NV index on the TPM doesn't match the original key data file"}
+		}
 		pinIndexPolicies = existing.PinIndexPolicyORDigests
 		askForPinHint = existing.AskForPinHint
 
@@ -231,6 +236,10 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 					existing.PolicyData.PolicyRevokeIndexHandle)}
 			}
 			return xerrors.Errorf("cannot obtain context for policy revocation NV counter: %w", err)
+		}
+		if !bytes.Equal(existing.BoundData.PolicyRevokeIndexName, policyRevokeIndex.Name()) {
+			return InvalidKeyFileError{"the NV index used for policy revocation on the TPM doesn't match the original " +
+				"key data file"}
 		}
 	}
 
@@ -285,10 +294,20 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 			Data: &tpm2.KeyedHashParams{Scheme: tpm2.KeyedHashScheme{Scheme: tpm2.KeyedHashSchemeNull}}}}
 	sensitive := tpm2.SensitiveCreate{Data: key}
 
+	// Marshal some parameters now to calculate a digest that can be stored in the CreationData returned from the TPM. This
+	// allows us to have data that is cryptographically bound to the sealed key object
+	boundData := boundKeyData{
+		PinIndexName:          pinIndex.Name(),
+		PolicyRevokeIndexName: policyRevokeIndex.Name()}
+	h := sha256.New()
+	// This can't fail
+	tpm2.MarshalToWriter(h, boundData)
+
 	// Now create the sealed key object. The command is integrity protected so if the object at the handle we expect the SRK to reside
 	// at has a different name (ie, if we're connected via a resource manager and somebody swapped the object with another one), this
 	// command will fail. We take advantage of parameter encryption here too.
-	priv, pub, _, _, _, err := tpm.Create(srkContext, &sensitive, &template, nil, nil, nil, session.AddAttrs(tpm2.AttrCommandEncrypt))
+	priv, pub, creationData, _, creationTicket, err :=
+		tpm.Create(srkContext, &sensitive, &template, h.Sum(nil), nil, nil, session.AddAttrs(tpm2.AttrCommandEncrypt))
 	if err != nil {
 		return xerrors.Errorf("cannot create sealed data object for key: %w", err)
 	}
@@ -297,11 +316,12 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 	data := keyData{
 		KeyPrivate:              priv,
 		KeyPublic:               pub,
+		KeyCreationData:         creationData,
+		KeyCreationTicket:       creationTicket,
 		AskForPinHint:           askForPinHint,
 		PolicyData:              policyData,
-		PinIndexName:            pinIndex.Name(),
 		PinIndexPolicyORDigests: pinIndexPolicies,
-		PolicyRevokeIndexName:   policyRevokeIndex.Name()}
+		BoundData:               &boundData}
 
 	if err := data.writeToFile(dest); err != nil {
 		return xerrors.Errorf("cannot write key data file: %v", err)
