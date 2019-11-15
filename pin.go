@@ -36,7 +36,7 @@ const (
 	pinNvIndexNameAlgorithm tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
 )
 
-func createPinNvIndex(tpm *TPMConnection, handle tpm2.Handle, ownerAuth []byte, hmacSession *tpm2.Session) (tpm2.ResourceContext, tpm2.DigestList, error) {
+func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte, hmacSession *tpm2.Session) (tpm2.ResourceContext, tpm2.DigestList, error) {
 	// To prevent someone with knowledge of the owner authorization (which is empty unless someone has taken
 	// ownership of the TPM) from resetting the PIN by just undefining and redifining a new NV index with the
 	// same properties, require the NV index to be written to and only allow writes with a signed
@@ -114,11 +114,7 @@ func createPinNvIndex(tpm *TPMConnection, handle tpm2.Handle, ownerAuth []byte, 
 	// We need to check that it's consistent with the NV index we created before adding it to an authorization policy.
 
 	// Begin a session to initialize the index.
-	ekContext, err := tpm.EkContext()
-	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot obtain context for EK: %w", err)
-	}
-	policySessionContext, err := tpm.StartAuthSession(ekContext, nil, tpm2.SessionTypePolicy, nil, pinNvIndexNameAlgorithm, nil)
+	policySessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, pinNvIndexNameAlgorithm, nil)
 	if err != nil {
 		return nil, nil, xerrors.Errorf("cannot begin policy session to initialize NV index: %w", err)
 	}

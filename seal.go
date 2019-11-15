@@ -179,7 +179,7 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 			return ErrKeyFileExists
 		}
 
-		pinIndex, pinIndexPolicies, err = createPinNvIndex(tpm, create.PinHandle, create.OwnerAuth, session)
+		pinIndex, pinIndexPolicies, err = createPinNvIndex(tpm.TPMContext, create.PinHandle, create.OwnerAuth, session)
 		if err != nil {
 			switch {
 			case isNVIndexDefinedError(err):
