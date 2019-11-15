@@ -336,7 +336,7 @@ func (g *secureBootPolicyGen) dbSet() *secureBootDbSet {
 }
 
 func (g *secureBootPolicyGen) enterMeasurementScope() {
-	newPcrScope := make(tpm2.Digest, getDigestSize(g.alg))
+	newPcrScope := make(tpm2.Digest, g.alg.Size())
 	if len(g.pcrStack) > 0 {
 		copy(newPcrScope, g.pcrStack[len(g.pcrStack)-1])
 	}
@@ -369,7 +369,7 @@ func (g *secureBootPolicyGen) exitMeasurementScope() {
 func (g *secureBootPolicyGen) extendMeasurement(digest tpm2.Digest) {
 	top := g.pcrStack[len(g.pcrStack)-1]
 
-	h := hashAlgToGoHash(g.alg)
+	h := g.alg.NewHash()
 	h.Write(top)
 	h.Write(digest)
 
@@ -427,7 +427,7 @@ func (g *secureBootPolicyGen) processSecureBootDb(db []byte, events []classified
 		VariableName: efiImageSecurityDatabaseGuid,
 		UnicodeName:  dbName,
 		VariableData: db}
-	hash := hashAlgToGoHash(g.alg)
+	hash := g.alg.NewHash()
 	if err := data.Encode(hash); err != nil {
 		return fmt.Errorf("cannot encode EFI_VARIABLE_DATA: %v", err)
 	}
@@ -459,7 +459,7 @@ func (g *secureBootPolicyGen) processSecureBootDbx(dbx []byte, events []classifi
 		VariableName: efiImageSecurityDatabaseGuid,
 		UnicodeName:  dbxName,
 		VariableData: dbx}
-	hash := hashAlgToGoHash(g.alg)
+	hash := g.alg.NewHash()
 	if err := data.Encode(hash); err != nil {
 		return fmt.Errorf("cannot encode EFI_VARIABLE_DATA: %v", err)
 	}
@@ -614,7 +614,7 @@ Outer:
 		VariableName: rootDb.variableName,
 		UnicodeName:  rootDb.unicodeName,
 		VariableData: varData.Bytes()}
-	hash := hashAlgToGoHash(g.alg)
+	hash := g.alg.NewHash()
 	if err := eventData.Encode(hash); err != nil {
 		return fmt.Errorf("cannot encode EFI_VARIABLE_DATA: %v", err)
 	}

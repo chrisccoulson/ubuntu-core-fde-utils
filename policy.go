@@ -21,28 +21,13 @@ package fdeutil
 
 import (
 	"bytes"
-	"crypto/sha1"
-	"crypto/sha256"
-	"crypto/sha512"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"hash"
 
 	"github.com/chrisccoulson/go-tpm2"
 
 	"golang.org/x/xerrors"
-)
-
-var (
-	knownDigests = map[tpm2.HashAlgorithmId]struct {
-		constructor func() hash.Hash
-		size        int
-	}{
-		tpm2.HashAlgorithmSHA1:   {constructor: sha1.New, size: sha1.Size},
-		tpm2.HashAlgorithmSHA256: {constructor: sha256.New, size: sha256.Size},
-		tpm2.HashAlgorithmSHA384: {constructor: sha512.New384, size: sha512.Size384},
-		tpm2.HashAlgorithmSHA512: {constructor: sha512.New, size: sha512.Size}}
 )
 
 type policyComputeInput struct {
@@ -69,22 +54,6 @@ type policyData struct {
 	PinIndexHandle          tpm2.Handle
 	PolicyRevokeIndexHandle tpm2.Handle
 	PolicyRevokeCount       uint64
-}
-
-func hashAlgToGoHash(hashAlg tpm2.HashAlgorithmId) hash.Hash {
-	knownDigest, isKnown := knownDigests[hashAlg]
-	if !isKnown {
-		panic("Unknown digest algorithm")
-	}
-	return knownDigest.constructor()
-}
-
-func getDigestSize(alg tpm2.HashAlgorithmId) uint {
-	known, isKnown := knownDigests[alg]
-	if !isKnown {
-		panic("Unknown digest algorithm")
-	}
-	return uint(known.size)
 }
 
 func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte, session *tpm2.Session) (tpm2.ResourceContext, error) {

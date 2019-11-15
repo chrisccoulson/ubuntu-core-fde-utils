@@ -130,7 +130,7 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 	defer tpm.FlushContext(policySessionContext)
 
 	// Compute a digest for signing with our key
-	h := hashAlgToGoHash(tpm2.HashAlgorithmSHA256)
+	h := tpm2.HashAlgorithmSHA256.NewHash()
 	h.Write(policySessionContext.(tpm2.SessionContext).NonceTPM())
 	binary.Write(h, binary.BigEndian, int32(0))
 
