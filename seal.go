@@ -168,7 +168,6 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 	var err error
 
 	var pinIndex tpm2.ResourceContext
-	var pinIndexPolicies tpm2.DigestList
 	var askForPinHint bool
 
 	var policyRevokeIndex tpm2.ResourceContext
@@ -179,7 +178,7 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 			return ErrKeyFileExists
 		}
 
-		pinIndex, pinIndexPolicies, err = createPinNvIndex(tpm.TPMContext, create.PinHandle, create.OwnerAuth, session)
+		pinIndex, err = createPinNvIndex(tpm.TPMContext, create.PinHandle, create.OwnerAuth, session)
 		if err != nil {
 			switch {
 			case isNVIndexDefinedError(err):
@@ -224,7 +223,6 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 		if !bytes.Equal(existing.BoundData.PinIndexName, pinIndex.Name()) {
 			return InvalidKeyFileError{"the PIN NV index on the TPM doesn't match the original key data file"}
 		}
-		pinIndexPolicies = existing.PinIndexPolicyORDigests
 		askForPinHint = existing.AskForPinHint
 
 		policyRevokeIndex, err = tpm.WrapHandle(existing.PolicyData.PolicyRevokeIndexHandle)
@@ -318,7 +316,6 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 		KeyCreationTicket:       creationTicket,
 		AskForPinHint:           askForPinHint,
 		PolicyData:              policyData,
-		PinIndexPolicyORDigests: pinIndexPolicies,
 		BoundData:               &boundData}
 
 	if err := data.writeToFile(dest); err != nil {

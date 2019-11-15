@@ -37,7 +37,15 @@ const (
 	pinNvIndexNameAlgorithm tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
 )
 
-func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte, hmacSession *tpm2.Session) (tpm2.ResourceContext, tpm2.DigestList, error) {
+func pinNvIndexAuthPolicies(initAuthPolicy tpm2.Digest) tpm2.DigestList {
+	trial, _ := tpm2.ComputeAuthPolicy(pinNvIndexNameAlgorithm)
+	trial.PolicyCommandCode(tpm2.CommandNVChangeAuth)
+	trial.PolicyAuthValue()
+
+	return tpm2.DigestList{initAuthPolicy, trial.GetDigest()}
+}
+
+func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte, hmacSession *tpm2.Session) (tpm2.ResourceContext, error) {
 	// To prevent someone with knowledge of the owner authorization (which is empty unless someone has taken
 	// ownership of the TPM) from resetting the PIN by just undefining and redifining a new NV index with the
 	// same properties, require the NV index to be written to and only allow writes with a signed
@@ -49,7 +57,7 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot create signing key for initializing NV index: %w", err)
+		return nil, xerrors.Errorf("cannot create signing key for initializing NV index: %w", err)
 	}
 
 	keyPublic := tpm2.Public{
@@ -69,25 +77,19 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 
 	keyName, err := keyPublic.Name()
 	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot compute name of signing key for initializing NV index: %w", err)
+		return nil, xerrors.Errorf("cannot compute name of signing key for initializing NV index: %w", err)
 	}
 
 	// The NV index requires 2 policies - one for writing in order to initialize, and one for changing the
-	// auth value. Create the one for writing first
-	trial, _ := tpm2.ComputeAuthPolicy(tpm2.HashAlgorithmSHA256)
+	// auth value. Create the one for writing first, and then use pinNvIndexAuthPolicies to compute the second
+	// and return them both
+	trial, _ := tpm2.ComputeAuthPolicy(pinNvIndexNameAlgorithm)
 	trial.PolicySigned(keyName, nil)
-	authPolicy1 := trial.GetDigest()
+	initAuthPolicy := trial.GetDigest()
 
-	// The second policy is for changing the auth value which requires the admin role, so we use
-	// PolicyCommandCode for this
-	trial, _ = tpm2.ComputeAuthPolicy(tpm2.HashAlgorithmSHA256)
-	trial.PolicyCommandCode(tpm2.CommandNVChangeAuth)
-	trial.PolicyAuthValue()
-	authPolicy2 := trial.GetDigest()
+	authPolicies := pinNvIndexAuthPolicies(initAuthPolicy)
 
-	authPolicies := tpm2.DigestList{authPolicy1, authPolicy2}
-
-	trial, _ = tpm2.ComputeAuthPolicy(tpm2.HashAlgorithmSHA256)
+	trial, _ = tpm2.ComputeAuthPolicy(pinNvIndexNameAlgorithm)
 	trial.PolicyOR(authPolicies)
 	authPolicy := trial.GetDigest()
 
@@ -97,10 +99,10 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 		NameAlg:    pinNvIndexNameAlgorithm,
 		Attrs:      tpm2.MakeNVAttributes(tpm2.AttrNVPolicyWrite|tpm2.AttrNVAuthRead, tpm2.NVTypeOrdinary),
 		AuthPolicy: authPolicy,
-		Size:       0}
+		Size:       uint16(pinNvIndexNameAlgorithm.Size())}
 
 	if err := tpm.NVDefineSpace(tpm2.HandleOwner, nil, &nvPublic, hmacSession.WithAuthValue(ownerAuth)); err != nil {
-		return nil, nil, xerrors.Errorf("cannot define NV space: %w", err)
+		return nil, xerrors.Errorf("cannot define NV space: %w", err)
 	}
 
 	// NVDefineSpace was integrity protected, so we know that we have an index with the expected public area at the handle we specified
@@ -108,7 +110,7 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 
 	context, err := tpm.WrapHandle(handle)
 	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot obtain context for new NV index: %w", err)
+		return nil, xerrors.Errorf("cannot obtain context for new NV index: %w", err)
 	}
 
 	// The name associated with context is read back from the TPM with no integrity protection, so we don't know if it's correct yet.
@@ -119,13 +121,13 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 		panic(fmt.Sprintf("cannot compute name of NV index: %v", err))
 	}
 	if !bytes.Equal(expectedName, context.Name()) {
-		return nil, nil, errors.New("context for new NV index has unexpected name")
+		return nil, errors.New("context for new NV index has unexpected name")
 	}
 
 	// The name associated with context is the one associated with the index we created. Begin a session to initialize the index.
 	policySessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, pinNvIndexNameAlgorithm, nil)
 	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot begin policy session to initialize NV index: %w", err)
+		return nil, xerrors.Errorf("cannot begin policy session to initialize NV index: %w", err)
 	}
 	defer tpm.FlushContext(policySessionContext)
 
@@ -137,7 +139,7 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 	// Sign the digest
 	sig, err := rsa.SignPSS(rand.Reader, key, crypto.SHA256, h.Sum(nil), &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash})
 	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot provide signature for initializing NV index: %w", err)
+		return nil, xerrors.Errorf("cannot provide signature for initializing NV index: %w", err)
 	}
 
 	// Load the public part of the key in to the TPM. There's no integrity protection for this command as if it's altered in
@@ -145,7 +147,7 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 	// index.
 	keyLoaded, _, err := tpm.LoadExternal(nil, &keyPublic, tpm2.HandleEndorsement)
 	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot load public part of key used to initialize NV index to the TPM: %w", err)
+		return nil, xerrors.Errorf("cannot load public part of key used to initialize NV index to the TPM: %w", err)
 	}
 	defer tpm.FlushContext(keyLoaded)
 
@@ -158,15 +160,15 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 
 	// Execute the policy assertions
 	if _, _, err := tpm.PolicySigned(keyLoaded, policySessionContext, true, nil, nil, 0, &signature); err != nil {
-		return nil, nil, xerrors.Errorf("cannot execute PolicySigned assertion to initialize NV index: %w", err)
+		return nil, xerrors.Errorf("cannot execute PolicySigned assertion to initialize NV index: %w", err)
 	}
 	if err := tpm.PolicyOR(policySessionContext, authPolicies); err != nil {
-		return nil, nil, xerrors.Errorf("cannot execute PolicyOR assertion to initialize NV index: %w", err)
+		return nil, xerrors.Errorf("cannot execute PolicyOR assertion to initialize NV index: %w", err)
 	}
 
 	// Initialize the index
-	if err := tpm.NVWrite(context, context, nil, 0, &tpm2.Session{Context: policySessionContext}); err != nil {
-		return nil, nil, xerrors.Errorf("cannot initialize NV index: %w", err)
+	if err := tpm.NVWrite(context, context, tpm2.MaxNVBuffer(initAuthPolicy), 0, &tpm2.Session{Context: policySessionContext}); err != nil {
+		return nil, xerrors.Errorf("cannot initialize NV index: %w", err)
 	}
 
 	// Verify that the index now has the written attribute - if it doesn't for some reason, then it would be trivial for someone
@@ -175,20 +177,30 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 	// executed on the TPM.
 	nvPub, _, err := tpm.NVReadPublic(context, hmacSession.AddAttrs(tpm2.AttrAudit))
 	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot read NV index public area: %w", err)
+		return nil, xerrors.Errorf("cannot read NV index public area: %w", err)
 	}
 	if nvPub.Attrs&tpm2.AttrNVWritten == 0 {
-		return nil, nil, errors.New("the NV index does not indicate that it has been initialized correctly")
+		return nil, errors.New("the NV index does not indicate that it has been initialized correctly")
 	}
 
-	return context, authPolicies, nil
+	return context, nil
 }
 
-func performPINChange(tpm *TPMConnection, handle tpm2.Handle, policies tpm2.DigestList, oldAuth, newAuth string) error {
+func performPINChange(tpm *TPMConnection, handle tpm2.Handle, oldAuth, newAuth string) error {
+	hmacSession := tpm.HmacSession()
+
 	pinIndexContext, err := tpm.WrapHandle(handle)
 	if err != nil {
 		return fmt.Errorf("cannot create context for PIN NV index: %v", err)
 	}
+
+	initAuthPolicy, err := tpm.NVRead(pinIndexContext, pinIndexContext, uint16(pinNvIndexNameAlgorithm.Size()), 0,
+		hmacSession.WithAuthValue([]byte(oldAuth)))
+	if err != nil {
+		return xerrors.Errorf("cannot read PIN NV index contents: %w", err)
+	}
+
+	policies := pinNvIndexAuthPolicies(tpm2.Digest(initAuthPolicy))
 
 	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, pinNvIndexNameAlgorithm, nil)
 	if err != nil {
@@ -206,7 +218,6 @@ func performPINChange(tpm *TPMConnection, handle tpm2.Handle, policies tpm2.Dige
 		return fmt.Errorf("cannot execute PolicyOR assertion: %v", err)
 	}
 
-	hmacSession := tpm.HmacSession()
 	session := tpm2.Session{
 		Context:   sessionContext,
 		AuthValue: []byte(oldAuth)}
@@ -229,7 +240,7 @@ func ChangePIN(tpm *TPMConnection, path string, oldAuth, newAuth string) error {
 		return fmt.Errorf("cannot load key data file: %v", err)
 	}
 
-	if err := performPINChange(tpm, data.PolicyData.PinIndexHandle, data.PinIndexPolicyORDigests, oldAuth, newAuth); err != nil {
+	if err := performPINChange(tpm, data.PolicyData.PinIndexHandle, oldAuth, newAuth); err != nil {
 		return err
 	}
 
