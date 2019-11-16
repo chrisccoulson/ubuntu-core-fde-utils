@@ -35,12 +35,10 @@ func init() {
 	flag.StringVar(&keyFile, "key-file", "", "")
 }
 
-func main() {
-	flag.Parse()
-
+func run() int {
 	if keyFile == "" {
 		fmt.Fprintf(os.Stderr, "Cannot change PIN: missing -key-file\n")
-		os.Exit(1)
+		return 1
 	}
 
 	args := flag.Args()
@@ -52,12 +50,19 @@ func main() {
 	tpm, err := fdeutil.ConnectToDefaultTPM()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot acquire TPM context: %v", err)
-		os.Exit(1)
+		return 1
 	}
 	defer tpm.Close()
 
 	if err := fdeutil.ChangePIN(tpm, keyFile, currentPin, pin); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot change PIN: %v", err)
-		os.Exit(1)
+		return 1
 	}
+
+	return 0
+}
+
+func main() {
+	flag.Parse()
+	os.Exit(run())
 }

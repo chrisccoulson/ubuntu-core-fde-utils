@@ -32,23 +32,28 @@ func init() {
 	flag.BoolVar(&parentsOnly, "parents-only", false, "")
 }
 
-func main() {
-	flag.Parse()
-
+func run() int {
 	if len(flag.Args()) != 1 {
 		fmt.Fprintf(os.Stderr, "Incorrect usage\n")
-		os.Exit(1)
+		return 1
 	}
 
 	tpm, err := fdeutil.ConnectToDefaultTPM()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot acquire TPM context: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	defer tpm.Close()
 
 	if err := fdeutil.FetchAndSaveEkCertificateChain(tpm, parentsOnly, flag.Args()[0]); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot fetch and save EK certificate and intermediates: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+
+	return 0
+}
+
+func main() {
+	flag.Parse()
+	os.Exit(run())
 }

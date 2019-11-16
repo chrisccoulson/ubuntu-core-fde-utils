@@ -36,15 +36,13 @@ func init() {
 	flag.StringVar(&endorsementAuth, "endorsement-auth", "", "")
 }
 
-func main() {
-	flag.Parse()
-
+func run() int {
 	var ekCertReader io.Reader
 	if ekCert != "" {
 		f, err := os.Open(ekCert)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Cannot open EK certificate file: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 		defer f.Close()
 		ekCertReader = f
@@ -53,7 +51,7 @@ func main() {
 	tpm, err := fdeutil.SecureConnectToDefaultTPM(ekCertReader, []byte(endorsementAuth))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot verify that the TPM is genuine: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	fmt.Println("The TPM is genuine!")
@@ -67,4 +65,10 @@ func main() {
 	}
 
 	tpm.Close()
+	return 0
+}
+
+func main() {
+	flag.Parse()
+	os.Exit(run())
 }

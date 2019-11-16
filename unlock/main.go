@@ -37,7 +37,7 @@ var pin string
 const (
 	masterKeyFilePath string = "/run/unlock.tmp"
 
-	genericExitCode            = 1
+	genericFailExitCode        = 1
 	invalidKeyFileExitCode     = 2
 	tpmProvisioningErrExitCode = 3
 	tpmLockedOutExitCode       = 4
@@ -51,23 +51,21 @@ func init() {
 	flag.StringVar(&pin, "pin", "", "")
 }
 
-func main() {
-	flag.Parse()
-
+func run() int {
 	if ekCertFile == "" && !insecure {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device: missing -ek-cert-file\n")
-		os.Exit(genericExitCode)
+		return genericFailExitCode
 	}
 
 	if keyFile == "" {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device: missing -key-file\n")
-		os.Exit(genericExitCode)
+		return genericFailExitCode
 	}
 
 	args := flag.Args()
 	if len(args) < 2 {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device: insufficient arguments\n")
-		os.Exit(genericExitCode)
+		return genericFailExitCode
 	}
 
 	devicePath := args[0]
@@ -80,7 +78,7 @@ func main() {
 		f, err := os.Open(keyFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Cannot unlock device %s: cannot open key file: %v\n", devicePath, err)
-			os.Exit(invalidKeyFileExitCode)
+			return invalidKeyFileExitCode
 		}
 		in = f
 		defer in.Close()
@@ -90,20 +88,23 @@ func main() {
 		if !insecure {
 			ekCertReader, err := os.Open(ekCertFile)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Cannot unlock device %s: cannot open EK certificate file: %v\n", devicePath, err)
-				os.Exit(genericExitCode)
+				return nil, fmt.Errorf("cannot open EK certificate file: %v", err)
 			}
 			defer ekCertReader.Close()
 			return fdeutil.SecureConnectToDefaultTPM(ekCertReader, nil)
 		}
 		return fdeutil.ConnectToDefaultTPM()
 	}()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: cannot connect to TPM: %v\n", devicePath, err)
+		return genericFailExitCode
+	}
 	defer tpm.Close()
 
 	key, err := fdeutil.UnsealKeyFromTPM(tpm, in, pin)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: error unsealing key:: %v\n", devicePath, err)
-		ret := genericExitCode
+		ret := genericFailExitCode
 		switch err {
 		case fdeutil.ErrProvisioning:
 			ret = tpmProvisioningErrExitCode
@@ -116,13 +117,13 @@ func main() {
 				ret = invalidKeyFileExitCode
 			}
 		}
-		os.Exit(ret)
+		return ret
 	}
 
 	masterKeyFile, err := os.OpenFile(masterKeyFilePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: error creating temporary master key file: %v", devicePath, err)
-		os.Exit(genericExitCode)
+		return genericFailExitCode
 	}
 	defer func() {
 		defer os.Remove(masterKeyFilePath)
@@ -131,7 +132,7 @@ func main() {
 
 	if _, err := masterKeyFile.Write(key); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: error writing master key to temporary file: %v", devicePath, err)
-		os.Exit(genericExitCode)
+		return genericFailExitCode
 	}
 
 	cmd := exec.Command("cryptsetup", "--type", "luks2", "--master-key-file", masterKeyFilePath, "open", devicePath, name)
@@ -140,6 +141,13 @@ func main() {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: cryptsetup execution failed: %v\n", devicePath, err)
-		os.Exit(genericExitCode)
+		return genericFailExitCode
 	}
+
+	return 0
+}
+
+func main() {
+	flag.Parse()
+	os.Exit(run())
 }

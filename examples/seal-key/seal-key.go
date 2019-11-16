@@ -72,16 +72,14 @@ func init() {
 	flag.Var(&shims, "with-shim", "")
 }
 
-func main() {
-	flag.Parse()
-
+func run() int {
 	if masterKeyFile == "" {
 		fmt.Fprintf(os.Stderr, "Missing -master-key-file\n")
-		os.Exit(1)
+		return 1
 	}
 	if keyFile == "" {
 		fmt.Fprintf(os.Stderr, "Missing -key-file\n")
-		os.Exit(1)
+		return 1
 	}
 
 	var in *os.File
@@ -91,7 +89,7 @@ func main() {
 		f, err := os.Open(masterKeyFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Cannot open key file: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 		in = f
 		defer in.Close()
@@ -101,7 +99,7 @@ func main() {
 	if pinIndex != "" {
 		if h, err := hex.DecodeString(pinIndex); err != nil {
 			fmt.Fprintf(os.Stderr, "Invalid -pin-index: %v\n", err)
-			os.Exit(1)
+			return 1
 		} else {
 			pinHandle = tpm2.Handle(binary.BigEndian.Uint32(h))
 		}
@@ -110,7 +108,7 @@ func main() {
 	if policyRevocationIndex != "" {
 		if h, err := hex.DecodeString(policyRevocationIndex); err != nil {
 			fmt.Fprintf(os.Stderr, "Invalid -policy-revocation-index: %v\n", err)
-			os.Exit(1)
+			return 1
 		} else {
 			policyRevokeHandle = tpm2.Handle(binary.BigEndian.Uint32(h))
 		}
@@ -119,7 +117,7 @@ func main() {
 	key, err := ioutil.ReadAll(in)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot read key: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	var create *fdeutil.CreationParams
@@ -130,7 +128,7 @@ func main() {
 	tpm, err := fdeutil.ConnectToDefaultTPM()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot acquire TPM context: %v", err)
-		os.Exit(1)
+		return 1
 	}
 	defer tpm.Close()
 
@@ -156,6 +154,13 @@ func main() {
 
 	if err := fdeutil.SealKeyToTPM(tpm, keyFile, create, params, key); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot seal key to TPM: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+
+	return 0
+}
+
+func main() {
+	flag.Parse()
+	os.Exit(run())
 }

@@ -37,16 +37,14 @@ func init() {
 	flag.StringVar(&pin, "pin", "", "")
 }
 
-func main() {
-	flag.Parse()
-
+func run() int {
 	if keyFile == "" {
 		fmt.Fprintf(os.Stderr, "Missing -key-file\n")
-		os.Exit(1)
+		return 1
 	}
 	if outFile == "" {
 		fmt.Fprintf(os.Stderr, "Missing -out-file\n")
-		os.Exit(1)
+		return 1
 	}
 
 	var in *os.File
@@ -56,7 +54,7 @@ func main() {
 		f, err := os.Open(keyFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Cannot open input file: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 		in = f
 		defer in.Close()
@@ -69,7 +67,7 @@ func main() {
 		f, err := os.OpenFile(outFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Cannot open output file: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 		out = f
 		defer out.Close()
@@ -78,19 +76,26 @@ func main() {
 	tpm, err := fdeutil.ConnectToDefaultTPM()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot acquire TPM context: %v", err)
-		os.Exit(1)
+		return 1
 	}
 	defer tpm.Close()
 
 	key, err := fdeutil.UnsealKeyFromTPM(tpm, in, pin)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot unseal key: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	_, err = out.Write(key)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot write unsealed key: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+
+	return 0
+}
+
+func main() {
+	flag.Parse()
+	os.Exit(run())
 }

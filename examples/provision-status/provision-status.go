@@ -26,18 +26,18 @@ import (
 	"github.com/chrisccoulson/ubuntu-core-fde-utils"
 )
 
-func main() {
+func run() int {
 	tpm, err := fdeutil.ConnectToDefaultTPM()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot acquire TPM context: %v", err)
-		os.Exit(1)
+		return 1
 	}
 	defer tpm.Close()
 
 	status, err := fdeutil.ProvisionStatus(tpm)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot determine status: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	if status&fdeutil.AttrValidSRK > 0 {
@@ -63,4 +63,10 @@ func main() {
 	} else {
 		fmt.Println("** ERROR: The lockout hierarchy authorization is not set **")
 	}
+
+	return 0
+}
+
+func main() {
+	os.Exit(run())
 }
