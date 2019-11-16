@@ -75,6 +75,14 @@ func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, own
 		return nil, xerrors.Errorf("cannot obtain context for new NV index: %w", err)
 	}
 
+	succeeded := false
+	defer func() {
+		if succeeded {
+			return
+		}
+		tpm.NVUndefineSpace(tpm2.HandleOwner, context, session.WithAuthValue(ownerAuth))
+	}()
+
 	// The name associated with context is read back from the TPM with no integrity protection, so we don't know if it's correct yet.
 	// We need to check that it's consistent with the NV index we created before adding it to an authorization policy.
 
@@ -91,6 +99,7 @@ func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, own
 		return nil, xerrors.Errorf("cannot increment new NV index: %w", err)
 	}
 
+	succeeded = true
 	return context, nil
 }
 

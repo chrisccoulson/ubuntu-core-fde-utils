@@ -172,6 +172,8 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 
 	var policyRevokeIndex tpm2.ResourceContext
 
+	succeeded := false
+
 	// If we are creating a new sealed key object, create the associated NV indices
 	if create != nil {
 		if _, err := os.Stat(dest); err == nil || !os.IsNotExist(err) {
@@ -188,6 +190,12 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 			}
 			return xerrors.Errorf("cannot create new pin NV index: %w", err)
 		}
+		defer func() {
+			if succeeded {
+				return
+			}
+			tpm.NVUndefineSpace(tpm2.HandleOwner, pinIndex, session.WithAuthValue(create.OwnerAuth))
+		}()
 
 		policyRevokeIndex, err = createPolicyRevocationNvIndex(tpm.TPMContext, create.PolicyRevocationHandle, create.OwnerAuth, session)
 		if err != nil {
@@ -199,6 +207,13 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 			}
 			return xerrors.Errorf("cannot create policy revocation NV counter: %w", err)
 		}
+		defer func() {
+			if succeeded {
+				return
+			}
+			tpm.NVUndefineSpace(tpm2.HandleOwner, policyRevokeIndex, session.WithAuthValue(create.OwnerAuth))
+		}()
+
 	} else {
 		f, err := os.Open(dest)
 		if err != nil {
@@ -310,13 +325,13 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 
 	// Marshal the entire object (sealed key object and auxiliary data) to disk
 	data := keyData{
-		KeyPrivate:              priv,
-		KeyPublic:               pub,
-		KeyCreationData:         creationData,
-		KeyCreationTicket:       creationTicket,
-		AskForPinHint:           askForPinHint,
-		PolicyData:              policyData,
-		BoundData:               &boundData}
+		KeyPrivate:        priv,
+		KeyPublic:         pub,
+		KeyCreationData:   creationData,
+		KeyCreationTicket: creationTicket,
+		AskForPinHint:     askForPinHint,
+		PolicyData:        policyData,
+		BoundData:         &boundData}
 
 	if err := data.writeToFile(dest); err != nil {
 		return xerrors.Errorf("cannot write key data file: %v", err)
@@ -326,6 +341,7 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 		return xerrors.Errorf("cannot revoke old authorization policies: %w", err)
 	}
 
+	succeeded = true
 	return nil
 }
 

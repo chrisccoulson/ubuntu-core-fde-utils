@@ -44,13 +44,13 @@ type boundKeyData struct {
 }
 
 type keyData struct {
-	KeyPrivate              tpm2.Private
-	KeyPublic               *tpm2.Public
-	KeyCreationData         *tpm2.CreationData
-	KeyCreationTicket       *tpm2.TkCreation
-	AskForPinHint           bool
-	PolicyData              *policyData
-	BoundData               *boundKeyData
+	KeyPrivate        tpm2.Private
+	KeyPublic         *tpm2.Public
+	KeyCreationData   *tpm2.CreationData
+	KeyCreationTicket *tpm2.TkCreation
+	AskForPinHint     bool
+	PolicyData        *policyData
+	BoundData         *boundKeyData
 }
 
 type keyFileError struct {
