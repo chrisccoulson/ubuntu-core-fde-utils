@@ -220,13 +220,15 @@ func (t *TPMConnection) acquireEkContextAndVerifyTPM() error {
 		t.FlushContext(sessionContext)
 	}()
 
-	session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrContinueSession | tpm2.AttrAudit}
-	_, err = t.GetRandom(20, &session)
-	if err != nil {
-		if isAuthFailError(err) {
-			return verificationError{errors.New("the TPM can't prove it is the device that the endorsement certificate belongs to")}
+	if len(t.verifiedEkCertChain) > 0 {
+		session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrContinueSession | tpm2.AttrAudit}
+		_, err = t.GetRandom(20, &session)
+		if err != nil {
+			if isAuthFailError(err) {
+				return verificationError{errors.New("the TPM can't prove it is the device that the endorsement certificate belongs to")}
+			}
+			return xerrors.Errorf("cannot execute command to verify that the TPM is genuine: %w", err)
 		}
-		return xerrors.Errorf("cannot execute command to verify that the TPM is genuine: %w", err)
 	}
 
 	succeeded = true
