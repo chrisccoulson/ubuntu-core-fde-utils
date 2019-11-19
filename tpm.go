@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/chrisccoulson/go-tpm2"
+	"github.com/intel-go/cpuid"
 	"github.com/snapcore/snapd/httputil"
 	"github.com/snapcore/snapd/osutil"
 	"github.com/snapcore/snapd/osutil/sys"
@@ -602,6 +603,10 @@ func SecureConnectToDefaultUnprovisionedTPM(ekIntermediateCertsFile string, owne
 		}
 		var verifyErr verificationError
 		if xerrors.As(err, &verifyErr) {
+			if cpuid.HasFeature(cpuid.HYPERVISOR) {
+				// Allow a fallback when running in a hypervisor in order to support swtpm
+				return ConnectToDefaultTPM()
+			}
 			return nil, TPMVerificationError{fmt.Sprintf("cannot verify endorsement certificate: %s", err)}
 		}
 		return nil, xerrors.Errorf("cannot connect to TPM and verify endorsement certificate: %w", err)
@@ -638,6 +643,10 @@ func SecureConnectToDefaultTPM(ekIntermediateCertsFile string, ownerAuth []byte)
 		}
 		var verifyErr verificationError
 		if xerrors.As(err, &verifyErr) {
+			if cpuid.HasFeature(cpuid.HYPERVISOR) {
+				// Allow a fallback when running in a hypervisor in order to support swtpm
+				return ConnectToDefaultTPM()
+			}
 			return nil, TPMVerificationError{fmt.Sprintf("cannot verify endorsement certificate: %s", err)}
 		}
 		return nil, xerrors.Errorf("cannot connect to TPM and verify endorsement certificate: %w", err)
