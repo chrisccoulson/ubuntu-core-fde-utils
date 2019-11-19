@@ -20,10 +20,19 @@
 package fdeutil
 
 import (
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"flag"
 	"fmt"
+	"math"
+	"math/big"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/chrisccoulson/go-tpm2"
 )
@@ -74,7 +83,7 @@ func openTPMSimulatorForTesting(t *testing.T) (*TPMConnection, *tpm2.TctiMssim) 
 		return tpm, nil
 	}
 
-	tpm, err := ConnectToDefaultTPM()
+	tpm, err := SecureConnectToDefaultUnprovisionedTPM("", nil)
 	if err != nil {
 		t.Fatalf("ConnectToDefaultTPM failed: %v", err)
 	}
@@ -149,29 +158,142 @@ func closeTPM(t *testing.T, tpm *TPMConnection) {
 	}
 }
 
+func createTestCA() ([]byte, crypto.PrivateKey, error) {
+	serial, err := rand.Int(rand.Reader, big.NewInt(math.MaxInt64))
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot obtain random serial number: %v", err)
+	}
+
+	keyId := make([]byte, 32)
+	if _, err := rand.Read(keyId); err != nil {
+		return nil, nil, fmt.Errorf("cannot obtain random key ID: %v", err)
+	}
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot generate RSA key: %v", err)
+	}
+
+	t := time.Now()
+
+	template := x509.Certificate{
+		SignatureAlgorithm: x509.SHA256WithRSA,
+		SerialNumber:       serial,
+		Subject: pkix.Name{
+			Country:      []string{"US"},
+			Organization: []string{"Snake Oil TPM Manufacturer"},
+			CommonName:   "Snake Oil TPM Manufacturer EK Root CA"},
+		NotBefore:             t.Add(time.Hour * -24),
+		NotAfter:              t.Add(time.Hour * 240),
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		SubjectKeyId:          keyId}
+
+	cert, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot create certificate: %v", err)
+	}
+
+	return cert, key, nil
+}
+
+func performTPMManufacture(tpm *tpm2.TPMContext, caCert []byte, caKey crypto.PrivateKey) error {
+	ekContext, pub, _, _, _, _, err := tpm.CreatePrimary(tpm2.HandleEndorsement, nil, &ekTemplate, nil, nil, nil)
+	if err != nil {
+		return fmt.Errorf("cannot create EK: %v", err)
+	}
+	defer tpm.FlushContext(ekContext)
+
+	serial, err := rand.Int(rand.Reader, big.NewInt(math.MaxInt64))
+	if err != nil {
+		return fmt.Errorf("cannot obtain random serial number for EK cert: %v", err)
+	}
+
+	key := rsa.PublicKey{
+		N: new(big.Int).SetBytes(pub.Unique.RSA()),
+		E: 65537}
+
+	keyId := make([]byte, 32)
+	if _, err := rand.Read(keyId); err != nil {
+		return fmt.Errorf("cannot obtain random key ID for EK cert: %v", err)
+	}
+
+	t := time.Now()
+
+	template := x509.Certificate{
+		SignatureAlgorithm:    x509.SHA256WithRSA,
+		SerialNumber:          serial,
+		NotBefore:             t.Add(time.Hour * -24),
+		NotAfter:              t.Add(time.Hour * 240),
+		KeyUsage:              x509.KeyUsageKeyEncipherment,
+		UnknownExtKeyUsage:    []asn1.ObjectIdentifier{oidTCGEkCertificate},
+		BasicConstraintsValid: true,
+		IsCA:                  false,
+		SubjectKeyId:          keyId}
+
+	root, err := x509.ParseCertificate(caCert)
+	if err != nil {
+		return fmt.Errorf("cannot parse CA certificate: %v", err)
+	}
+
+	cert, err := x509.CreateCertificate(rand.Reader, &template, root, &key, caKey)
+	if err != nil {
+		return fmt.Errorf("cannot create EK certificate: %v", err)
+	}
+
+	nvPub := tpm2.NVPublic{
+		Index:   ekCertHandle,
+		NameAlg: tpm2.HashAlgorithmSHA256,
+		Attrs: tpm2.MakeNVAttributes(tpm2.AttrNVPPWrite|tpm2.AttrNVWriteAll|tpm2.AttrNVPPRead|tpm2.AttrNVOwnerRead|tpm2.AttrNVAuthRead|
+			tpm2.AttrNVPolicyRead|tpm2.AttrNVNoDA|tpm2.AttrNVPlatformCreate, tpm2.NVTypeOrdinary),
+		Size: uint16(len(cert))}
+	if err := tpm.NVDefineSpace(tpm2.HandlePlatform, nil, &nvPub, nil); err != nil {
+		return fmt.Errorf("cannot define NV index for EK certificate: %v", err)
+	}
+
+	platform, _ := tpm.WrapHandle(tpm2.HandlePlatform)
+	index, _ := tpm.WrapHandle(ekCertHandle)
+	if err := tpm.NVWrite(platform, index, tpm2.MaxNVBuffer(cert), 0, nil); err != nil {
+		return fmt.Errorf("cannot write EK certificate to NV index: %v", err)
+	}
+
+	return nil
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(func() int {
-		err := func() error {
-			if !*useMssim {
-				return nil
+		if *useMssim {
+			caCert, caPriv, err := createTestCA()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Cannot create test TPM CA certificate and private key: %v\n", err)
+				return 1
 			}
+
+			rootCAs = append(rootCAs, caCert)
 
 			tcti, err := tpm2.OpenMssim(*mssimHost, *mssimTpmPort, *mssimPlatformPort)
 			if err != nil {
-				return fmt.Errorf("cannot open mssim connection: %v", err)
+				fmt.Fprintf(os.Stderr, "Failed to open mssim connection: %v", err)
+				return 1
 			}
 
 			tpm, _ := tpm2.NewTPMContext(tcti)
-			defer tpm.Close()
 
-			return tpm.Startup(tpm2.StartupClear)
-		}()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Simulator startup failed: %v\n", err)
-			return 1
+			if err := func() error {
+				defer tpm.Close()
+
+				if err := tpm.Startup(tpm2.StartupClear); err != nil {
+					return err
+				}
+
+				return performTPMManufacture(tpm, caCert, caPriv)
+			}(); err != nil {
+				fmt.Fprintf(os.Stderr, "Simulator startup failed: %v\n", err)
+				return 1
+			}
 		}
-
 		defer func() {
 			if !*useMssim {
 				return
