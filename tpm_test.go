@@ -28,6 +28,7 @@ import (
 	"encoding/asn1"
 	"flag"
 	"fmt"
+	"io"
 	"math"
 	"math/big"
 	"os"
@@ -72,15 +73,13 @@ func openTPMSimulatorForTesting(t *testing.T) (*TPMConnection, *tpm2.TctiMssim) 
 
 	var tcti *tpm2.TctiMssim
 
-	connectToDefaultTPM = func() (*tpm2.TPMContext, error) {
+	openDefaultTcti = func() (io.ReadWriteCloser, error) {
 		var err error
 		tcti, err = tpm2.OpenMssim(*mssimHost, *mssimTpmPort, *mssimPlatformPort)
 		if err != nil {
-			t.Fatalf("Failed to open mssim connection: %v", err)
+			return nil, err
 		}
-
-		tpm, _ := tpm2.NewTPMContext(tcti)
-		return tpm, nil
+		return tcti, nil
 	}
 
 	tpm, err := SecureConnectToDefaultUnprovisionedTPM("", nil)
@@ -101,14 +100,8 @@ func openTPMForTesting(t *testing.T) *TPMConnection {
 		t.Fatalf("Cannot specify both -use-tpm and -use-mssim")
 	}
 
-	connectToDefaultTPM = func() (*tpm2.TPMContext, error) {
-		tcti, err := tpm2.OpenTPMDevice(*tpmPathForTest)
-		if err != nil {
-			t.Fatalf("Failed to open the TPM device: %v", err)
-		}
-
-		tpm, _ := tpm2.NewTPMContext(tcti)
-		return tpm, nil
+	openDefaultTcti = func() (io.ReadWriteCloser, error) {
+		return tpm2.OpenTPMDevice(*tpmPathForTest)
 	}
 
 	tpm, err := ConnectToDefaultTPM()

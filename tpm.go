@@ -26,6 +26,7 @@ import (
 	"encoding/asn1"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"time"
@@ -402,8 +403,12 @@ func verifyEkCertificate(cert *x509.Certificate, roots, intermediates *x509.Cert
 	return chain, nil
 }
 
-var connectToDefaultTPM = func() (*tpm2.TPMContext, error) {
-	tcti, err := tpm2.OpenTPMDevice(tpmPath)
+var openDefaultTcti = func() (io.ReadWriteCloser, error) {
+	return tpm2.OpenTPMDevice(tpmPath)
+}
+
+func connectToDefaultTPM() (*tpm2.TPMContext, error) {
+	tcti, err := openDefaultTcti()
 	if err != nil {
 		return nil, xerrors.Errorf("cannot open TPM device: %w", err)
 	}
