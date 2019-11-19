@@ -24,6 +24,8 @@ import (
 	"testing"
 
 	"github.com/chrisccoulson/go-tpm2"
+
+	"golang.org/x/xerrors"
 )
 
 func validateSRK(t *testing.T, tpm *TPMConnection) {
@@ -516,6 +518,28 @@ func TestProvisionWithOwnerAuth(t *testing.T) {
 
 	validateEK(t, tpm)
 	validateSRK(t, tpm)
+}
+
+func TestProvisionWithInvalidEkCert(t *testing.T) {
+	tpm, _ := openTPMSimulatorForTesting(t)
+	defer closeTPM(t, tpm)
+
+	clearTPMWithPlatformAuth(t, tpm)
+
+	ekTemplate.Unique.RSA()[0] = 0xff
+	defer func() {
+		ekTemplate.Unique.RSA()[0] = 0x00
+	}()
+
+	err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil)
+	if err == nil {
+		t.Fatalf("ProvisionTPM should have returned an error")
+	}
+	var ve TPMVerificationError
+	if !xerrors.As(err, &ve) && err.Error() != "verification of the TPM failed: cannot verify TPM: endorsement key returned from the "+
+		"TPM doesn't match the endorsement certificate" {
+		t.Errorf("ProvisionTPM returned an unexpected error: %v", err)
+	}
 }
 
 func TestProvisionStatus(t *testing.T) {
