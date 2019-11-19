@@ -21,6 +21,8 @@ package fdeutil
 
 import (
 	"flag"
+	"fmt"
+	"os"
 	"testing"
 
 	"github.com/chrisccoulson/go-tpm2"
@@ -69,13 +71,6 @@ func openTPMSimulatorForTesting(t *testing.T) (*TPMConnection, *tpm2.TctiMssim) 
 		}
 
 		tpm, _ := tpm2.NewTPMContext(tcti)
-
-		if err := tpm.Startup(tpm2.StartupClear); err != nil {
-			tpmError, isTpmError := err.(*tpm2.TPMError)
-			if !isTpmError || tpmError.Code != tpm2.ErrorInitialize {
-				t.Fatalf("Startup failed: %v", err)
-			}
-		}
 		return tpm, nil
 	}
 
@@ -149,12 +144,55 @@ func resetTPMSimulator(t *testing.T, tpm *TPMConnection, tcti *tpm2.TctiMssim) {
 }
 
 func closeTPM(t *testing.T, tpm *TPMConnection) {
-	if *useMssim {
-		if err := tpm.Shutdown(tpm2.StartupClear); err != nil {
-			t.Errorf("Shutdown failed: %v", err)
-		}
-	}
 	if err := tpm.Close(); err != nil {
 		t.Errorf("Close failed: %v", err)
 	}
+}
+
+func TestMain(m *testing.M) {
+	flag.Parse()
+	os.Exit(func() int {
+		err := func() error {
+			if !*useMssim {
+				return nil
+			}
+
+			tcti, err := tpm2.OpenMssim(*mssimHost, *mssimTpmPort, *mssimPlatformPort)
+			if err != nil {
+				return fmt.Errorf("cannot open mssim connection: %v", err)
+			}
+
+			tpm, _ := tpm2.NewTPMContext(tcti)
+			defer tpm.Close()
+
+			return tpm.Startup(tpm2.StartupClear)
+		}()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Simulator startup failed: %v\n", err)
+			return 1
+		}
+
+		defer func() {
+			if !*useMssim {
+				return
+			}
+
+			tcti, err := tpm2.OpenMssim(*mssimHost, *mssimTpmPort, *mssimPlatformPort)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to open mssim connection: %v\n", err)
+				return
+			}
+
+			tpm, _ := tpm2.NewTPMContext(tcti)
+			if err := tpm.Shutdown(tpm2.StartupClear); err != nil {
+				fmt.Fprintf(os.Stderr, "TPM simulator shutdown failed: %v\n", err)
+			}
+			if err := tcti.Stop(); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to stop TPM simulator: %v\n", err)
+			}
+			tpm.Close()
+		}()
+
+		return m.Run()
+	}())
 }
