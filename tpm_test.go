@@ -191,7 +191,7 @@ func createTestCA() ([]byte, crypto.PrivateKey, error) {
 	return cert, key, nil
 }
 
-func performTPMManufacture(tpm *tpm2.TPMContext, caCert []byte, caKey crypto.PrivateKey) error {
+func certifyTPM(tpm *tpm2.TPMContext, caCert []byte, caKey crypto.PrivateKey) error {
 	ekContext, pub, _, _, _, _, err := tpm.CreatePrimary(tpm2.HandleEndorsement, nil, &ekTemplate, nil, nil, nil)
 	if err != nil {
 		return fmt.Errorf("cannot create EK: %v", err)
@@ -281,7 +281,7 @@ func TestMain(m *testing.M) {
 					return err
 				}
 
-				return performTPMManufacture(tpm, caCert, caPriv)
+				return certifyTPM(tpm, caCert, caPriv)
 			}(); err != nil {
 				fmt.Fprintf(os.Stderr, "Simulator startup failed: %v\n", err)
 				return 1
