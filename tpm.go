@@ -239,7 +239,7 @@ func (t *TPMConnection) acquireEkContextAndVerifyTPM() error {
 	return nil
 }
 
-func readEkCert(tpm *tpm2.TPMContext, ownerAuth []byte) (*x509.Certificate, error) {
+func readEkCert(tpm *tpm2.TPMContext) (*x509.Certificate, error) {
 	ekCertIndex, err := tpm.WrapHandle(ekCertHandle)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot create context: %w", err)
@@ -250,37 +250,14 @@ func readEkCert(tpm *tpm2.TPMContext, ownerAuth []byte) (*x509.Certificate, erro
 		return nil, xerrors.Errorf("cannot read public area of index: %w", err)
 	}
 
-	tryRead := func(authContext tpm2.ResourceContext, session *tpm2.Session) (*x509.Certificate, error) {
-		data, err := tpm.NVRead(authContext, ekCertIndex, ekCertPub.Size, 0, session)
-		if err != nil {
-			return nil, err
-		}
-		return x509.ParseCertificate(data)
-	}
-
-	if ekCertPub.Attrs&tpm2.AttrNVAuthRead > 0 {
-		if cert, err := tryRead(ekCertIndex, nil); err != nil {
-			if !isAuthFailError(err) {
-				return nil, xerrors.Errorf("cannot read index: %w", err)
-			} else if ekCertPub.Attrs&tpm2.AttrNVOwnerRead == 0 {
-				return nil, tpm2.ResourceUnavailableError{Handle: ekCertHandle}
-			}
-		} else {
-			return cert, nil
-		}
-	}
-
-	owner, _ := tpm.WrapHandle(tpm2.HandleOwner)
-	sessionContext, err := tpm.StartAuthSession(nil, owner, tpm2.SessionTypeHMAC, nil, defaultHashAlgorithm, ownerAuth)
-	if err != nil {
-		return nil, xerrors.Errorf("cannot start session: %w", err)
-	}
-	defer tpm.FlushContext(sessionContext)
-
-	session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrContinueSession, AuthValue: ownerAuth}
-	cert, err := tryRead(ekCertIndex, &session)
+	data, err := tpm.NVRead(ekCertIndex, ekCertIndex, ekCertPub.Size, 0, nil)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot read index: %w", err)
+	}
+
+	cert, err := x509.ParseCertificate(data)
+	if err != nil {
+		return nil, xerrors.Errorf("cannot parse cert: %w", err)
 	}
 
 	return cert, nil
@@ -425,7 +402,7 @@ func (e intermediateCertsError) Error() string {
 	return e.err.Error()
 }
 
-func connectToDefaultTPMAndVerifyEkCert(ekIntermediateCertsFile string, ownerAuth []byte) (*tpm2.TPMContext, []*x509.Certificate, error) {
+func connectToDefaultTPMAndVerifyEkCert(ekIntermediateCertsFile string) (*tpm2.TPMContext, []*x509.Certificate, error) {
 	// Load and parse intermediate certificates, if provided
 	intermediates := x509.NewCertPool()
 	if ekIntermediateCertsFile != "" {
@@ -461,7 +438,7 @@ func connectToDefaultTPMAndVerifyEkCert(ekIntermediateCertsFile string, ownerAut
 	}()
 
 	// Obtain the EK certificate from the TPM
-	cert, err := readEkCert(tpm, ownerAuth)
+	cert, err := readEkCert(tpm)
 	if err != nil {
 		var unavailErr tpm2.ResourceUnavailableError
 		if xerrors.As(err, &unavailErr) {
@@ -511,18 +488,13 @@ func connectToDefaultTPMAndVerifyEkCert(ekIntermediateCertsFile string, ownerAut
 }
 
 // FetchAndSaveEkIntermediateCerts attempts to download intermediate certificates for the endorsement certificate obtained from
-// the TPM associated with the tpm parameter. The endorsement certificate usually doesn't require an authorization value to
-// obtain it from the TPM, but if the initial attempt to read it fails then this function will attempt to read it from the TPM
-// using the storage hierarchy authorization as a fallback, which should be provided by ownerAuth.
+// the TPM associated with the tpm parameter.
 //
 // On success, the intermediate certificates are saved to the file referenced by dest in a form that can be read by
 // SecureConnectToDefaultTPM and SecureConnectToDefaultUnprovisionedTPM.
-func FetchAndSaveEkIntermediateCerts(tpm *TPMConnection, dest string, ownerAuth []byte) error {
-	cert, err := readEkCert(tpm.TPMContext, ownerAuth)
+func FetchAndSaveEkIntermediateCerts(tpm *TPMConnection, dest string) error {
+	cert, err := readEkCert(tpm.TPMContext)
 	if err != nil {
-		if isAuthFailError(err) {
-			return AuthFailError{tpm2.HandleOwner}
-		}
 		return xerrors.Errorf("cannot obtain endorsement certificate from TPM: %w", err)
 	}
 
@@ -585,9 +557,7 @@ func ConnectToDefaultTPM() (*TPMConnection, error) {
 
 // SecureConnectToDefaultUnprovisionedTPM will attempt to connect to the default TPM and then verify the TPM's manufacturer issued
 // endorsement certificate if it exists. The ekIntermediateCertsFile argument should point to a file created previously by
-// FetchAndSaveEkIntermediateCerts. The endorsement certificate usually doesn't require an authorization value to obtain it from the
-// TPM, but if the initial attempt to read it fails then this function will attempt to read it from the TPM using the storage
-// hierarchy authorization as a fallback, which should be provided by ownerAuth.
+// FetchAndSaveEkIntermediateCerts.
 //
 // This function doesn't verify that the TPM is the one that the endorsement certificate was issued for. It is designed to be used
 // on a TPM before ProvisionTPM has been called, or on a TPM that doesn't have a persistent endorsement key at the expected location.
@@ -596,15 +566,12 @@ func ConnectToDefaultTPM() (*TPMConnection, error) {
 //
 // If verification of the endorsement certificate fails or it doesn't exist at the expected location, a TPMVerificationError error
 // will be returned.
-func SecureConnectToDefaultUnprovisionedTPM(ekIntermediateCertsFile string, ownerAuth []byte) (*TPMConnection, error) {
-	tpm, chain, err := connectToDefaultTPMAndVerifyEkCert(ekIntermediateCertsFile, ownerAuth)
+func SecureConnectToDefaultUnprovisionedTPM(ekIntermediateCertsFile string) (*TPMConnection, error) {
+	tpm, chain, err := connectToDefaultTPMAndVerifyEkCert(ekIntermediateCertsFile)
 	if err != nil {
 		var icErr intermediateCertsError
 		if xerrors.As(err, &icErr) {
 			return nil, InvalidIntermediateCertsFileError{err.Error()}
-		}
-		if isAuthFailError(err) {
-			return nil, AuthFailError{tpm2.HandleOwner}
 		}
 		var verifyErr verificationError
 		if xerrors.As(err, &verifyErr) {
@@ -622,10 +589,7 @@ func SecureConnectToDefaultUnprovisionedTPM(ekIntermediateCertsFile string, owne
 
 // SecureConnectToDefaultTPM will attempt to connect to the default TPM, verify the TPM's manufacturer issued endorsement certificate
 // if it exists, and then verify that the TPM is the one for which the endorsement certificate was issued. The
-// ekIntermediateCertsFile argument should point to a file created previously by FetchAndSaveEkIntermediateCerts. The endorsement
-// certificate usually doesn't require an authorization value to obtain it from the TPM, but if the initial attempt to read it fails
-// then this function will attempt to read it from the TPM using the storage hierarchy authorization as a fallback, which should be
-// provided by ownerAuth.
+// ekIntermediateCertsFile argument should point to a file created previously by FetchAndSaveEkIntermediateCerts.
 //
 // If the file referenced by ekIntermediateCertsFile cannot be loaded, a InvalidIntermediateCertsFileError error will be returned.
 //
@@ -636,15 +600,12 @@ func SecureConnectToDefaultUnprovisionedTPM(ekIntermediateCertsFile string, owne
 //
 // If the TPM cannot prove it is the device for which the endorsement certificate was issued, a TPMVerificationError error will be
 // returned.
-func SecureConnectToDefaultTPM(ekIntermediateCertsFile string, ownerAuth []byte) (*TPMConnection, error) {
-	tpm, chain, err := connectToDefaultTPMAndVerifyEkCert(ekIntermediateCertsFile, ownerAuth)
+func SecureConnectToDefaultTPM(ekIntermediateCertsFile string) (*TPMConnection, error) {
+	tpm, chain, err := connectToDefaultTPMAndVerifyEkCert(ekIntermediateCertsFile)
 	if err != nil {
 		var icErr intermediateCertsError
 		if xerrors.As(err, &icErr) {
 			return nil, InvalidIntermediateCertsFileError{err.Error()}
-		}
-		if isAuthFailError(err) {
-			return nil, AuthFailError{tpm2.HandleOwner}
 		}
 		var verifyErr verificationError
 		if xerrors.As(err, &verifyErr) {

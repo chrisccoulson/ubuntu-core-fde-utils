@@ -27,18 +27,16 @@ import (
 	"github.com/chrisccoulson/ubuntu-core-fde-utils"
 )
 
-var ownerAuth string
 var intermediateCerts string
 
 func init() {
-	flag.StringVar(&ownerAuth, "auth", "", "")
 	flag.StringVar(&intermediateCerts, "intermediate-certs", "", "")
 }
 
 func main() {
 	flag.Parse()
 
-	if _, err := fdeutil.SecureConnectToDefaultTPM(intermediateCerts, []byte(ownerAuth)); err != nil {
+	if _, err := fdeutil.SecureConnectToDefaultTPM(intermediateCerts); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot verify that TPM is genuine: %v\n", err)
 		os.Exit(1)
 	}

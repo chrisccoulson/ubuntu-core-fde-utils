@@ -27,12 +27,6 @@ import (
 	"github.com/chrisccoulson/ubuntu-core-fde-utils"
 )
 
-var ownerAuth string
-
-func init() {
-	flag.StringVar(&ownerAuth, "auth", "", "")
-}
-
 func main() {
 	flag.Parse()
 
@@ -47,7 +41,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := fdeutil.FetchAndSaveEkIntermediateCerts(tpm, flag.Args()[0], []byte(ownerAuth)); err != nil {
+	if err := fdeutil.FetchAndSaveEkIntermediateCerts(tpm, flag.Args()[0]); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot fetch and save intermediate EK certs: %v\n", err)
 		os.Exit(1)
 	}

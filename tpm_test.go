@@ -82,7 +82,7 @@ func openTPMSimulatorForTesting(t *testing.T) (*TPMConnection, *tpm2.TctiMssim) 
 		return tcti, nil
 	}
 
-	tpm, err := SecureConnectToDefaultUnprovisionedTPM("", nil)
+	tpm, err := SecureConnectToDefaultUnprovisionedTPM("")
 	if err != nil {
 		t.Fatalf("ConnectToDefaultTPM failed: %v", err)
 	}
