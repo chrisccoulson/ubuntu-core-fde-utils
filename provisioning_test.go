@@ -522,7 +522,10 @@ func TestProvisionWithOwnerAuth(t *testing.T) {
 
 func TestProvisionWithInvalidEkCert(t *testing.T) {
 	tpm, _ := openTPMSimulatorForTesting(t)
-	defer closeTPM(t, tpm)
+	defer func() {
+		clearTPMWithPlatformAuth(t, tpm)
+		closeTPM(t, tpm)
+	}()
 
 	clearTPMWithPlatformAuth(t, tpm)
 

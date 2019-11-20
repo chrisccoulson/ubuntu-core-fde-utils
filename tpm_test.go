@@ -88,7 +88,7 @@ func openTPMSimulatorForTesting(t *testing.T) (*TPMConnection, *tpm2.TctiMssim) 
 	certData := new(bytes.Buffer)
 	tpm2.MarshalToWriter(certData, ekCert)
 
-	tpm, err := SecureConnectToDefaultUnprovisionedTPM(certData)
+	tpm, err := SecureConnectToDefaultTPM(certData, nil)
 	if err != nil {
 		t.Fatalf("ConnectToDefaultTPM failed: %v", err)
 	}
@@ -146,7 +146,7 @@ func resetTPMSimulator(t *testing.T, tpm *TPMConnection, tcti *tpm2.TctiMssim) {
 		t.Fatalf("Startup failed: %v", err)
 	}
 
-	if err := tpm.acquireEkContextAndVerifyTPM(); err != nil && wasProvisioned {
+	if err := tpm.init(nil); err != nil && wasProvisioned {
 		t.Fatalf("Failed to restore TPMConnection after reset: %v", err)
 	}
 }

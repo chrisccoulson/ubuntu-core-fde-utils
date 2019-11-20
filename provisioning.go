@@ -128,11 +128,6 @@ type ProvisionAuths struct {
 // function with mode set to ProvisionModeClear. If there is an object already stored at the location used for the endorsement key
 // then this function will evict it automatically from the TPM.
 //
-// If the TPM connection was established by calling SecureConnectToDefaultUnprovisionedTPM, this function will attempt to create
-// an authorization session salted with a value protected with the public part of the endorsement key from the verified endorsement
-// certificate. If this fails because the private part of the newly created endorsement key cannot retrieve the salt, a
-// TPMVerificationError error will be returned.
-//
 // This function will create and persist a storage root key, which requires knowledge of the authorization value for the storage
 // hierarchy. If called with mode set to ProvisionModeClear, or if called just after clearing the TPM via the physical presence
 // interface, the authorization value for the storage hierarchy will be empty at the point that it is required. If called with any
@@ -228,12 +223,12 @@ func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte,
 	// Close the existing session and create a new session that's salted with a value protected with the newly provisioned EK.
 	// This will have a symmetric algorithm for parameter encryption during HierarchyChangeAuth.
 	tpm.FlushContext(sessionContext)
-	if err := tpm.acquireEkContextAndVerifyTPM(); err != nil {
+	if err := tpm.init(nil); err != nil {
 		var verifyErr verificationError
 		if xerrors.As(err, &verifyErr) {
-			return TPMVerificationError{fmt.Sprintf("cannot verify TPM: %v", err)}
+			return TPMVerificationError{fmt.Sprintf("cannot reinitialize TPM connection after provisioning endorsement key: %v", err)}
 		}
-		return xerrors.Errorf("cannot acquire public area of the key associated with the TPM's endorsement certificate: %w", err)
+		return xerrors.Errorf("cannot reinitialize TPM connection after provisioning endorsement key: %w", err)
 	}
 	session, _ = tpm.HmacSession()
 

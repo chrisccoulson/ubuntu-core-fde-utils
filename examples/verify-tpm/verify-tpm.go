@@ -28,9 +28,11 @@ import (
 )
 
 var ekCert string
+var endorsementAuth string
 
 func init() {
 	flag.StringVar(&ekCert, "ek-cert-file", "", "")
+	flag.StringVar(&endorsementAuth, "endorsement-auth", "", "")
 }
 
 func main() {
@@ -48,7 +50,7 @@ func main() {
 	}
 	defer f.Close()
 
-	if _, err := fdeutil.SecureConnectToDefaultTPM(f); err != nil {
+	if _, err := fdeutil.SecureConnectToDefaultTPM(f, []byte(endorsementAuth)); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot verify that TPM is genuine: %v\n", err)
 		os.Exit(1)
 	}

@@ -89,61 +89,71 @@ func (t *TPMConnection) Close() error {
 	return t.TPMContext.Close()
 }
 
-type verificationError struct {
-	err error
+type invalidEkError struct{}
+
+func (e invalidEkError) Error() string {
+	return "object is not a valid endorsement key"
 }
 
-func (e verificationError) Error() string {
-	return e.err.Error()
-}
+// acquireEkContext returns a ResourceContext for the object resident in the endorsement key's slot on the TPM. Under the hood,
+// go-tpm2 initializes the ResourceContext with TPM2_ReadPublic, and cross-checks that the returned name and public area match. The
+// returned name is available via ResourceContext.Name and the returned public area is retained by the ResourceContext and used to
+// share secrets with the TPM.
+//
+// If the TPM isn't provisioned yet, it attempt to create a transient EK using the provided authorization.
+//
+// Without verification against the EK certificate The returned ResourceContext isn't yet safe for secret sharing with the TPM.
+func (t *TPMConnection) acquireEkContext(endorsementAuth []byte) (tpm2.ResourceContext, error) {
+	createTransient := func() (tpm2.ResourceContext, error) {
+		endorsement, _ := t.WrapHandle(tpm2.HandleEndorsement)
+		sessionContext, err := t.StartAuthSession(nil, endorsement, tpm2.SessionTypeHMAC, nil, tpm2.HashAlgorithmSHA256, endorsementAuth)
+		if err != nil {
+			return nil, err
+		}
+		defer t.FlushContext(sessionContext)
 
-func (t *TPMConnection) unsafeAcquireEkContext() error {
+		context, _, _, _, _, _, err :=
+			t.CreatePrimary(tpm2.HandleEndorsement, nil, &ekTemplate, nil, nil, &tpm2.Session{Context: sessionContext})
+		return context, err
+	}
+
 	ekContext, err := t.WrapHandle(ekHandle)
 	if err != nil {
-		return xerrors.Errorf("cannot obtain context for endorsement key: %w", err)
+		if _, unavail := err.(tpm2.ResourceUnavailableError); unavail {
+			if rc, err := createTransient(); err == nil {
+				return rc, nil
+			}
+		}
+		return nil, err
 	}
 
 	if ok, err := isObjectPrimaryKeyWithTemplate(t.TPMContext, tpm2.HandleEndorsement, ekContext, &ekTemplate, nil); err != nil {
-		return xerrors.Errorf("cannot determine if object is a primary key in the endorsement hierarchy: %w", err)
+		return nil, xerrors.Errorf("cannot determine if object is a primary key in the endorsement hierarchy: %w", err)
 	} else if !ok {
-		return verificationError{errors.New("object is not a valid endorsement key")}
+		if rc, err := createTransient(); err == nil {
+			return rc, nil
+		}
+		return nil, invalidEkError{}
 	}
 
-	t.ekContext = ekContext
-	return nil
+	return ekContext, nil
 }
 
-func (t *TPMConnection) safeAcquireEkContext() error {
-	// To salt a session with a value that's only recoverable by the TPM for which the endorsement certificate was issued, we need
-	// a ResourceContext for the corresponding endorsement key associated with that certificate to pass to TPMContext.StartAuthSession.
-	// TPMContext.StartAuthSession uses the public area of the associated object which is read back from the TPM to encrypt the salt.
-	// This means that we need to verify that the public area read back from the TPM inside go-tpm2 matches the object for which
-	// the endorsement certificate was issued.
-
-	// Obtain a ResourceContext for the object resident in the endorsement key's slot on the TPM. Under the hood, go-tpm2 initializes
-	// the ResourceContext with TPM2_ReadPublic here, and cross-checks that the returned name and public area match. The returned
-	// name is available via ResourceContext.Name and the returned public area is retained by the ResourceContext and used to share
-	// secrets with the TPM.
-	ekContext, err := t.WrapHandle(ekHandle)
-	if err != nil {
-		return xerrors.Errorf("cannot obtain context for endorsement key: %w", err)
-	}
-
-	if ok, err := isObjectPrimaryKeyWithTemplate(t.TPMContext, tpm2.HandleEndorsement, ekContext, &ekTemplate, nil); err != nil {
-		return xerrors.Errorf("cannot determine if object is a primary key in the endorsement hierarchy: %w", err)
-	} else if !ok {
-		// This is a bit hacky, but this error type is caught in SecureConnectToDefaultTPM and turned in to a ErrProvisioning
-		// error, which makes sense.
-		return xerrors.Errorf("cannot obtain context for a valid endorsement key: %w", tpm2.ResourceUnavailableError{Handle: ekHandle})
-	}
-
-	cert := t.verifiedEkCertChain[0]
-
+// verifyEkContext verifies that the public area of the ResourceContext that was read back from the TPM is associated with the
+// supplied EK certificate. It does this by obtaining the public key from the EK certificate, inserting it in to the standard EK
+// template, computing the expected name of the EK object and then verifying that this name matches the result of
+// ResourceContext.Name. This works because go-tpm2 cross-checks that the name and public area returned from TPM2_ReadPublic match
+// when initializing the ResourceContext.
+//
+// Success confirms that the ResourceContext references the public area associated with the public key of the supplied EK certificate.
+// If that certificate has been verified, the ResourceContext can safely be used to encrypt secrets that can only be decrpyted and
+// used by the TPM for which the EK certificate was issued, eg, for salting an authorization session that is then used for parameter
+// encryption.
+func verifyEkContext(cert *x509.Certificate, context tpm2.ResourceContext) error {
 	// Obtain the RSA public key from the endorsement certificate
-
 	pubKey, ok := cert.PublicKey.(*rsa.PublicKey)
 	if !ok {
-		return errors.New("cannot obtain RSA public key from *x509.Certificate")
+		return errors.New("cannot obtain RSA public key from certificate")
 	}
 
 	// Insert the RSA public key in to the EK template to compute the name of the EK object we expected to read back from the TPM.
@@ -158,47 +168,60 @@ func (t *TPMConnection) safeAcquireEkContext() error {
 
 	expectedEkName, err := ekPublic.Name()
 	if err != nil {
-		return xerrors.Errorf("cannot compute expected name of verified EK object: %w", err)
+		panic(fmt.Sprintf("cannot compute expected name of EK object: %v", err))
 	}
 
-	// Verify that the public area associated with the endorsement key ResourceContext which was read from the TPM is the one that the
-	// endorsement certificate was issued for. We do this by comparing its name with the one we computed from the EK template with the
-	// certificate's public key inserted in to it (remember that go-tpm2 has already verified that the name that was read back is
-	// consistent with the public area).
-	if !bytes.Equal(ekContext.Name(), expectedEkName) {
+	// Verify that the public area associated with context corresponds to the object that the endorsement certificate was issued for.
+	// We do this by comparing the name read back from the TPM with the one we computed from the EK template with the certificate's
+	// public key inserted in to it (remember that go-tpm2 has already verified that the name that was read back is consistent with the
+	// public area).
+	if !bytes.Equal(context.Name(), expectedEkName) {
 		// An exponent of 0 in the public area corresponds to the default (65537) exponent, but some TPM's don't return 0 in the
 		// public area (my Nuvoton TPM, for example). If the initial name comparison with exponent == 0 failed, try exponent == 65537.
 		ekPublic.Params.RSADetail().Exponent = uint32(pubKey.E)
 		expectedEkName, err := ekPublic.Name()
 		if err != nil {
-			return xerrors.Errorf("cannot compute expected name of verified EK object: %w", err)
+			panic(fmt.Sprintf("cannot compute expected name of EK object: %v", err))
 		}
-		if !bytes.Equal(ekContext.Name(), expectedEkName) {
-			return verificationError{errors.New("endorsement key returned from the TPM doesn't match the endorsement certificate")}
+		if !bytes.Equal(context.Name(), expectedEkName) {
+			return errors.New("public area doesn't match certificate")
 		}
 	}
 
-	// At this point, we've verified that ekContext references the public area associated with the public key of the endorsement
-	// certificate, and can therefore safely be used to encrypt secrets that can only be decrypted on the TPM for which the endorsement
-	// certificate was issued.
-
-	t.ekContext = ekContext
 	return nil
 }
 
-func (t *TPMConnection) acquireEkContextAndVerifyTPM() error {
+type verificationError struct {
+	err error
+}
+
+func (e verificationError) Error() string {
+	return e.err.Error()
+}
+
+func (t *TPMConnection) init(endorsementAuth []byte) error {
+	// Allow init to be called more than once by flushing the previous session
 	if t.hmacSession != nil && t.hmacSession.Handle() != tpm2.HandleUnassigned {
 		if err := t.FlushContext(t.hmacSession); err != nil {
 			return xerrors.Errorf("cannot flush existing HMAC session: %w", err)
 		}
 	}
 
+	// Acquire a ResourceContext for the EK
+	ekContext, err := t.acquireEkContext(endorsementAuth)
+	if err != nil {
+		return xerrors.Errorf("cannot obtain context for endorsement key: %w", err)
+	}
+
+	if ekContext.Handle().Type() == tpm2.HandleTypeTransient {
+		defer t.FlushContext(ekContext)
+	}
+
 	if len(t.verifiedEkCertChain) > 0 {
-		if err := t.safeAcquireEkContext(); err != nil {
-			return err
+		// Verify that the ResourceContext is associated with the verified EK certificate
+		if err := verifyEkContext(t.verifiedEkCertChain[0], ekContext); err != nil {
+			return verificationError{xerrors.Errorf("cannot verify public area of endorsement key read from the TPM: %w", err)}
 		}
-	} else if err := t.unsafeAcquireEkContext(); err != nil {
-		return err
 	}
 
 	// Verify that the TPM we're connected to is the one that the endorsement certificate was issued for (if we've validated it) by
@@ -209,7 +232,7 @@ func (t *TPMConnection) acquireEkContextAndVerifyTPM() error {
 		Algorithm: tpm2.SymAlgorithmAES,
 		KeyBits:   tpm2.SymKeyBitsU{Data: uint16(128)},
 		Mode:      tpm2.SymModeU{Data: tpm2.SymModeCFB}}
-	sessionContext, err := t.StartAuthSession(t.ekContext, nil, tpm2.SessionTypeHMAC, &symmetric, defaultHashAlgorithm, nil)
+	sessionContext, err := t.StartAuthSession(ekContext, nil, tpm2.SessionTypeHMAC, &symmetric, defaultHashAlgorithm, nil)
 	if err != nil {
 		return xerrors.Errorf("cannot create HMAC session: %w", err)
 	}
@@ -226,14 +249,17 @@ func (t *TPMConnection) acquireEkContextAndVerifyTPM() error {
 		_, err = t.GetRandom(20, &session)
 		if err != nil {
 			if isAuthFailError(err) {
-				return verificationError{errors.New("the TPM can't prove it is the device that the endorsement certificate belongs to")}
+				return verificationError{errors.New("endorsement key proof of ownership check failed")}
 			}
-			return xerrors.Errorf("cannot execute command to verify that the TPM is genuine: %w", err)
+			return xerrors.Errorf("cannot execute command to complete EK proof of ownership check: %w", err)
 		}
 	}
 
 	succeeded = true
 
+	if ekContext.Handle().Type() == tpm2.HandleTypePersistent {
+		t.ekContext = ekContext
+	}
 	t.hmacSession = sessionContext
 	return nil
 }
@@ -374,16 +400,26 @@ type ekCertData struct {
 	IntermediateCerts [][]byte
 }
 
+// verifyEkCertificate verifies the provided certificate and intermediate certificates against the built-in roots, and verifies
+// that the certificate is a valid EK certificate.
+//
+// On success, it returns a verified certificate chain. This function will also return success if there is no certificate and
+// it is executed inside a guest VM, in order to support fallback to a non-secure connection when using swtpm in a guest VM.
 func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, error) {
 	// Load EK cert and intermediates
 	var data ekCertData
 	if err := tpm2.UnmarshalFromReader(ekCertReader, &data); err != nil {
-		return nil, certFileError{xerrors.Errorf("cannot unmarshal EK certificate and intermediates: %w", err)}
+		return nil, certFileError{xerrors.Errorf("cannot unmarshal: %w", err)}
+	}
+
+	// Allow a fallback when running in a hypervisor in order to support swtpm
+	if len(data.Cert) == 0 && cpuid.HasFeature(cpuid.HYPERVISOR) {
+		return nil, nil
 	}
 
 	cert, err := x509.ParseCertificate(data.Cert)
 	if err != nil {
-		return nil, certFileError{xerrors.Errorf("cannot parse EK certificate: %w", err)}
+		return nil, certFileError{xerrors.Errorf("cannot parse endorsement key certificate: %w", err)}
 	}
 
 	intermediates := x509.NewCertPool()
@@ -426,7 +462,7 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, error) {
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}
 	candidates, err := cert.Verify(opts)
 	if err != nil {
-		return nil, verificationError{err}
+		return nil, verificationError{xerrors.Errorf("certificate verification failed: %w", err)}
 	}
 
 	// Make sure we have a chain that permits the tcg-kg-EKCertificate extended key usage
@@ -439,7 +475,7 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, error) {
 	}
 
 	if chain == nil {
-		return nil, verificationError{errors.New("not a valid EK certificate")}
+		return nil, verificationError{errors.New("certificate does not have the correct usage properties")}
 	}
 
 	// At this point, we've verified that the endorsent certificate has the correct properties and was issued by a trusted TPM
@@ -455,23 +491,31 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, error) {
 // then download the associated intermediate certificates.
 //
 // On success, the EK certificate and its intermediates are saved to the file referenced by dest in a form that can be read by
-// SecureConnectToDefaultTPM.
+// SecureConnectToDefaultTPM. If no EK certificate can be obtained, this function will return an error unless executed inside a guest
+// VM. In this case, an empty file will be created that can be unmarshalled correctly by SecureConnectoToDefaultTPM in order to
+// support fallback to a non-secure connection when using swtpm inside a guest VM.
 func FetchAndSaveEkCertificate(tpm *TPMConnection, dest string) error {
-	cert, err := readEkCert(tpm.TPMContext)
-	if err != nil {
-		return xerrors.Errorf("cannot obtain endorsement certificate from TPM: %w", err)
-	}
+	var data ekCertData
 
-	data := ekCertData{Cert: cert.Raw}
+	if cert, err := readEkCert(tpm.TPMContext); err != nil {
+		var unavailErr tpm2.ResourceUnavailableError
+		// Allow a fallback when running in a hypervisor in order to support swtpm. In this case, a missing EK cert is not an error,
+		// and we write a file that unmarshals correctly (albeit, with no contents)
+		if !xerrors.As(err, &unavailErr) || !cpuid.HasFeature(cpuid.HYPERVISOR) {
+			return xerrors.Errorf("cannot obtain endorsement certificate from TPM: %w", err)
+		}
+	} else {
+		data.Cert = cert.Raw
 
-	intermediates, err := fetchIntermediates(cert)
-	if err != nil {
-		return xerrors.Errorf("cannot obtain intermediate certificates for %s: %w", cert.Subject, err)
-	}
+		intermediates, err := fetchIntermediates(cert)
+		if err != nil {
+			return xerrors.Errorf("cannot obtain intermediate certificates for %s: %w", cert.Subject, err)
+		}
 
-	data.IntermediateCerts = make([][]byte, 0, len(intermediates))
-	for _, c := range intermediates {
-		data.IntermediateCerts = append(data.IntermediateCerts, c.Raw)
+		data.IntermediateCerts = make([][]byte, 0, len(intermediates))
+		for _, c := range intermediates {
+			data.IntermediateCerts = append(data.IntermediateCerts, c.Raw)
+		}
 	}
 
 	f, err := osutil.NewAtomicFile(dest, 0600, 0, sys.UserID(osutil.NoChown), sys.GroupID(osutil.NoChown))
@@ -491,8 +535,9 @@ func FetchAndSaveEkCertificate(tpm *TPMConnection, dest string) error {
 	return nil
 }
 
-// ConnectToDefaultTPM will attempt to connect to the default TPM. This function makes no attempt to verify the authenticity of the
-// TPM and does not require the TPM to have a manufacturer installed endorsement certificate.
+// ConnectToDefaultTPM will attempt to connect to the default TPM. It makes no attempt to verify the authenticity of the TPM. This
+// function is useful for connecting to a device that isn't correctly provisioned and for which the endorsement hierarchy
+// authorization value is unknown. It should not be used in any other scenario.
 func ConnectToDefaultTPM() (*TPMConnection, error) {
 	tpm, err := connectToDefaultTPM()
 	if err != nil {
@@ -509,11 +554,12 @@ func ConnectToDefaultTPM() (*TPMConnection, error) {
 		t.Close()
 	}()
 
-	if err := t.acquireEkContextAndVerifyTPM(); err != nil {
+	if err := t.init(nil); err != nil {
+		var ieErr invalidEkError
 		var unavailErr tpm2.ResourceUnavailableError
 		var verifyErr verificationError
-		if !xerrors.As(err, &unavailErr) && !xerrors.As(err, &verifyErr) {
-			return nil, xerrors.Errorf("cannot acquire public area of the endorsement key and verify the TPM: %w", err)
+		if !xerrors.As(err, &ieErr) && !xerrors.As(err, &unavailErr) && !xerrors.As(err, &verifyErr) {
+			return nil, xerrors.Errorf("cannot initialize TPM connection: %w", err)
 		}
 	}
 
@@ -521,61 +567,22 @@ func ConnectToDefaultTPM() (*TPMConnection, error) {
 	return t, nil
 }
 
-// SecureConnectToDefaultUnprovisionedTPM will attempt to connect to the default TPM and then verify the TPM's manufacturer issued
-// endorsement certificate if it exists. The ekCertReader argument should read from a file created previously by
-// FetchAndSaveEkCertificate.
+// SecureConnectToDefaultTPM will attempt to connect to the default TPM, verify the provided manufacturer issued endorsement
+// certificate against the built-in CA roots and then verify that the TPM is the one for which the endorsement certificate was
+// issued. The ekCertReader argument should read from a file created previously by FetchAndSaveEkCertificate.
 //
-// This function doesn't verify that the TPM is the one that the endorsement certificate was issued for. It is designed to be used
-// on a TPM before ProvisionTPM has been called, or on a TPM that doesn't have a persistent endorsement key at the expected location.
+// If the data read from ekCertReader cannot be unmarshalled or parsed correctly, a InvalidEkCertFileError error will be returned.
 //
-// If the file referenced by ekIntermediateCertsFile cannot be loaded, a InvalidIntermediateCertsFileError error will be returned.
+// If verification of the endorsement key certificate fails, a TPMVerificationError error will be returned.
 //
-// If verification of the endorsement certificate fails or it doesn't exist at the expected location, a TPMVerificationError error
-// will be returned.
-func SecureConnectToDefaultUnprovisionedTPM(ekCertReader io.Reader) (*TPMConnection, error) {
-	if ekCertReader == nil {
-		return nil, errors.New("nil ekCertReader")
-	}
-
-	chain, err := verifyEkCertificate(ekCertReader)
-	if err != nil {
-		var cfErr certFileError
-		if xerrors.As(err, &cfErr) {
-			return nil, InvalidEkCertFileError{err.Error()}
-		}
-		var verifyErr verificationError
-		if xerrors.As(err, &verifyErr) {
-			if cpuid.HasFeature(cpuid.HYPERVISOR) {
-				// Allow a fallback when running in a hypervisor in order to support swtpm
-				return ConnectToDefaultTPM()
-			}
-			return nil, TPMVerificationError{fmt.Sprintf("cannot verify endorsement certificate: %s", err)}
-		}
-		return nil, xerrors.Errorf("cannot verify endorsement certificate: %w", err)
-	}
-
-	tpm, err := connectToDefaultTPM()
-	if err != nil {
-		return nil, err
-	}
-
-	return &TPMConnection{TPMContext: tpm, verifiedEkCertChain: chain}, nil
-}
-
-// SecureConnectToDefaultTPM will attempt to connect to the default TPM, verify the TPM's manufacturer issued endorsement certificate
-// if it exists, and then verify that the TPM is the one for which the endorsement certificate was issued. The
-// ekCertReader argument should read from a file created previously by FetchAndSaveEkCertificate.
-//
-// If the file referenced by ekIntermediateCertsFile cannot be loaded, a InvalidIntermediateCertsFileError error will be returned.
-//
-// If verification of the endorsement certificate fails or it doesn't exist at the expected location, a TPMVerificationError error
-// will be returned.
-//
-// If the TPM doesn't contain an endorsement key at the expected location, ErrProvisioning will be returned.
-//
-// If the TPM cannot prove it is the device for which the endorsement certificate was issued, a TPMVerificationError error will be
+// If the TPM cannot prove it is the device for which the endorsement key certificate was issued, a TPMVerificationError error will be
 // returned.
-func SecureConnectToDefaultTPM(ekCertReader io.Reader) (*TPMConnection, error) {
+//
+// In order for the TPM to prove it is the device for which the endorsement key certificate was issued, an endorsement key is
+// required. If the TPM doesn't contain a persistent endorsement key at the expected location (eg, if ProvisionTPM hasn't been
+// executed yet), this function will attempt to create a transient endorsement key. This requires knowledge of the endorsement
+// hierarchy authorization value, which will be empty on a newly cleared device. If this fails, ErrProvisioning will be returned.
+func SecureConnectToDefaultTPM(ekCertReader io.Reader, endorsementAuth []byte) (*TPMConnection, error) {
 	if ekCertReader == nil {
 		return nil, errors.New("nil ekCertReader")
 	}
@@ -588,13 +595,9 @@ func SecureConnectToDefaultTPM(ekCertReader io.Reader) (*TPMConnection, error) {
 		}
 		var verifyErr verificationError
 		if xerrors.As(err, &verifyErr) {
-			if cpuid.HasFeature(cpuid.HYPERVISOR) {
-				// Allow a fallback when running in a hypervisor in order to support swtpm
-				return ConnectToDefaultTPM()
-			}
-			return nil, TPMVerificationError{fmt.Sprintf("cannot verify endorsement certificate: %s", err)}
+			return nil, TPMVerificationError{fmt.Sprintf("cannot verify endorsement key certificate: %v", err)}
 		}
-		return nil, xerrors.Errorf("cannot verify endorsement certificate: %w", err)
+		return nil, xerrors.Errorf("cannot verify EK certificate: %w", err)
 	}
 
 	tpm, err := connectToDefaultTPM()
@@ -612,17 +615,17 @@ func SecureConnectToDefaultTPM(ekCertReader io.Reader) (*TPMConnection, error) {
 
 	t := &TPMConnection{TPMContext: tpm, verifiedEkCertChain: chain}
 
-	if err := t.acquireEkContextAndVerifyTPM(); err != nil {
+	if err := t.init(endorsementAuth); err != nil {
 		var unavailErr tpm2.ResourceUnavailableError
-		if xerrors.As(err, &unavailErr) {
+		var ieErr invalidEkError
+		if xerrors.As(err, &unavailErr) || xerrors.As(err, &ieErr) {
 			return nil, ErrProvisioning
 		}
 		var verifyErr verificationError
 		if xerrors.As(err, &verifyErr) {
-			return nil, TPMVerificationError{fmt.Sprintf("cannot verify TPM: %v", err)}
+			return nil, TPMVerificationError{fmt.Sprintf("cannot initialize TPM connection: %v", err)}
 		}
-		return nil, xerrors.Errorf("cannot acquire public area of the key associated with the TPM's endorsement certificate and verify "+
-			"the TPM: %w", err)
+		return nil, xerrors.Errorf("cannot initialize TPM connection: %w", err)
 	}
 
 	succeeded = true
