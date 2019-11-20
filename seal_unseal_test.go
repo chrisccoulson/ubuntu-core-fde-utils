@@ -509,15 +509,6 @@ func TestSealWithProvisioningError(t *testing.T) {
 
 		run(t)
 	})
-
-	t.Run("NoEK", func(t *testing.T) {
-		prepare(t)
-		ekContext, _ := tpm.WrapHandle(ekHandle)
-		if _, err := tpm.EvictControl(tpm2.HandleOwner, ekContext, ekContext.Handle(), nil); err != nil {
-			t.Fatalf("EvictControl failed: %v", err)
-		}
-		run(t)
-	})
 }
 
 func TestUnsealProvisioningError(t *testing.T) {

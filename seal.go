@@ -144,12 +144,6 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 		return fmt.Errorf("expected a key length of 512 bits (got %d)", len(key)*8)
 	}
 
-	// Verify we have an endorsment key (used by createPinNvIndex).
-	_, err := tpm.EkContext()
-	if err != nil {
-		return err
-	}
-
 	// Use the HMAC session created when the connection was opened rather than creating a new one.
 	session, err := tpm.HmacSession()
 	if err != nil {
