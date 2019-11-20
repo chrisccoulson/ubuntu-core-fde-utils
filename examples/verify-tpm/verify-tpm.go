@@ -50,10 +50,12 @@ func main() {
 	}
 	defer f.Close()
 
-	if _, err := fdeutil.SecureConnectToDefaultTPM(f, []byte(endorsementAuth)); err != nil {
+	tpm, err := fdeutil.SecureConnectToDefaultTPM(f, []byte(endorsementAuth))
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot verify that TPM is genuine: %v\n", err)
 		os.Exit(1)
 	}
+	tpm.Close()
 
 	fmt.Println("TPM is genuine!")
 }
