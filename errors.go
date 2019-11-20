@@ -68,22 +68,31 @@ func (e AuthFailError) Error() string {
 	return fmt.Sprintf("an authorization check failed for the hierarchy associated with %v", e.Handle)
 }
 
-// InvalidIntermediateCertsFileError is returned from SecureConnectToDefaultTPM if the specified file providing intermediate
-// certificates for EK cert verification is invalid.
-type InvalidEkCertFileError struct {
+// InvalidEkCertError is returned from SecureConnectToDefaultTPM if the supplied EK certificate data is invalid.
+type InvalidEkCertError struct {
 	msg string
 }
 
-func (e InvalidEkCertFileError) Error() string {
-	return fmt.Sprintf("invalid EK certificate file: %s", e.msg)
+func (e InvalidEkCertError) Error() string {
+	return fmt.Sprintf("invalid EK certificate: %s", e.msg)
 }
 
-// TPMVerificationError is returned from SecureConnectToDefaultTPM is the TPM doesn't contain a EK cert, or verification of the
-// EK certificate fails, or the verified EK certificate doesn't belong to the TPM that is being connected to.
+// EkCertVerificationError is returned from SecureConnectToDefaultTPM if verification of the supplied EK certificate against the
+// built-in root CA certificates fails, or the supplied EK certificate does not have the correct properties.
+type EkCertVerificationError struct {
+	msg string
+}
+
+func (e EkCertVerificationError) Error() string {
+	return fmt.Sprintf("cannot verify the endorsement key certificate: %s", e.msg)
+}
+
+// TPMVerificationError is returned from SecureConnectToDefaultTPM if the TPM cannot prove it is the device for which the
+// supplied EK certificate was issued.
 type TPMVerificationError struct {
 	msg string
 }
 
 func (e TPMVerificationError) Error() string {
-	return fmt.Sprintf("verification of the TPM failed: %s", e.msg)
+	return fmt.Sprintf("cannot verify that the TPM is the device for which the supplied EK certificate was issued: %s", e.msg)
 }

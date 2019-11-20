@@ -387,11 +387,11 @@ func connectToDefaultTPM() (*tpm2.TPMContext, error) {
 	return tpm, nil
 }
 
-type certFileError struct {
+type certDataError struct {
 	err error
 }
 
-func (e certFileError) Error() string {
+func (e certDataError) Error() string {
 	return e.err.Error()
 }
 
@@ -409,7 +409,7 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, error) {
 	// Load EK cert and intermediates
 	var data ekCertData
 	if err := tpm2.UnmarshalFromReader(ekCertReader, &data); err != nil {
-		return nil, certFileError{xerrors.Errorf("cannot unmarshal: %w", err)}
+		return nil, certDataError{xerrors.Errorf("cannot unmarshal: %w", err)}
 	}
 
 	// Allow a fallback when running in a hypervisor in order to support swtpm
@@ -419,14 +419,14 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, error) {
 
 	cert, err := x509.ParseCertificate(data.Cert)
 	if err != nil {
-		return nil, certFileError{xerrors.Errorf("cannot parse endorsement key certificate: %w", err)}
+		return nil, certDataError{xerrors.Errorf("cannot parse endorsement key certificate: %w", err)}
 	}
 
 	intermediates := x509.NewCertPool()
 	for _, d := range data.IntermediateCerts {
 		c, err := x509.ParseCertificate(d)
 		if err != nil {
-			return nil, certFileError{xerrors.Errorf("cannot parse intermediate certificates: %w", err)}
+			return nil, certDataError{xerrors.Errorf("cannot parse intermediate certificates: %w", err)}
 		}
 		intermediates.AddCert(c)
 	}
@@ -587,9 +587,9 @@ func ConnectToDefaultTPM() (*TPMConnection, error) {
 // certificate against the built-in CA roots and then verify that the TPM is the one for which the endorsement certificate was
 // issued. The ekCertReader argument should read from a file created previously by FetchAndSaveEkCertificate.
 //
-// If the data read from ekCertReader cannot be unmarshalled or parsed correctly, a InvalidEkCertFileError error will be returned.
+// If the data read from ekCertReader cannot be unmarshalled or parsed correctly, a InvalidEkCertError error will be returned.
 //
-// If verification of the endorsement key certificate fails, a TPMVerificationError error will be returned.
+// If verification of the endorsement key certificate fails, a EkCertVerificationError error will be returned.
 //
 // If the TPM cannot prove it is the device for which the endorsement key certificate was issued, a TPMVerificationError error will be
 // returned.
@@ -605,13 +605,13 @@ func SecureConnectToDefaultTPM(ekCertReader io.Reader, endorsementAuth []byte) (
 
 	chain, err := verifyEkCertificate(ekCertReader)
 	if err != nil {
-		var cfErr certFileError
-		if xerrors.As(err, &cfErr) {
-			return nil, InvalidEkCertFileError{err.Error()}
+		var cdErr certDataError
+		if xerrors.As(err, &cdErr) {
+			return nil, InvalidEkCertError{err.Error()}
 		}
 		var verifyErr verificationError
 		if xerrors.As(err, &verifyErr) {
-			return nil, TPMVerificationError{fmt.Sprintf("cannot verify endorsement key certificate: %v", err)}
+			return nil, EkCertVerificationError{err.Error()}
 		}
 		return nil, xerrors.Errorf("cannot verify EK certificate: %w", err)
 	}
@@ -639,7 +639,7 @@ func SecureConnectToDefaultTPM(ekCertReader io.Reader, endorsementAuth []byte) (
 		}
 		var verifyErr verificationError
 		if xerrors.As(err, &verifyErr) {
-			return nil, TPMVerificationError{fmt.Sprintf("cannot initialize TPM connection: %v", err)}
+			return nil, TPMVerificationError{err.Error()}
 		}
 		return nil, xerrors.Errorf("cannot initialize TPM connection: %w", err)
 	}
