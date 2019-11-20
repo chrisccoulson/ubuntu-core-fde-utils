@@ -487,14 +487,14 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, error) {
 	return chain, nil
 }
 
-// FetchAndSaveEkCertificate attempts to obtain the endorsement key certificate for the TPM assocated with the tpm parameter, and
-// then download the associated intermediate certificates.
+// FetchEkCertificate attempts to obtain the endorsement key certificate for the TPM assocated with the tpm parameter, and then
+// download the associated intermediate certificates.
 //
-// On success, the EK certificate and its intermediates are saved to the file referenced by dest in a form that can be read by
+// On success, the EK certificate and its intermediates are written to the provided io.Writer in a form that can be read by
 // SecureConnectToDefaultTPM. If no EK certificate can be obtained, this function will return an error unless executed inside a guest
-// VM. In this case, an empty file will be created that can be unmarshalled correctly by SecureConnectoToDefaultTPM in order to
-// support fallback to a non-secure connection when using swtpm inside a guest VM.
-func FetchAndSaveEkCertificate(tpm *TPMConnection, dest string) error {
+// VM. In this case, an empty certificate that can be unmarshalled correctly by SecureConnectoToDefaultTPM will be written in order to
+// support fallback to a non-secure connection when connecting to swtpm inside a guest VM.
+func FetchEkCertificate(tpm *TPMConnection, w io.Writer) error {
 	var data ekCertData
 
 	if cert, err := readEkCert(tpm.TPMContext); err != nil {
@@ -518,14 +518,29 @@ func FetchAndSaveEkCertificate(tpm *TPMConnection, dest string) error {
 		}
 	}
 
+	if err := tpm2.MarshalToWriter(w, &data); err != nil {
+		return xerrors.Errorf("cannot marshal cert data: %w", err)
+	}
+
+	return nil
+}
+
+// FetchAndSaveEkCertificate attempts to obtain the endorsement key certificate for the TPM assocated with the tpm parameter, and
+// then download the associated intermediate certificates.
+//
+// On success, the EK certificate and its intermediates are saved atomically to the file referenced by dest in a form that can be read
+// by SecureConnectToDefaultTPM. If no EK certificate can be obtained, this function will return an error unless executed inside a
+// guest VM. In this case, an empty certificate that can be unmarshalled correctly by SecureConnectoToDefaultTPM will be written in
+// order to support fallback to a non-secure connection when connecting to swtpm inside a guest VM.
+func FetchAndSaveEkCertificate(tpm *TPMConnection, dest string) error {
 	f, err := osutil.NewAtomicFile(dest, 0600, 0, sys.UserID(osutil.NoChown), sys.GroupID(osutil.NoChown))
 	if err != nil {
 		return xerrors.Errorf("cannot create new atomic file: %w", err)
 	}
 	defer f.Cancel()
 
-	if err := tpm2.MarshalToWriter(f, &data); err != nil {
-		return xerrors.Errorf("cannot marshal cert data: %w", err)
+	if err := FetchEkCertificate(tpm, f); err != nil {
+		return err
 	}
 
 	if err := f.Commit(); err != nil {
@@ -537,7 +552,8 @@ func FetchAndSaveEkCertificate(tpm *TPMConnection, dest string) error {
 
 // ConnectToDefaultTPM will attempt to connect to the default TPM. It makes no attempt to verify the authenticity of the TPM. This
 // function is useful for connecting to a device that isn't correctly provisioned and for which the endorsement hierarchy
-// authorization value is unknown. It should not be used in any other scenario.
+// authorization value is unknown, or for connecting to a device in order to execute FetchAndSaveEkCertificate. It should not be
+// used in any other scenario.
 func ConnectToDefaultTPM() (*TPMConnection, error) {
 	tpm, err := connectToDefaultTPM()
 	if err != nil {

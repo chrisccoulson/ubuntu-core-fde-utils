@@ -20,8 +20,10 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/chrisccoulson/ubuntu-core-fde-utils"
@@ -38,19 +40,33 @@ func init() {
 func main() {
 	flag.Parse()
 
+	var ekCertReader io.Reader
 	if ekCert == "" {
-		fmt.Fprintf(os.Stderr, "No -ek-cert-file\n")
-		os.Exit(1)
+		b := new(bytes.Buffer)
+		func() {
+			tpm, err := fdeutil.ConnectToDefaultTPM()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Cannot connect to TPM to obtain EK certificate: %v\n", err)
+				os.Exit(1)
+			}
+			defer tpm.Close()
+			if err := fdeutil.FetchEkCertificate(tpm, b); err != nil {
+				fmt.Fprintf(os.Stderr, "Cannot fetch EK certificate: %v\n", err)
+				os.Exit(1)
+			}
+		}()
+		ekCertReader = b
+	} else {
+		f, err := os.Open(ekCert)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Cannot open EK certificate file: %v\n", err)
+			os.Exit(1)
+		}
+		defer f.Close()
+		ekCertReader = f
 	}
 
-	f, err := os.Open(ekCert)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot open EK certificate file: %v\n", err)
-		os.Exit(1)
-	}
-	defer f.Close()
-
-	tpm, err := fdeutil.SecureConnectToDefaultTPM(f, []byte(endorsementAuth))
+	tpm, err := fdeutil.SecureConnectToDefaultTPM(ekCertReader, []byte(endorsementAuth))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot verify that TPM is genuine: %v\n", err)
 		os.Exit(1)
