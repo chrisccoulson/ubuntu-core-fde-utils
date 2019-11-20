@@ -41,8 +41,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := fdeutil.FetchAndSaveEkIntermediateCerts(tpm, flag.Args()[0]); err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot fetch and save intermediate EK certs: %v\n", err)
+	if err := fdeutil.FetchAndSaveEkCertificate(tpm, flag.Args()[0]); err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot fetch and save EK certificate and intermediates: %v\n", err)
 		os.Exit(1)
 	}
 }

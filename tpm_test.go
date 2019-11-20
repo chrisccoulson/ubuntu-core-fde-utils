@@ -20,6 +20,7 @@
 package fdeutil
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -48,6 +49,8 @@ var (
 	mssimHost         = flag.String("mssim-host", "localhost", "")
 	mssimTpmPort      = flag.Uint("mssim-tpm-port", 2321, "")
 	mssimPlatformPort = flag.Uint("mssim-platform-port", 2322, "")
+
+	ekCert *ekCertData
 )
 
 func deleteKey(t *testing.T, tpm *TPMConnection, path string) {
@@ -82,7 +85,10 @@ func openTPMSimulatorForTesting(t *testing.T) (*TPMConnection, *tpm2.TctiMssim) 
 		return tcti, nil
 	}
 
-	tpm, err := SecureConnectToDefaultUnprovisionedTPM("")
+	certData := new(bytes.Buffer)
+	tpm2.MarshalToWriter(certData, ekCert)
+
+	tpm, err := SecureConnectToDefaultUnprovisionedTPM(certData)
 	if err != nil {
 		t.Fatalf("ConnectToDefaultTPM failed: %v", err)
 	}
@@ -235,22 +241,7 @@ func certifyTPM(tpm *tpm2.TPMContext, caCert []byte, caKey crypto.PrivateKey) er
 		return fmt.Errorf("cannot create EK certificate: %v", err)
 	}
 
-	nvPub := tpm2.NVPublic{
-		Index:   ekCertHandle,
-		NameAlg: tpm2.HashAlgorithmSHA256,
-		Attrs: tpm2.MakeNVAttributes(tpm2.AttrNVPPWrite|tpm2.AttrNVWriteAll|tpm2.AttrNVPPRead|tpm2.AttrNVOwnerRead|tpm2.AttrNVAuthRead|
-			tpm2.AttrNVPolicyRead|tpm2.AttrNVNoDA|tpm2.AttrNVPlatformCreate, tpm2.NVTypeOrdinary),
-		Size: uint16(len(cert))}
-	if err := tpm.NVDefineSpace(tpm2.HandlePlatform, nil, &nvPub, nil); err != nil {
-		return fmt.Errorf("cannot define NV index for EK certificate: %v", err)
-	}
-
-	platform, _ := tpm.WrapHandle(tpm2.HandlePlatform)
-	index, _ := tpm.WrapHandle(ekCertHandle)
-	if err := tpm.NVWrite(platform, index, tpm2.MaxNVBuffer(cert), 0, nil); err != nil {
-		return fmt.Errorf("cannot write EK certificate to NV index: %v", err)
-	}
-
+	ekCert = &ekCertData{Cert: cert}
 	return nil
 }
 

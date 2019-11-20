@@ -28,7 +28,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"os"
 	"time"
 
 	"github.com/chrisccoulson/go-tpm2"
@@ -273,43 +272,38 @@ func fetchIntermediates(cert *x509.Certificate) ([]*x509.Certificate, error) {
 
 	for {
 		if len(cert.IssuingCertificateURL) == 0 {
-			return nil, fmt.Errorf("cannot download issuer of %v: no issuer URLs", cert.Subject)
+			return nil, fmt.Errorf("cannot download certificate for issuer of %v: no issuer URLs", cert.Subject)
 		}
 
 		var parent *x509.Certificate
-
-		tryUrl := func(url string) (*x509.Certificate, error) {
-			resp, err := client.Get(url)
-			if err != nil {
-				return nil, xerrors.Errorf("GET request failed: %w", err)
-			}
-			body, err := ioutil.ReadAll(resp.Body)
-			resp.Body.Close()
-			if err != nil {
-				return nil, xerrors.Errorf("cannot read body: %w", err)
-			}
-			cert, err := x509.ParseCertificate(body)
-			if err != nil {
-				return nil, xerrors.Errorf("cannot parse certificate: %w", err)
-			}
-			return cert, nil
-		}
-
 		var err error
-		for i, issuerUrl := range cert.IssuingCertificateURL {
-			p, e := tryUrl(issuerUrl)
-			if e != nil {
-				if i == len(cert.IssuingCertificateURL)-1 {
-					err = xerrors.Errorf("cannot obtain issuing certificate from %s: %w", issuerUrl, e)
+		for _, issuerUrl := range cert.IssuingCertificateURL {
+			if p, e := func(url string) (*x509.Certificate, error) {
+				resp, err := client.Get(url)
+				if err != nil {
+					return nil, xerrors.Errorf("GET request failed: %w", err)
 				}
-				continue
+				body, err := ioutil.ReadAll(resp.Body)
+				resp.Body.Close()
+				if err != nil {
+					return nil, xerrors.Errorf("cannot read body: %w", err)
+				}
+				cert, err := x509.ParseCertificate(body)
+				if err != nil {
+					return nil, xerrors.Errorf("cannot parse certificate: %w", err)
+				}
+				return cert, nil
+			}(issuerUrl); e == nil {
+				parent = p
+				err = nil
+				break
+			} else {
+				err = xerrors.Errorf("download from %s failed: %w", issuerUrl, e)
 			}
-			parent = p
-			break
 		}
 
-		if parent == nil {
-			return nil, xerrors.Errorf("cannot download issuer of %v: %w", cert.Subject, err)
+		if err != nil {
+			return nil, xerrors.Errorf("cannot download certificate for issuer of %v: %w", cert.Subject, err)
 		}
 
 		if bytes.Equal(parent.RawIssuer, parent.RawSubject) {
@@ -353,33 +347,6 @@ NextCert:
 	return true
 }
 
-func verifyEkCertificate(cert *x509.Certificate, roots, intermediates *x509.CertPool) ([]*x509.Certificate, error) {
-	// Verify certificate for any usage
-	opts := x509.VerifyOptions{
-		Intermediates: intermediates,
-		Roots:         roots,
-		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}
-	candidates, err := cert.Verify(opts)
-	if err != nil {
-		return nil, err
-	}
-
-	// Make sure we have a chain that permits the tcg-kg-EKCertificate extended key usage
-	var chain []*x509.Certificate
-	for _, c := range candidates {
-		if checkChainForEkCertUsage(c) {
-			chain = c
-			break
-		}
-	}
-
-	if chain == nil {
-		return nil, errors.New("not a valid EK certificate")
-	}
-
-	return chain, nil
-}
-
 var openDefaultTcti = func() (io.ReadWriteCloser, error) {
 	return tpm2.OpenTPMDevice(tpmPath)
 }
@@ -394,57 +361,38 @@ func connectToDefaultTPM() (*tpm2.TPMContext, error) {
 	return tpm, nil
 }
 
-type intermediateCertsError struct {
+type certFileError struct {
 	err error
 }
 
-func (e intermediateCertsError) Error() string {
+func (e certFileError) Error() string {
 	return e.err.Error()
 }
 
-func connectToDefaultTPMAndVerifyEkCert(ekIntermediateCertsFile string) (*tpm2.TPMContext, []*x509.Certificate, error) {
-	// Load and parse intermediate certificates, if provided
+type ekCertData struct {
+	Cert              []byte
+	IntermediateCerts [][]byte
+}
+
+func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, error) {
+	// Load EK cert and intermediates
+	var data ekCertData
+	if err := tpm2.UnmarshalFromReader(ekCertReader, &data); err != nil {
+		return nil, certFileError{xerrors.Errorf("cannot unmarshal EK certificate and intermediates: %w", err)}
+	}
+
+	cert, err := x509.ParseCertificate(data.Cert)
+	if err != nil {
+		return nil, certFileError{xerrors.Errorf("cannot parse EK certificate: %w", err)}
+	}
+
 	intermediates := x509.NewCertPool()
-	if ekIntermediateCertsFile != "" {
-		f, err := os.Open(ekIntermediateCertsFile)
+	for _, d := range data.IntermediateCerts {
+		c, err := x509.ParseCertificate(d)
 		if err != nil {
-			return nil, nil, xerrors.Errorf("cannot open intermediate certs file: %w", err)
+			return nil, certFileError{xerrors.Errorf("cannot parse intermediate certificates: %w", err)}
 		}
-		defer f.Close()
-		var data [][]byte
-		if err := tpm2.UnmarshalFromReader(f, &data); err != nil {
-			return nil, nil, intermediateCertsError{err}
-		}
-		for _, d := range data {
-			cert, err := x509.ParseCertificate(d)
-			if err != nil {
-				return nil, nil, intermediateCertsError{err}
-			}
-			intermediates.AddCert(cert)
-		}
-	}
-
-	tpm, err := connectToDefaultTPM()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	succeeded := false
-	defer func() {
-		if succeeded {
-			return
-		}
-		tpm.Close()
-	}()
-
-	// Obtain the EK certificate from the TPM
-	cert, err := readEkCert(tpm)
-	if err != nil {
-		var unavailErr tpm2.ResourceUnavailableError
-		if xerrors.As(err, &unavailErr) {
-			return nil, nil, verificationError{errors.New("cannot obtain endorsement certificate from TPM")}
-		}
-		return nil, nil, xerrors.Errorf("cannot obtain endorsement certificate from TPM: %w", err)
+		intermediates.AddCert(c)
 	}
 
 	// Parse the built-in roots
@@ -468,13 +416,30 @@ func connectToDefaultTPMAndVerifyEkCert(ekIntermediateCertsFile string) (*tpm2.T
 	}
 
 	if cert.PublicKeyAlgorithm != x509.RSA {
-		return nil, nil, verificationError{errors.New("endorsement certificate contains a public key with the wrong algorithm")}
+		return nil, verificationError{errors.New("certificate contains a public key with the wrong algorithm")}
 	}
 
-	// Perform verification of the EK cert
-	chain, err := verifyEkCertificate(cert, roots, intermediates)
+	// Verify EK certificate for any usage
+	opts := x509.VerifyOptions{
+		Intermediates: intermediates,
+		Roots:         roots,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}
+	candidates, err := cert.Verify(opts)
 	if err != nil {
-		return nil, nil, verificationError{err}
+		return nil, verificationError{err}
+	}
+
+	// Make sure we have a chain that permits the tcg-kg-EKCertificate extended key usage
+	var chain []*x509.Certificate
+	for _, c := range candidates {
+		if checkChainForEkCertUsage(c) {
+			chain = c
+			break
+		}
+	}
+
+	if chain == nil {
+		return nil, verificationError{errors.New("not a valid EK certificate")}
 	}
 
 	// At this point, we've verified that the endorsent certificate has the correct properties and was issued by a trusted TPM
@@ -483,19 +448,30 @@ func connectToDefaultTPMAndVerifyEkCert(ekIntermediateCertsFile string) (*tpm2.T
 	// private seed injected in to a genuine TPM by them. Secrets encrypted by this public key can only be decrypted by and used
 	// on the TPM for which this certificate was issued.
 
-	succeeded = true
-	return tpm, chain, nil
+	return chain, nil
 }
 
-// FetchAndSaveEkIntermediateCerts attempts to download intermediate certificates for the endorsement certificate obtained from
-// the TPM associated with the tpm parameter.
+// FetchAndSaveEkCertificate attempts to obtain the endorsement key certificate for the TPM assocated with the tpm parameter, and
+// then download the associated intermediate certificates.
 //
-// On success, the intermediate certificates are saved to the file referenced by dest in a form that can be read by
-// SecureConnectToDefaultTPM and SecureConnectToDefaultUnprovisionedTPM.
-func FetchAndSaveEkIntermediateCerts(tpm *TPMConnection, dest string) error {
+// On success, the EK certificate and its intermediates are saved to the file referenced by dest in a form that can be read by
+// SecureConnectToDefaultTPM.
+func FetchAndSaveEkCertificate(tpm *TPMConnection, dest string) error {
 	cert, err := readEkCert(tpm.TPMContext)
 	if err != nil {
 		return xerrors.Errorf("cannot obtain endorsement certificate from TPM: %w", err)
+	}
+
+	data := ekCertData{Cert: cert.Raw}
+
+	intermediates, err := fetchIntermediates(cert)
+	if err != nil {
+		return xerrors.Errorf("cannot obtain intermediate certificates for %s: %w", cert.Subject, err)
+	}
+
+	data.IntermediateCerts = make([][]byte, 0, len(intermediates))
+	for _, c := range intermediates {
+		data.IntermediateCerts = append(data.IntermediateCerts, c.Raw)
 	}
 
 	f, err := osutil.NewAtomicFile(dest, 0600, 0, sys.UserID(osutil.NoChown), sys.GroupID(osutil.NoChown))
@@ -504,18 +480,8 @@ func FetchAndSaveEkIntermediateCerts(tpm *TPMConnection, dest string) error {
 	}
 	defer f.Cancel()
 
-	intermediates, err := fetchIntermediates(cert)
-	if err != nil {
-		return xerrors.Errorf("cannot obtain intermediate certificates for %s: %w", cert.Subject, err)
-	}
-
-	rawCerts := make([][]byte, 0, len(intermediates))
-	for _, c := range intermediates {
-		rawCerts = append(rawCerts, c.Raw)
-	}
-
-	if err := tpm2.MarshalToWriter(f, rawCerts); err != nil {
-		return xerrors.Errorf("cannot marshal intermediate certificates: %w", err)
+	if err := tpm2.MarshalToWriter(f, &data); err != nil {
+		return xerrors.Errorf("cannot marshal cert data: %w", err)
 	}
 
 	if err := f.Commit(); err != nil {
@@ -556,8 +522,8 @@ func ConnectToDefaultTPM() (*TPMConnection, error) {
 }
 
 // SecureConnectToDefaultUnprovisionedTPM will attempt to connect to the default TPM and then verify the TPM's manufacturer issued
-// endorsement certificate if it exists. The ekIntermediateCertsFile argument should point to a file created previously by
-// FetchAndSaveEkIntermediateCerts.
+// endorsement certificate if it exists. The ekCertReader argument should read from a file created previously by
+// FetchAndSaveEkCertificate.
 //
 // This function doesn't verify that the TPM is the one that the endorsement certificate was issued for. It is designed to be used
 // on a TPM before ProvisionTPM has been called, or on a TPM that doesn't have a persistent endorsement key at the expected location.
@@ -566,12 +532,16 @@ func ConnectToDefaultTPM() (*TPMConnection, error) {
 //
 // If verification of the endorsement certificate fails or it doesn't exist at the expected location, a TPMVerificationError error
 // will be returned.
-func SecureConnectToDefaultUnprovisionedTPM(ekIntermediateCertsFile string) (*TPMConnection, error) {
-	tpm, chain, err := connectToDefaultTPMAndVerifyEkCert(ekIntermediateCertsFile)
+func SecureConnectToDefaultUnprovisionedTPM(ekCertReader io.Reader) (*TPMConnection, error) {
+	if ekCertReader == nil {
+		return nil, errors.New("nil ekCertReader")
+	}
+
+	chain, err := verifyEkCertificate(ekCertReader)
 	if err != nil {
-		var icErr intermediateCertsError
-		if xerrors.As(err, &icErr) {
-			return nil, InvalidIntermediateCertsFileError{err.Error()}
+		var cfErr certFileError
+		if xerrors.As(err, &cfErr) {
+			return nil, InvalidEkCertFileError{err.Error()}
 		}
 		var verifyErr verificationError
 		if xerrors.As(err, &verifyErr) {
@@ -581,7 +551,12 @@ func SecureConnectToDefaultUnprovisionedTPM(ekIntermediateCertsFile string) (*TP
 			}
 			return nil, TPMVerificationError{fmt.Sprintf("cannot verify endorsement certificate: %s", err)}
 		}
-		return nil, xerrors.Errorf("cannot connect to TPM and verify endorsement certificate: %w", err)
+		return nil, xerrors.Errorf("cannot verify endorsement certificate: %w", err)
+	}
+
+	tpm, err := connectToDefaultTPM()
+	if err != nil {
+		return nil, err
 	}
 
 	return &TPMConnection{TPMContext: tpm, verifiedEkCertChain: chain}, nil
@@ -589,7 +564,7 @@ func SecureConnectToDefaultUnprovisionedTPM(ekIntermediateCertsFile string) (*TP
 
 // SecureConnectToDefaultTPM will attempt to connect to the default TPM, verify the TPM's manufacturer issued endorsement certificate
 // if it exists, and then verify that the TPM is the one for which the endorsement certificate was issued. The
-// ekIntermediateCertsFile argument should point to a file created previously by FetchAndSaveEkIntermediateCerts.
+// ekCertReader argument should read from a file created previously by FetchAndSaveEkCertificate.
 //
 // If the file referenced by ekIntermediateCertsFile cannot be loaded, a InvalidIntermediateCertsFileError error will be returned.
 //
@@ -600,12 +575,16 @@ func SecureConnectToDefaultUnprovisionedTPM(ekIntermediateCertsFile string) (*TP
 //
 // If the TPM cannot prove it is the device for which the endorsement certificate was issued, a TPMVerificationError error will be
 // returned.
-func SecureConnectToDefaultTPM(ekIntermediateCertsFile string) (*TPMConnection, error) {
-	tpm, chain, err := connectToDefaultTPMAndVerifyEkCert(ekIntermediateCertsFile)
+func SecureConnectToDefaultTPM(ekCertReader io.Reader) (*TPMConnection, error) {
+	if ekCertReader == nil {
+		return nil, errors.New("nil ekCertReader")
+	}
+
+	chain, err := verifyEkCertificate(ekCertReader)
 	if err != nil {
-		var icErr intermediateCertsError
-		if xerrors.As(err, &icErr) {
-			return nil, InvalidIntermediateCertsFileError{err.Error()}
+		var cfErr certFileError
+		if xerrors.As(err, &cfErr) {
+			return nil, InvalidEkCertFileError{err.Error()}
 		}
 		var verifyErr verificationError
 		if xerrors.As(err, &verifyErr) {
@@ -615,7 +594,12 @@ func SecureConnectToDefaultTPM(ekIntermediateCertsFile string) (*TPMConnection, 
 			}
 			return nil, TPMVerificationError{fmt.Sprintf("cannot verify endorsement certificate: %s", err)}
 		}
-		return nil, xerrors.Errorf("cannot connect to TPM and verify endorsement certificate: %w", err)
+		return nil, xerrors.Errorf("cannot verify endorsement certificate: %w", err)
+	}
+
+	tpm, err := connectToDefaultTPM()
+	if err != nil {
+		return nil, err
 	}
 
 	succeeded := false

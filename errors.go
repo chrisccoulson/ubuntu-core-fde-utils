@@ -70,12 +70,12 @@ func (e AuthFailError) Error() string {
 
 // InvalidIntermediateCertsFileError is returned from SecureConnectToDefaultTPM if the specified file providing intermediate
 // certificates for EK cert verification is invalid.
-type InvalidIntermediateCertsFileError struct {
+type InvalidEkCertFileError struct {
 	msg string
 }
 
-func (e InvalidIntermediateCertsFileError) Error() string {
-	return fmt.Sprintf("invalid intermedate certs file: %s", e.msg)
+func (e InvalidEkCertFileError) Error() string {
+	return fmt.Sprintf("invalid EK certificate file: %s", e.msg)
 }
 
 // TPMVerificationError is returned from SecureConnectToDefaultTPM is the TPM doesn't contain a EK cert, or verification of the

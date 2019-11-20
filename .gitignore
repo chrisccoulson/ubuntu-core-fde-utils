@@ -1,5 +1,5 @@
 examples/change-pin/change-pin
-examples/fetch-intermediates/fetch-intermediates
+examples/get-ek-certificate/get-ek-certificate
 examples/provision-status/provision-status
 examples/provision-tpm/provision-tpm
 examples/seal-key/seal-key

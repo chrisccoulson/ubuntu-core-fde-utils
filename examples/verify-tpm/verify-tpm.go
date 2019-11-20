@@ -27,16 +27,28 @@ import (
 	"github.com/chrisccoulson/ubuntu-core-fde-utils"
 )
 
-var intermediateCerts string
+var ekCert string
 
 func init() {
-	flag.StringVar(&intermediateCerts, "intermediate-certs", "", "")
+	flag.StringVar(&ekCert, "ek-cert-file", "", "")
 }
 
 func main() {
 	flag.Parse()
 
-	if _, err := fdeutil.SecureConnectToDefaultTPM(intermediateCerts); err != nil {
+	if ekCert == "" {
+		fmt.Fprintf(os.Stderr, "No -ek-cert-file\n")
+		os.Exit(1)
+	}
+
+	f, err := os.Open(ekCert)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot open EK certificate file: %v\n", err)
+		os.Exit(1)
+	}
+	defer f.Close()
+
+	if _, err := fdeutil.SecureConnectToDefaultTPM(f); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot verify that TPM is genuine: %v\n", err)
 		os.Exit(1)
 	}
