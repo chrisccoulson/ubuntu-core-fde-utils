@@ -487,14 +487,7 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, error) {
 	return chain, nil
 }
 
-// FetchEkCertificate attempts to obtain the endorsement key certificate for the TPM assocated with the tpm parameter, and then
-// download the associated intermediate certificates.
-//
-// On success, the EK certificate and its intermediates are written to the provided io.Writer in a form that can be read by
-// SecureConnectToDefaultTPM. If no EK certificate can be obtained, this function will return an error unless executed inside a guest
-// VM. In this case, an empty certificate that can be unmarshalled correctly by SecureConnectoToDefaultTPM will be written in order to
-// support fallback to a non-secure connection when connecting to swtpm inside a guest VM.
-func FetchEkCertificate(tpm *TPMConnection, w io.Writer) error {
+func fetchEkCertificate(tpm *TPMConnection, w io.Writer) error {
 	var data ekCertData
 
 	if cert, err := readEkCert(tpm.TPMContext); err != nil {
@@ -530,7 +523,7 @@ func FetchEkCertificate(tpm *TPMConnection, w io.Writer) error {
 //
 // On success, the EK certificate and its intermediates are saved atomically to the file referenced by dest in a form that can be read
 // by SecureConnectToDefaultTPM. If no EK certificate can be obtained, this function will return an error unless executed inside a
-// guest VM. In this case, an empty certificate that can be unmarshalled correctly by SecureConnectoToDefaultTPM will be written in
+// guest VM. In this case, an empty certificate that can be unmarshalled correctly by SecureConnectToDefaultTPM will be written in
 // order to support fallback to a non-secure connection when connecting to swtpm inside a guest VM.
 func FetchAndSaveEkCertificate(tpm *TPMConnection, dest string) error {
 	f, err := osutil.NewAtomicFile(dest, 0600, 0, sys.UserID(osutil.NoChown), sys.GroupID(osutil.NoChown))
@@ -539,7 +532,7 @@ func FetchAndSaveEkCertificate(tpm *TPMConnection, dest string) error {
 	}
 	defer f.Cancel()
 
-	if err := FetchEkCertificate(tpm, f); err != nil {
+	if err := fetchEkCertificate(tpm, f); err != nil {
 		return err
 	}
 
@@ -583,11 +576,15 @@ func ConnectToDefaultTPM() (*TPMConnection, error) {
 	return t, nil
 }
 
-// SecureConnectToDefaultTPM will attempt to connect to the default TPM, verify the provided manufacturer issued endorsement
-// certificate against the built-in CA roots and then verify that the TPM is the one for which the endorsement certificate was
-// issued. The ekCertReader argument should read from a file created previously by FetchAndSaveEkCertificate.
+// SecureConnectToDefaultTPM will attempt to connect to the default TPM, verify the manufacturer issued endorsement certificate
+// against the built-in CA roots and then verify that the TPM is the one for which the endorsement certificate was issued. If
+// provided, the ekCertReader argument should read from a file created previously by FetchAndSaveEkCertificate. This makes it
+// possible to connect to the TPM without requiring network access to download certificates.
 //
 // If the data read from ekCertReader cannot be unmarshalled or parsed correctly, a InvalidEkCertError error will be returned.
+//
+// If ekCertReader is nil, this function will attempt to obtain the endorsement key certificate for the TPM and then download the
+// required intermediate certificates.
 //
 // If verification of the endorsement key certificate fails, a EkCertVerificationError error will be returned.
 //
@@ -599,8 +596,27 @@ func ConnectToDefaultTPM() (*TPMConnection, error) {
 // executed yet), this function will attempt to create a transient endorsement key. This requires knowledge of the endorsement
 // hierarchy authorization value, which will be empty on a newly cleared device. If this fails, ErrProvisioning will be returned.
 func SecureConnectToDefaultTPM(ekCertReader io.Reader, endorsementAuth []byte) (*TPMConnection, error) {
+	tpm, err := connectToDefaultTPM()
+	if err != nil {
+		return nil, err
+	}
+
+	succeeded := false
+	defer func() {
+		if succeeded {
+			return
+		}
+		tpm.Close()
+	}()
+
+	t := &TPMConnection{TPMContext: tpm}
+
 	if ekCertReader == nil {
-		return nil, errors.New("nil ekCertReader")
+		b := new(bytes.Buffer)
+		if err := fetchEkCertificate(t, b); err != nil {
+			return nil, EkCertVerificationError{err.Error()}
+		}
+		ekCertReader = b
 	}
 
 	chain, err := verifyEkCertificate(ekCertReader)
@@ -616,20 +632,7 @@ func SecureConnectToDefaultTPM(ekCertReader io.Reader, endorsementAuth []byte) (
 		return nil, xerrors.Errorf("cannot verify EK certificate: %w", err)
 	}
 
-	tpm, err := connectToDefaultTPM()
-	if err != nil {
-		return nil, err
-	}
-
-	succeeded := false
-	defer func() {
-		if succeeded {
-			return
-		}
-		tpm.Close()
-	}()
-
-	t := &TPMConnection{TPMContext: tpm, verifiedEkCertChain: chain}
+	t.verifiedEkCertChain = chain
 
 	if err := t.init(endorsementAuth); err != nil {
 		var unavailErr tpm2.ResourceUnavailableError

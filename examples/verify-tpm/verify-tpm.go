@@ -20,7 +20,6 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
 	"io"
@@ -41,22 +40,7 @@ func main() {
 	flag.Parse()
 
 	var ekCertReader io.Reader
-	if ekCert == "" {
-		b := new(bytes.Buffer)
-		func() {
-			tpm, err := fdeutil.ConnectToDefaultTPM()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Cannot connect to TPM to obtain EK certificate: %v\n", err)
-				os.Exit(1)
-			}
-			defer tpm.Close()
-			if err := fdeutil.FetchEkCertificate(tpm, b); err != nil {
-				fmt.Fprintf(os.Stderr, "Cannot fetch EK certificate: %v\n", err)
-				os.Exit(1)
-			}
-		}()
-		ekCertReader = b
-	} else {
+	if ekCert != "" {
 		f, err := os.Open(ekCert)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Cannot open EK certificate file: %v\n", err)
