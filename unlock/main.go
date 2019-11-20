@@ -26,6 +26,8 @@ import (
 	"os/exec"
 
 	"github.com/chrisccoulson/ubuntu-core-fde-utils"
+
+	"golang.org/x/xerrors"
 )
 
 var insecure bool
@@ -36,12 +38,17 @@ var pin string
 
 const (
 	masterKeyFilePath string = "/run/unlock.tmp"
+)
 
-	genericFailExitCode        = 1
-	invalidKeyFileExitCode     = 2
-	tpmProvisioningErrExitCode = 3
-	tpmLockedOutExitCode       = 4
-	pinFailExitCode            = 5
+const (
+	unspecifiedErrorExitCode = iota + 1
+	invalidArgsExitCode
+	invalidKeyFileExitCode
+	ekCertVerificationErrExitCode
+	tpmVerificationErrExitCode
+	tpmProvisioningErrExitCode
+	tpmLockedOutExitCode
+	pinFailExitCode
 )
 
 func init() {
@@ -54,18 +61,18 @@ func init() {
 func run() int {
 	if ekCertFile == "" && !insecure {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device: missing -ek-cert-file\n")
-		return genericFailExitCode
+		return invalidArgsExitCode
 	}
 
 	if keyFile == "" {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device: missing -key-file\n")
-		return genericFailExitCode
+		return invalidArgsExitCode
 	}
 
 	args := flag.Args()
 	if len(args) < 2 {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device: insufficient arguments\n")
-		return genericFailExitCode
+		return invalidArgsExitCode
 	}
 
 	devicePath := args[0]
@@ -88,7 +95,7 @@ func run() int {
 		if !insecure {
 			ekCertReader, err := os.Open(ekCertFile)
 			if err != nil {
-				return nil, fmt.Errorf("cannot open EK certificate file: %v", err)
+				return nil, xerrors.Errorf("cannot open endorsement key certificate file: %w", err)
 			}
 			defer ekCertReader.Close()
 			return fdeutil.SecureConnectToDefaultTPM(ekCertReader, nil)
@@ -96,17 +103,53 @@ func run() int {
 		return fdeutil.ConnectToDefaultTPM()
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: cannot connect to TPM: %v\n", devicePath, err)
-		return genericFailExitCode
+		fmt.Fprintf(os.Stderr, "Cannot open TPM connection: %v", err)
+		ret := unspecifiedErrorExitCode
+		switch err {
+		case fdeutil.ErrProvisioning:
+			// ErrProvisioning indicates that there isn't a valid persistent EK, and a transient one can't be created because the endorsement
+			// hierarchy has a non-null authorization value. There's no point in trying ProvisionTPM to create a persistent one here, because
+			// we know that will fail too without the endorsement hierarchy authorization - the only way to recover at this point is to call
+			// ProvisionTPM with the correct endorsement hierarchy authorization value, or with mode == ProvisionModeClear.
+			ret = tpmProvisioningErrExitCode
+		default:
+			var pe *os.PathError
+			if _, ok := err.(fdeutil.EkCertVerificationError); ok {
+				ret = ekCertVerificationErrExitCode
+			} else if _, ok := err.(fdeutil.TPMVerificationError); ok {
+				ret = tpmVerificationErrExitCode
+			} else if xerrors.As(err, &pe) && pe.Path == ekCertFile {
+				ret = ekCertVerificationErrExitCode
+			}
+		}
+		return ret
 	}
 	defer tpm.Close()
 
+	reprovisionAttempted := false
+
+RetryUnseal:
 	key, err := fdeutil.UnsealKeyFromTPM(tpm, in, pin)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: error unsealing key:: %v\n", devicePath, err)
-		ret := genericFailExitCode
+		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: error unsealing key: %v\n", devicePath, err)
+		ret := unspecifiedErrorExitCode
 		switch err {
 		case fdeutil.ErrProvisioning:
+			// ErrProvisioning in this context indicates that there isn't a valid persistent SRK. Have a go at creating one now and then
+			// retrying the unseal operation - if the previous SRK was evicted, the TPM owner hasn't changed and the storage hierarchy still
+			// has a null authorization value, then this will allow us to unseal the key without requiring any type of manual recovery. If the
+			// storage hierarchy has a non-null authorization value, ProvionTPM will fail. If the TPM owner has changed, ProvisionTPM might
+			// succeed, but UnsealKeyFromTPM will fail with InvalidKeyFileError when retried.
+			if !reprovisionAttempted {
+				reprovisionAttempted = true
+				fmt.Fprintf(os.Stderr, " Attempting automatic recovery...\n")
+				if err := fdeutil.ProvisionTPM(tpm, fdeutil.ProvisionModeWithoutLockout, nil, nil); err == nil {
+					fmt.Fprintf(os.Stderr, " ...ProvisionTPM succeeded. Retrying unseal operation now\n")
+					goto RetryUnseal
+				} else {
+					fmt.Fprintf(os.Stderr, " ...ProvisionTPM failed: %v\n", err)
+				}
+			}
 			ret = tpmProvisioningErrExitCode
 		case fdeutil.ErrLockout:
 			ret = tpmLockedOutExitCode
@@ -123,7 +166,7 @@ func run() int {
 	masterKeyFile, err := os.OpenFile(masterKeyFilePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: error creating temporary master key file: %v", devicePath, err)
-		return genericFailExitCode
+		return unspecifiedErrorExitCode
 	}
 	defer func() {
 		defer os.Remove(masterKeyFilePath)
@@ -132,7 +175,7 @@ func run() int {
 
 	if _, err := masterKeyFile.Write(key); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: error writing master key to temporary file: %v", devicePath, err)
-		return genericFailExitCode
+		return unspecifiedErrorExitCode
 	}
 
 	cmd := exec.Command("cryptsetup", "--type", "luks2", "--master-key-file", masterKeyFilePath, "open", devicePath, name)
@@ -141,7 +184,7 @@ func run() int {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: cryptsetup execution failed: %v\n", devicePath, err)
-		return genericFailExitCode
+		return unspecifiedErrorExitCode
 	}
 
 	return 0
