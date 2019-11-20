@@ -80,7 +80,7 @@ func main() {
 	buffer.WriteString("\t}\n")
 	buffer.WriteString(")")
 
-	if err := ioutil.WriteFile(flag.Args()[1], buffer.Bytes(), os.ModePerm); err != nil {
+	if err := ioutil.WriteFile(flag.Args()[1], buffer.Bytes(), 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot write output file: %v\n", err)
 		os.Exit(1)
 	}
