@@ -28,12 +28,12 @@ import (
 )
 
 var (
-	clear         bool
-	lockoutAuth   string
-	noLockoutAuth bool
-	ownerAuth     string
+	clear           bool
+	lockoutAuth     string
+	noLockoutAuth   bool
+	ownerAuth       string
 	endorsementAuth string
-	requestClear  bool
+	requestClear    bool
 )
 
 func init() {
