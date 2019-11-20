@@ -545,8 +545,8 @@ func FetchAndSaveEkCertificate(tpm *TPMConnection, dest string) error {
 
 // ConnectToDefaultTPM will attempt to connect to the default TPM. It makes no attempt to verify the authenticity of the TPM. This
 // function is useful for connecting to a device that isn't correctly provisioned and for which the endorsement hierarchy
-// authorization value is unknown, or for connecting to a device in order to execute FetchAndSaveEkCertificate. It should not be
-// used in any other scenario.
+// authorization value is unknown (so that it can be cleared), or for connecting to a device in order to execute
+// FetchAndSaveEkCertificate. It should not be used in any other scenario.
 func ConnectToDefaultTPM() (*TPMConnection, error) {
 	tpm, err := connectToDefaultTPM()
 	if err != nil {
@@ -584,7 +584,8 @@ func ConnectToDefaultTPM() (*TPMConnection, error) {
 // If the data read from ekCertReader cannot be unmarshalled or parsed correctly, a InvalidEkCertError error will be returned.
 //
 // If ekCertReader is nil, this function will attempt to obtain the endorsement key certificate for the TPM and then download the
-// required intermediate certificates.
+// required intermediate certificates. This requires network access. If network access is unavailable and there is no existing
+// EK certificate blob created previously by FetchAndSaveEkCertificate, then ConnectToDefaultTPM must be used instead.
 //
 // If verification of the endorsement key certificate fails, a EkCertVerificationError error will be returned.
 //
