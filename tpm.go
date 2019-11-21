@@ -35,7 +35,6 @@ import (
 	"time"
 
 	"github.com/chrisccoulson/go-tpm2"
-	"github.com/intel-go/cpuid"
 	"github.com/snapcore/snapd/httputil"
 	"github.com/snapcore/snapd/osutil"
 	"github.com/snapcore/snapd/osutil/sys"
@@ -651,14 +650,7 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, *TPMDevic
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}
 	candidates, err := cert.Verify(opts)
 	if err != nil {
-		// Allow a fallback when running in a hypervisor in order to support swtpm
-		if cpuid.HasFeature(cpuid.HYPERVISOR) {
-			candidates = make([][]*x509.Certificate, 1)
-			candidates[0] = make([]*x509.Certificate, 1)
-			candidates[0][0] = cert
-		} else {
-			return nil, nil, xerrors.Errorf("certificate verification failed: %w", err)
-		}
+		return nil, nil, xerrors.Errorf("certificate verification failed: %w", err)
 	}
 
 	// Extended Key Usage MUST contain tcg-kp-EKCertificate (and also require that the usage is nested)

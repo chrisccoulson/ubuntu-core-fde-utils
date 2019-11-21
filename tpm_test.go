@@ -630,6 +630,7 @@ func TestSecureConnectToDefaultTPM(t *testing.T) {
 			if err != nil {
 				t.Fatalf("createTestCA failed: %v", err)
 			}
+			t.Logf("Raw untrusted CA cert: %x\n", caCert)
 
 			tpm, err := ConnectToDefaultTPM()
 			if err != nil {
@@ -641,6 +642,7 @@ func TestSecureConnectToDefaultTPM(t *testing.T) {
 			if err != nil {
 				t.Fatalf("createTestEkCert failed: %v", err)
 			}
+			t.Logf("Raw untrusted EK cert: %x\n", cert)
 
 			data := ekCertData{Cert: cert}
 			b := new(bytes.Buffer)

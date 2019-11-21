@@ -28,6 +28,8 @@ import (
 	"github.com/chrisccoulson/ubuntu-core-fde-utils"
 )
 
+var insecure bool
+
 var ekCertFile string
 var keyFile string
 var pin string
@@ -43,6 +45,7 @@ const (
 )
 
 func init() {
+	flag.BoolVar(&insecure, "insecure", false, "")
 	flag.StringVar(&ekCertFile, "ek-cert-file", "", "")
 	flag.StringVar(&keyFile, "key-file", "", "")
 	flag.StringVar(&pin, "pin", "", "")
@@ -51,7 +54,7 @@ func init() {
 func main() {
 	flag.Parse()
 
-	if ekCertFile == "" {
+	if ekCertFile == "" && !insecure {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device: missing -ek-cert-file\n")
 		os.Exit(genericExitCode)
 	}
@@ -70,13 +73,6 @@ func main() {
 	devicePath := args[0]
 	name := args[1]
 
-	ekCertReader, err := os.Open(ekCertFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: cannot open EK certificate file: %v\n", devicePath, err)
-		os.Exit(genericExitCode)
-	}
-	defer ekCertReader.Close()
-
 	var in *os.File
 	if keyFile == "-" {
 		in = os.Stdin
@@ -90,11 +86,18 @@ func main() {
 		defer in.Close()
 	}
 
-	tpm, err := fdeutil.SecureConnectToDefaultTPM(ekCertReader, nil)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot acquire TPM context: %v", err)
-		os.Exit(1)
-	}
+	tpm, err := func() (*fdeutil.TPMConnection, error) {
+		if !insecure {
+			ekCertReader, err := os.Open(ekCertFile)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Cannot unlock device %s: cannot open EK certificate file: %v\n", devicePath, err)
+				os.Exit(genericExitCode)
+			}
+			defer ekCertReader.Close()
+			return fdeutil.SecureConnectToDefaultTPM(ekCertReader, nil)
+		}
+		return fdeutil.ConnectToDefaultTPM()
+	}()
 	defer tpm.Close()
 
 	key, err := fdeutil.UnsealKeyFromTPM(tpm, in, pin)

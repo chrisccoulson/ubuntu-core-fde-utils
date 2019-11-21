@@ -28,12 +28,6 @@
 			"revisionTime": "2019-07-26T03:53:44Z"
 		},
 		{
-			"checksumSHA1": "W0sNPuq9QaBntMNAD1+H1rYMHH8=",
-			"path": "github.com/intel-go/cpuid",
-			"revision": "1a4a6f06a1c643c8fbd339bd61d980960627d09e",
-			"revisionTime": "2018-10-03T10:55:27Z"
-		},
-		{
 			"checksumSHA1": "CSPV27Mm4+WBlyGFT/lKz1la/VI=",
 			"path": "github.com/snapcore/go-gettext",
 			"revision": "a77afd68d2bd1740e0d843e28cc756ee59493e24",
