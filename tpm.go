@@ -434,6 +434,77 @@ NextCert:
 	return true
 }
 
+func parseTPMDeviceAttributesFromDirectoryName(dirName pkix.RDNSequence) (*TPMDeviceAttributes, pkix.RDNSequence, error) {
+	var attrs TPMDeviceAttributes
+	var rdnsOut pkix.RelativeDistinguishedNameSET
+
+	hasManufacturer, hasModel, hasVersion := false, false, false
+
+	for _, rdns := range dirName {
+		for _, atv := range rdns {
+			switch {
+			case atv.Type.Equal(oidTcgAttributeTpmManufacturer):
+				if hasManufacturer {
+					return nil, nil, asn1.StructuralError{Msg: "duplicate TPM manufacturer"}
+				}
+				hasManufacturer = true
+				s, ok := atv.Value.(string)
+				if !ok {
+					return nil, nil, asn1.StructuralError{Msg: "invalid TPM attribute value"}
+				}
+				if !strings.HasPrefix(s, "id:") {
+					return nil, nil, asn1.StructuralError{Msg: "invalid TPM manufacturer"}
+				}
+				hex, err := hex.DecodeString(strings.TrimPrefix(s, "id:"))
+				if err != nil {
+					return nil, nil, asn1.StructuralError{Msg: fmt.Sprintf("invalid TPM manufacturer: %v", err)}
+				}
+				if len(hex) != 4 {
+					return nil, nil, asn1.StructuralError{Msg: "invalid TPM manufacturer: too short"}
+				}
+				attrs.Manufacturer = tpm2.TPMManufacturer(binary.BigEndian.Uint32(hex))
+			case atv.Type.Equal(oidTcgAttributeTpmModel):
+				if hasModel {
+					return nil, nil, asn1.StructuralError{Msg: "duplicate TPM model"}
+				}
+				hasModel = true
+				s, ok := atv.Value.(string)
+				if !ok {
+					return nil, nil, asn1.StructuralError{Msg: "invalid TPM attribute value"}
+				}
+				attrs.Model = s
+			case atv.Type.Equal(oidTcgAttributeTpmVersion):
+				if hasVersion {
+					return nil, nil, asn1.StructuralError{Msg: "duplicate TPM firmware version"}
+				}
+				hasVersion = true
+				s, ok := atv.Value.(string)
+				if !ok {
+					return nil, nil, asn1.StructuralError{Msg: "invalid TPM attribute value"}
+				}
+				if !strings.HasPrefix(s, "id:") {
+					return nil, nil, asn1.StructuralError{Msg: "invalid TPM firmware version"}
+				}
+				hex, err := hex.DecodeString(strings.TrimPrefix(s, "id:"))
+				if err != nil {
+					return nil, nil, asn1.StructuralError{Msg: fmt.Sprintf("invalid TPM firmware version: %v", err)}
+				}
+				b := make([]byte, 4)
+				copy(b[len(b)-len(hex):], hex)
+				attrs.FirmwareVersion = binary.BigEndian.Uint32(b)
+			default:
+				continue
+			}
+			rdnsOut = append(rdnsOut, atv)
+		}
+	}
+
+	if hasManufacturer && hasModel && hasVersion {
+		return &attrs, pkix.RDNSequence{rdnsOut}, nil
+	}
+	return nil, nil, errors.New("incomplete or missing attributes")
+}
+
 func parseTPMDeviceAttributesFromSAN(data []byte) (*TPMDeviceAttributes, pkix.RDNSequence, error) {
 	var seq asn1.RawValue
 	if rest, err := asn1.Unmarshal(data, &seq); err != nil {
@@ -466,78 +537,11 @@ func parseTPMDeviceAttributesFromSAN(data []byte) (*TPMDeviceAttributes, pkix.RD
 				return nil, nil, errors.New("trailing bytes after SAN extension directory name")
 			}
 
-			var attrs TPMDeviceAttributes
-			hasManufacturer, hasModel, hasVersion := false, false, false
-			var rdnsOut pkix.RelativeDistinguishedNameSET
-
-			for _, rdns := range dirName {
-				for _, atv := range rdns {
-					switch {
-					case atv.Type.Equal(oidTcgAttributeTpmManufacturer):
-						if hasManufacturer {
-							return nil, nil, asn1.StructuralError{Msg: "duplicate TPM manufacturer"}
-						}
-						hasManufacturer = true
-						s, ok := atv.Value.(string)
-						if !ok {
-							return nil, nil, asn1.StructuralError{Msg: "invalid TPM attribute value"}
-						}
-						if !strings.HasPrefix(s, "id:") {
-							return nil, nil, asn1.StructuralError{Msg: "invalid TPM manufacturer"}
-						}
-						hex, err := hex.DecodeString(strings.TrimPrefix(s, "id:"))
-						if err != nil {
-							return nil, nil, asn1.StructuralError{Msg: fmt.Sprintf("invalid TPM manufacturer: %v", err)}
-						}
-						if len(hex) != 4 {
-							return nil, nil, asn1.StructuralError{Msg: "invalid TPM manufacturer: too short"}
-						}
-						attrs.Manufacturer = tpm2.TPMManufacturer(binary.BigEndian.Uint32(hex))
-					case atv.Type.Equal(oidTcgAttributeTpmModel):
-						if hasModel {
-							return nil, nil, asn1.StructuralError{Msg: "duplicate TPM model"}
-						}
-						hasModel = true
-						s, ok := atv.Value.(string)
-						if !ok {
-							return nil, nil, asn1.StructuralError{Msg: "invalid TPM attribute value"}
-						}
-						attrs.Model = s
-					case atv.Type.Equal(oidTcgAttributeTpmVersion):
-						if hasVersion {
-							return nil, nil, asn1.StructuralError{Msg: "duplicate TPM firmware version"}
-						}
-						hasVersion = true
-						s, ok := atv.Value.(string)
-						if !ok {
-							return nil, nil, asn1.StructuralError{Msg: "invalid TPM attribute value"}
-						}
-						if !strings.HasPrefix(s, "id:") {
-							return nil, nil, asn1.StructuralError{Msg: "invalid TPM firmware version"}
-						}
-						hex, err := hex.DecodeString(strings.TrimPrefix(s, "id:"))
-						if err != nil {
-							return nil, nil, asn1.StructuralError{Msg: fmt.Sprintf("invalid TPM firmware version: %v", err)}
-						}
-						b := make([]byte, 4)
-						copy(b[len(b)-len(hex):], hex)
-						attrs.FirmwareVersion = binary.BigEndian.Uint32(b)
-					default:
-						continue
-					}
-					rdnsOut = append(rdnsOut, atv)
-				}
-			}
-			if hasManufacturer && hasModel && hasVersion {
-				return &attrs, pkix.RDNSequence{rdnsOut}, nil
-			}
-			if hasManufacturer || hasModel || hasVersion {
-				return nil, nil, errors.New("incomplete")
-			}
+			return parseTPMDeviceAttributesFromDirectoryName(dirName)
 		}
 	}
 
-	return nil, nil, errors.New("not found")
+	return nil, nil, errors.New("no directoryName")
 }
 
 type certDataError struct {
