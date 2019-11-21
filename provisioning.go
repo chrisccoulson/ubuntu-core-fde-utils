@@ -334,7 +334,17 @@ func isObjectPrimaryKeyWithTemplate(tpm *tpm2.TPMContext, hierarchy tpm2.Handle,
 	pubBytes, _ := tpm2.MarshalToBytes(pub)
 	templateBytes, _ := tpm2.MarshalToBytes(template)
 	if !bytes.Equal(pubBytes, templateBytes) {
-		return false, nil
+		if template.Type == tpm2.ObjectTypeRSA && template.Params.RSADetail().Exponent == 0 {
+			var templateCopy *tpm2.Public
+			tpm2.UnmarshalFromBytes(templateBytes, &templateCopy)
+			templateCopy.Params.RSADetail().Exponent = 65537
+			templateBytes, _ = tpm2.MarshalToBytes(templateCopy)
+			if !bytes.Equal(pubBytes, templateBytes) {
+				return false, nil
+			}
+		} else {
+			return false, nil
+		}
 	}
 
 	parent, _ := tpm.WrapHandle(hierarchy)
