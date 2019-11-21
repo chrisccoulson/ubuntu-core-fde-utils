@@ -62,5 +62,9 @@ func main() {
 	fmt.Println("- Model:", tpm.VerifiedDeviceAttributes().Model)
 	fmt.Printf("- Firmware version: 0x%08x\n", tpm.VerifiedDeviceAttributes().FirmwareVersion)
 
+	if len(tpm.VerifiedEkCertChain()) > 1 {
+		fmt.Println("Authority:", tpm.VerifiedEkCertChain()[len(tpm.VerifiedEkCertChain())-1].Subject)
+	}
+
 	tpm.Close()
 }
