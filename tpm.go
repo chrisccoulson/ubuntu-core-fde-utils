@@ -115,12 +115,6 @@ func (t *TPMConnection) Close() error {
 	return t.TPMContext.Close()
 }
 
-type invalidEkError struct{}
-
-func (e invalidEkError) Error() string {
-	return "object is not a valid endorsement key"
-}
-
 func (t *TPMConnection) createTransientEkContext(endorsementAuth []byte) (tpm2.ResourceContext, error) {
 	endorsement, _ := t.WrapHandle(tpm2.HandleEndorsement)
 	sessionContext, err := t.StartAuthSession(nil, endorsement, tpm2.SessionTypeHMAC, nil, tpm2.HashAlgorithmSHA256, endorsementAuth)
@@ -772,10 +766,9 @@ func ConnectToDefaultTPM() (*TPMConnection, error) {
 	}()
 
 	if err := t.init(nil); err != nil {
-		var ieErr invalidEkError
 		var unavailErr tpm2.ResourceUnavailableError
 		var verifyErr verificationError
-		if !xerrors.As(err, &ieErr) && !xerrors.As(err, &unavailErr) && !xerrors.As(err, &verifyErr) {
+		if !xerrors.As(err, &unavailErr) && !xerrors.As(err, &verifyErr) {
 			return nil, xerrors.Errorf("cannot initialize TPM connection: %w", err)
 		}
 	}
@@ -849,8 +842,7 @@ func SecureConnectToDefaultTPM(ekCertReader io.Reader, endorsementAuth []byte) (
 
 	if err := t.init(endorsementAuth); err != nil {
 		var unavailErr tpm2.ResourceUnavailableError
-		var ieErr invalidEkError
-		if xerrors.As(err, &unavailErr) || xerrors.As(err, &ieErr) {
+		if xerrors.As(err, &unavailErr) {
 			return nil, ErrProvisioning
 		}
 		var verifyErr verificationError
