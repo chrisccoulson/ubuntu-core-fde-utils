@@ -233,30 +233,32 @@ func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte,
 	session, _ = tpm.HmacSession()
 
 	// Provision a storage root key
-	srkContext, err := tpm.WrapHandle(srkHandle)
-	if err == nil {
-		if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, session.WithAuthValue(ownerAuth)); err != nil {
+	if status&AttrValidSRK == 0 {
+		srkContext, err := tpm.WrapHandle(srkHandle)
+		if err == nil {
+			if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, session.WithAuthValue(ownerAuth)); err != nil {
+				if isAuthFailError(err) {
+					return AuthFailError{tpm2.HandleOwner}
+				}
+				return xerrors.Errorf("cannot evict existing object at handle required by storage root key: %w", err)
+			}
+		} else if _, notFound := err.(tpm2.ResourceUnavailableError); !notFound {
+			return xerrors.Errorf("cannot create context for object at handle required by storage root key: %w", err)
+		}
+
+		srkContext, _, _, _, _, _, err = tpm.CreatePrimary(tpm2.HandleOwner, nil, &srkTemplate, nil, nil, session.WithAuthValue(ownerAuth))
+		if err != nil {
 			if isAuthFailError(err) {
 				return AuthFailError{tpm2.HandleOwner}
 			}
-			return xerrors.Errorf("cannot evict existing object at handle required by storage root key: %w", err)
+			return xerrors.Errorf("cannot create storage root key: %w", err)
 		}
-	} else if _, notFound := err.(tpm2.ResourceUnavailableError); !notFound {
-		return xerrors.Errorf("cannot create context for object at handle required by storage root key: %w", err)
-	}
+		defer tpm.FlushContext(srkContext)
 
-	srkContext, _, _, _, _, _, err = tpm.CreatePrimary(tpm2.HandleOwner, nil, &srkTemplate, nil, nil, session.WithAuthValue(ownerAuth))
-	if err != nil {
-		if isAuthFailError(err) {
-			return AuthFailError{tpm2.HandleOwner}
+		if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, session.WithAuthValue(ownerAuth)); err != nil {
+			// Owner auth failure would have been caught by CreatePrimary
+			return xerrors.Errorf("cannot make storage root key persistent: %w", err)
 		}
-		return xerrors.Errorf("cannot create storage root key: %w", err)
-	}
-	defer tpm.FlushContext(srkContext)
-
-	if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, session.WithAuthValue(ownerAuth)); err != nil {
-		// Owner auth failure would have been caught by CreatePrimary
-		return xerrors.Errorf("cannot make storage root key persistent: %w", err)
 	}
 
 	if mode == ProvisionModeWithoutLockout {
@@ -306,6 +308,12 @@ func RequestTPMClearUsingPPI() error {
 	return nil
 }
 
+// isObjectPrimaryKeyWithTemplate checks whether the object associated with context is primary key in the specified hierarchy with
+// the specified template.
+//
+// This isn't completely accurate as it does not know if the unique field of the specified template was used to create the object,
+// so it should be used with caution. This function returning true is no guarantee that recreating the object with the specified
+// template would create the same object.
 func isObjectPrimaryKeyWithTemplate(tpm *tpm2.TPMContext, hierarchy tpm2.Handle, context tpm2.ResourceContext,
 	template *tpm2.Public, session *tpm2.Session) (bool, error) {
 	var auditSession *tpm2.Session
@@ -375,7 +383,8 @@ func ProvisionStatus(tpm *TPMConnection) (ProvisionStatusAttributes, error) {
 		out |= AttrValidEK
 	}
 
-	if ok, err := hasValidSRK(tpm.TPMContext, nil); err != nil {
+	session, _ := tpm.HmacSession()
+	if ok, err := hasValidSRK(tpm.TPMContext, session); err != nil {
 		return 0, err
 	} else if ok {
 		out |= AttrValidSRK

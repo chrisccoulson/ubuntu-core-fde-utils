@@ -115,48 +115,17 @@ func (e invalidEkError) Error() string {
 	return "object is not a valid endorsement key"
 }
 
-// acquireEkContext returns a ResourceContext for the object resident in the endorsement key's slot on the TPM. Under the hood,
-// go-tpm2 initializes the ResourceContext with TPM2_ReadPublic, and cross-checks that the returned name and public area match. The
-// returned name is available via ResourceContext.Name and the returned public area is retained by the ResourceContext and used to
-// share secrets with the TPM.
-//
-// If the TPM isn't provisioned yet, it attempt to create a transient EK using the provided authorization.
-//
-// Without verification against the EK certificate The returned ResourceContext isn't yet safe for secret sharing with the TPM.
-func (t *TPMConnection) acquireEkContext(endorsementAuth []byte) (tpm2.ResourceContext, error) {
-	createTransient := func() (tpm2.ResourceContext, error) {
-		endorsement, _ := t.WrapHandle(tpm2.HandleEndorsement)
-		sessionContext, err := t.StartAuthSession(nil, endorsement, tpm2.SessionTypeHMAC, nil, tpm2.HashAlgorithmSHA256, endorsementAuth)
-		if err != nil {
-			return nil, err
-		}
-		defer t.FlushContext(sessionContext)
-
-		context, _, _, _, _, _, err :=
-			t.CreatePrimary(tpm2.HandleEndorsement, nil, &ekTemplate, nil, nil, &tpm2.Session{Context: sessionContext})
-		return context, err
-	}
-
-	ekContext, err := t.WrapHandle(ekHandle)
+func (t *TPMConnection) createTransientEkContext(endorsementAuth []byte) (tpm2.ResourceContext, error) {
+	endorsement, _ := t.WrapHandle(tpm2.HandleEndorsement)
+	sessionContext, err := t.StartAuthSession(nil, endorsement, tpm2.SessionTypeHMAC, nil, tpm2.HashAlgorithmSHA256, endorsementAuth)
 	if err != nil {
-		if _, unavail := err.(tpm2.ResourceUnavailableError); unavail {
-			if rc, err := createTransient(); err == nil {
-				return rc, nil
-			}
-		}
-		return nil, err
+		return nil, xerrors.Errorf("cannot start auth session: %w", err)
 	}
+	defer t.FlushContext(sessionContext)
 
-	if ok, err := isObjectPrimaryKeyWithTemplate(t.TPMContext, tpm2.HandleEndorsement, ekContext, &ekTemplate, nil); err != nil {
-		return nil, xerrors.Errorf("cannot determine if object is a primary key in the endorsement hierarchy: %w", err)
-	} else if !ok {
-		if rc, err := createTransient(); err == nil {
-			return rc, nil
-		}
-		return nil, invalidEkError{}
-	}
-
-	return ekContext, nil
+	context, _, _, _, _, _, err :=
+		t.CreatePrimary(tpm2.HandleEndorsement, nil, &ekTemplate, nil, nil, &tpm2.Session{Context: sessionContext})
+	return context, err
 }
 
 // verifyEkContext verifies that the public area of the ResourceContext that was read back from the TPM is associated with the
@@ -227,20 +196,75 @@ func (t *TPMConnection) init(endorsementAuth []byte) error {
 		}
 	}
 
-	// Acquire a ResourceContext for the EK
-	ekContext, err := t.acquireEkContext(endorsementAuth)
-	if err != nil {
-		return xerrors.Errorf("cannot obtain context for endorsement key: %w", err)
-	}
+	// Acquire an unverified ResourceContext for the EK. If there is no object at the persistent EK index, then attempt to create
+	// a transient EK with the supplied authorization.
+	//
+	// Under the hood, go-tpm2 initializes the ResourceContext with TPM2_ReadPublic (or TPM2_CreatePrimary if we create a new one),
+	// and it cross-checks that the returned name and public area match. The returned name is available via ekContext.Name and the
+	// returned public area is retained by ekContext and used to share secrets with the TPM.
+	//
+	// Without verification against the EK certificate, ekContext isn't yet safe to use for secret sharing with the TPM.
+	ekContext, err := func() (tpm2.ResourceContext, error) {
+		rc, err := t.WrapHandle(ekHandle)
+		if err == nil {
+			return rc, nil
+		}
+		if _, unavail := err.(tpm2.ResourceUnavailableError); !unavail {
+			return nil, err
+		}
+		if rc, err := t.createTransientEkContext(endorsementAuth); err == nil {
+			return rc, nil
+		}
+		return nil, err
+	}()
 
 	if ekContext.Handle().Type() == tpm2.HandleTypeTransient {
 		defer t.FlushContext(ekContext)
 	}
 
 	if len(t.verifiedEkCertChain) > 0 {
-		// Verify that the ResourceContext is associated with the verified EK certificate
-		if err := verifyEkContext(t.verifiedEkCertChain[0], ekContext); err != nil {
+		// Verify that ekContext is associated with the verified EK certificate. If the first attempt fails and ekContext references a
+		// persistent object, then try to create a transient EK with the provided authorization and make another attempt at verification,
+		// in case the persistent object isn't a valid EK.
+		rc, err := func() (tpm2.ResourceContext, error) {
+			err := verifyEkContext(t.verifiedEkCertChain[0], ekContext)
+			if err == nil {
+				return ekContext, nil
+			}
+			if ekContext.Handle().Type() == tpm2.HandleTypeTransient {
+				return nil, err
+			}
+			transientEkContext, err2 := t.createTransientEkContext(endorsementAuth)
+			if err2 != nil {
+				return nil, err
+			}
+			err = verifyEkContext(t.verifiedEkCertChain[0], transientEkContext)
+			if err == nil {
+				return transientEkContext, nil
+			}
+			return nil, err
+		}()
+		if err != nil {
 			return verificationError{xerrors.Errorf("cannot verify public area of endorsement key read from the TPM: %w", err)}
+		}
+		if ekContext.Handle().Type() == tpm2.HandleTypePersistent && rc.Handle().Type() == tpm2.HandleTypeTransient {
+			// We created and verified a transient EK
+			defer t.FlushContext(rc)
+		}
+		ekContext = rc
+	} else if ekContext.Handle().Type() == tpm2.HandleTypePersistent {
+		// If we don't have a verified EK certificate and ekContext is a persistent object, just do a sanity check that the public area
+		// returned from the TPM has the expected properties. If it doesn't, then attempt to create a transient EK with the provided
+		// authorization value.
+		if ok, err := isObjectPrimaryKeyWithTemplate(t.TPMContext, tpm2.HandleEndorsement, ekContext, &ekTemplate, nil); err != nil {
+			return xerrors.Errorf("cannot determine if object is a primary key in the endorsement hierarchy: %w", err)
+		} else if !ok {
+			rc, err := t.createTransientEkContext(endorsementAuth)
+			if err != nil {
+				return verificationError{errors.New("public area of endorsement key read from the TPM is invalid")}
+			}
+			defer t.FlushContext(rc)
+			ekContext = rc
 		}
 	}
 
@@ -756,13 +780,16 @@ func ConnectToDefaultTPM() (*TPMConnection, error) {
 //
 // If verification of the endorsement key certificate fails, a EkCertVerificationError error will be returned.
 //
-// If the TPM cannot prove it is the device for which the endorsement key certificate was issued, a TPMVerificationError error will be
-// returned.
-//
 // In order for the TPM to prove it is the device for which the endorsement key certificate was issued, an endorsement key is
-// required. If the TPM doesn't contain a persistent endorsement key at the expected location (eg, if ProvisionTPM hasn't been
+// required. If the TPM doesn't contain a valid persistent endorsement key at the expected location (eg, if ProvisionTPM hasn't been
 // executed yet), this function will attempt to create a transient endorsement key. This requires knowledge of the endorsement
-// hierarchy authorization value, which will be empty on a newly cleared device. If this fails, ErrProvisioning will be returned.
+// hierarchy authorization value, which will be empty on a newly cleared device. If there is no object at the persistent endorsement
+// key index and creation of a transient endorement key fails, ErrProvisioning will be returned.
+//
+// If the TPM cannot prove it is the device for which the endorsement key certificate was issued, a TPMVerificationError error will be
+// returned. This can happen if there is an object at the persistent endorsement key index but it is not the object for which the
+// endorsement key certificate was issued, and creation of a transient endorsement key fails because the correct endorsement hierarchy
+// authorization value hasn't been provided.
 func SecureConnectToDefaultTPM(ekCertReader io.Reader, endorsementAuth []byte) (*TPMConnection, error) {
 	tpm, err := connectToDefaultTPM()
 	if err != nil {
