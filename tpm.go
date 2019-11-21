@@ -358,10 +358,7 @@ func fetchIntermediates(cert *x509.Certificate) ([]*x509.Certificate, error) {
 
 	for {
 		if len(cert.IssuingCertificateURL) == 0 {
-			if cpuid.HasFeature(cpuid.HYPERVISOR) {
-				break
-			}
-			return nil, fmt.Errorf("cannot download certificate for issuer of %v: no issuer URLs", cert.Subject)
+			break
 		}
 
 		var parent *x509.Certificate
