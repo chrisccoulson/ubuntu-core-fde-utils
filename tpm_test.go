@@ -258,6 +258,164 @@ func certifyTPM(tpm *tpm2.TPMContext, caCert []byte, caKey crypto.PrivateKey) er
 	return nil
 }
 
+func TestConnectToDefaultTPM(t *testing.T) {
+	openDefaultTcti = func() (io.ReadWriteCloser, error) {
+		return tpm2.OpenMssim(*mssimHost, *mssimTpmPort, *mssimPlatformPort)
+	}
+
+	connectAndClear := func(t *testing.T) *TPMConnection {
+		tpm, _ := openTPMSimulatorForTesting(t)
+		clearTPMWithPlatformAuth(t, tpm)
+		return tpm
+	}
+
+	verify := func(t *testing.T, tpm *TPMConnection, hasEk bool) {
+		if len(tpm.VerifiedEkCertChain()) > 0 {
+			t.Errorf("Should be no verified EK cert chain")
+		}
+		if tpm.VerifiedDeviceAttributes() != nil {
+			t.Errorf("Should be no verified device attributes")
+		}
+		rc, err := tpm.EkContext()
+		if !hasEk {
+			if err == nil {
+				t.Fatalf("TPMConnection.EkContext should have returned an error")
+			}
+			if rc != nil {
+				t.Errorf("TPMConnection.EkContext should have returned a nil context")
+			}
+			if err != ErrProvisioning {
+				t.Errorf("TPMConnection.EkContext returned an unexpected error: %v", err)
+			}
+		} else {
+			if err != nil {
+				t.Fatalf("TPMConnection.EkContext failed: %v", err)
+			}
+			if rc == nil {
+				t.Fatalf("TPMConnection.EkContext returned a nil context")
+			}
+			if rc.Handle() != ekHandle {
+				t.Errorf("TPMConnection.EkContext returned an unexpected context")
+			}
+		}
+		session := tpm.HmacSession()
+		if session == nil || session.Context == nil || session.Context.Handle().Type() != tpm2.HandleTypeHMACSession {
+			t.Fatalf("TPMConnection.HmacSession returned invalid session context")
+		}
+		if session.Attrs != tpm2.AttrContinueSession {
+			t.Errorf("TPMConnection.HmacSession returned invalid attributes")
+		}
+	}
+
+	t.Run("Unprovisioned", func(t *testing.T) {
+		func() {
+			tpm := connectAndClear(t)
+			defer closeTPM(t, tpm)
+		}()
+
+		tpm, err := ConnectToDefaultTPM()
+		if err != nil {
+			t.Fatalf("ConnectToDefaultTPM failed: %v", err)
+		}
+		defer tpm.Close()
+
+		verify(t, tpm, false)
+	})
+
+	t.Run("Provisioned", func(t *testing.T) {
+		func() {
+			tpm := connectAndClear(t)
+			defer closeTPM(t, tpm)
+
+			if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+				t.Fatalf("ProvisionTPM failed: %v", err)
+			}
+		}()
+
+		tpm, err := ConnectToDefaultTPM()
+		if err != nil {
+			t.Fatalf("ConnectToDefaultTPM failed: %v", err)
+		}
+		defer tpm.Close()
+
+		verify(t, tpm, true)
+	})
+
+	t.Run("InvalidEK", func(t *testing.T) {
+		func() {
+			tpm := connectAndClear(t)
+			defer closeTPM(t, tpm)
+
+			primary, _, _, _, _, _, err := tpm.CreatePrimary(tpm2.HandleEndorsement, nil, &ekTemplate, nil, nil, nil)
+			if err != nil {
+				t.Fatalf("CreatePrimary failed: %v", err)
+			}
+			defer flushContext(t, tpm, primary)
+
+			sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, tpm2.HashAlgorithmSHA256, nil)
+			if err != nil {
+				t.Fatalf("StartAuthSession failed: %v", err)
+			}
+			defer flushContext(t, tpm, sessionContext)
+
+			endorsement, _ := tpm.WrapHandle(tpm2.HandleEndorsement)
+			if _, _, err := tpm.PolicySecret(endorsement, sessionContext, nil, nil, 0, nil); err != nil {
+				t.Fatalf("PolicySecret failed: %v", err)
+			}
+
+			session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrContinueSession}
+			priv, pub, _, _, _, err := tpm.Create(primary, nil, &ekTemplate, nil, nil, &session)
+			if err != nil {
+				t.Fatalf("Create failed: %v", err)
+			}
+
+			if _, _, err := tpm.PolicySecret(endorsement, sessionContext, nil, nil, 0, nil); err != nil {
+				t.Fatalf("PolicySecret failed: %v", err)
+			}
+
+			context, _, err := tpm.Load(primary, priv, pub, &session)
+			if err != nil {
+				t.Fatalf("Load failed: %v", err)
+			}
+			defer flushContext(t, tpm, context)
+
+			if _, err := tpm.EvictControl(tpm2.HandleOwner, context, ekHandle, nil); err != nil {
+				t.Errorf("EvictControl failed: %v", err)
+			}
+		}()
+
+		tpm, err := ConnectToDefaultTPM()
+		if err != nil {
+			t.Fatalf("ConnectToDefaultTPM failed: %v", err)
+		}
+		defer tpm.Close()
+
+		verify(t, tpm, false)
+	})
+
+	t.Run("UnprovisionedWithEndorsementAuth", func(t *testing.T) {
+		testAuth := []byte("foo")
+		func() {
+			tpm := connectAndClear(t)
+			defer closeTPM(t, tpm)
+			if err := tpm.HierarchyChangeAuth(tpm2.HandleEndorsement, testAuth, nil); err != nil {
+				t.Fatalf("HierarchyChangeAuth failed: %v", err)
+			}
+		}()
+
+		tpm, err := ConnectToDefaultTPM()
+		if err != nil {
+			t.Fatalf("ConnectToDefaultTPM failed: %v", err)
+		}
+		defer func() {
+			clearTPMWithPlatformAuth(t, tpm)
+			tpm.Close()
+		}()
+
+		verify(t, tpm, false)
+	})
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(func() int {

@@ -98,6 +98,11 @@ func (t *TPMConnection) EkContext() (tpm2.ResourceContext, error) {
 // HmacSession returns a HMAC session instance which was created in order to conduct a proof-of-ownership check of the private part
 // of the endorsement key on the TPM. It is retained in order to reduce the number of sessions that need to be created during unseal
 // operations, and is created with a symmetric algorithm so that it is suitable for parameter encryption.
+// If the connection was created with SecureConnectToDefaultTPM, the session is salted with a value protected by the public part
+// of the key associated with the verified endorsement key certificate. The session key can only be retrieved by and used on the TPM
+// for which the endorsement certificate was issued. If the connection was created with ConnectToDefaultTPM, the session may be
+// salted with a value protected by the public part of the endorsement key if one exists or one is able to be created, but as the key
+// is not associated with a verified credential, there is no guarantee that only the TPM is able to retrieve the session key.
 func (t *TPMConnection) HmacSession() *tpm2.Session {
 	if t.hmacSession == nil {
 		return nil
@@ -218,9 +223,18 @@ func (t *TPMConnection) init(endorsementAuth []byte) error {
 		}
 		return nil, err
 	}()
+	if err != nil && len(t.verifiedEkCertChain) > 0 {
+		// No EK should be fatal in this context
+		return xerrors.Errorf("cannot obtain context for EK: %w", err)
+	}
 
-	if ekContext.Handle().Type() == tpm2.HandleTypeTransient {
-		defer t.FlushContext(ekContext)
+	ekIsPersistent := false
+	if ekContext != nil {
+		if ekContext.Handle().Type() == tpm2.HandleTypeTransient {
+			defer t.FlushContext(ekContext)
+		} else {
+			ekIsPersistent = true
+		}
 	}
 
 	if len(t.verifiedEkCertChain) > 0 {
@@ -248,12 +262,13 @@ func (t *TPMConnection) init(endorsementAuth []byte) error {
 		if err != nil {
 			return verificationError{xerrors.Errorf("cannot verify public area of endorsement key read from the TPM: %w", err)}
 		}
-		if ekContext.Handle().Type() == tpm2.HandleTypePersistent && rc.Handle().Type() == tpm2.HandleTypeTransient {
+		if ekIsPersistent && rc.Handle().Type() == tpm2.HandleTypeTransient {
 			// We created and verified a transient EK
 			defer t.FlushContext(rc)
+			ekIsPersistent = false
 		}
 		ekContext = rc
-	} else if ekContext.Handle().Type() == tpm2.HandleTypePersistent {
+	} else if ekIsPersistent {
 		// If we don't have a verified EK certificate and ekContext is a persistent object, just do a sanity check that the public area
 		// returned from the TPM has the expected properties. If it doesn't, then attempt to create a transient EK with the provided
 		// authorization value.
@@ -261,10 +276,10 @@ func (t *TPMConnection) init(endorsementAuth []byte) error {
 			return xerrors.Errorf("cannot determine if object is a primary key in the endorsement hierarchy: %w", err)
 		} else if !ok {
 			rc, err := t.createTransientEkContext(endorsementAuth)
-			if err != nil {
-				return verificationError{errors.New("public area of endorsement key read from the TPM is invalid")}
+			if err == nil {
+				defer t.FlushContext(rc)
 			}
-			defer t.FlushContext(rc)
+			ekIsPersistent = false
 			ekContext = rc
 		}
 	}
@@ -302,7 +317,7 @@ func (t *TPMConnection) init(endorsementAuth []byte) error {
 
 	succeeded = true
 
-	if ekContext.Handle().Type() == tpm2.HandleTypePersistent {
+	if ekIsPersistent {
 		t.ekContext = ekContext
 	}
 	t.hmacSession = sessionContext
