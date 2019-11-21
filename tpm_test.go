@@ -129,13 +129,6 @@ func clearTPMWithPlatformAuth(t *testing.T, tpm *TPMConnection) {
 }
 
 func resetTPMSimulator(t *testing.T, tpm *TPMConnection, tcti *tpm2.TctiMssim) {
-	wasProvisioned := false
-	if _, err := tpm.EkContext(); err == nil {
-		if _, err := tpm.HmacSession(); err == nil {
-			wasProvisioned = true
-		}
-	}
-
 	if err := tpm.Shutdown(tpm2.StartupClear); err != nil {
 		t.Fatalf("Shutdown failed: %v", err)
 	}
@@ -146,8 +139,8 @@ func resetTPMSimulator(t *testing.T, tpm *TPMConnection, tcti *tpm2.TctiMssim) {
 		t.Fatalf("Startup failed: %v", err)
 	}
 
-	if err := tpm.init(nil); err != nil && wasProvisioned {
-		t.Fatalf("Failed to restore TPMConnection after reset: %v", err)
+	if err := tpm.init(nil); err != nil {
+		t.Fatalf("Failed to reinitialize TPMConnection after reset: %v", err)
 	}
 }
 
