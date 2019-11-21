@@ -80,7 +80,7 @@ func readKeyData(buf io.Reader) (*keyData, error) {
 	return &d, nil
 }
 
-func loadKeyData(tpm *tpm2.TPMContext, buf io.Reader) (tpm2.ResourceContext, *keyData, error) {
+func loadKeyData(tpm *tpm2.TPMContext, buf io.Reader, session *tpm2.Session) (tpm2.ResourceContext, *keyData, error) {
 	data, err := readKeyData(buf)
 	if err != nil {
 		return nil, nil, err
@@ -91,7 +91,7 @@ func loadKeyData(tpm *tpm2.TPMContext, buf io.Reader) (tpm2.ResourceContext, *ke
 		return nil, nil, xerrors.Errorf("cannot create context for SRK: %w", err)
 	}
 
-	keyContext, _, err := tpm.Load(srkContext, data.KeyPrivate, data.KeyPublic, nil)
+	keyContext, _, err := tpm.Load(srkContext, data.KeyPrivate, data.KeyPublic, nil, session.AddAttrs(tpm2.AttrAudit))
 	if err != nil {
 		invalidObject := false
 		switch e := err.(type) {
@@ -113,7 +113,7 @@ func loadKeyData(tpm *tpm2.TPMContext, buf io.Reader) (tpm2.ResourceContext, *ke
 }
 
 func readAndIntegrityCheckKeyData(tpm *tpm2.TPMContext, buf io.Reader, session *tpm2.Session) (*keyData, error) {
-	context, data, err := loadKeyData(tpm, buf)
+	context, data, err := loadKeyData(tpm, buf, session)
 	if err != nil {
 		return nil, err
 	}

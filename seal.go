@@ -147,9 +147,14 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 	// Use the HMAC session created when the connection was opened rather than creating a new one.
 	session := tpm.HmacSession()
 
-	// Validate that we have a valid SRK at the expected location. We want to do this because if we seal against a non-primary key or
-	// a primary key that's created from a different template (even if it has the properties we desire - ie, it is restricted and
-	// non-duplicable), then a future call to ProvisionTPM will make the disk encryption key non-recoverable.
+	// Bail out now if the object at the SRK index obviously isn't a valid primary key with the expected properties, as we know
+	// that a future call to ProvisionTPM will create a different key that makes the sealed key object non-recoverable. If this
+	// succeeds, it doesn't necessarily mean that the object was created with the same template that ProvisionTPM uses, and isn't
+	// a guarantee that a future call to ProvisionTPM would't produce a different key.
+	//
+	// Ideally, initial creation would be performed immediately after ProvisionTPM without closing the TPMConnection, as ProvisionTPM
+	// will cache a ResourceContext for the SRK it creates and if the object is switched out on the TPM for a different one in the
+	// meantime, TPM2_Create will fail later on.
 	if ok, err := hasValidSRK(tpm.TPMContext, session); err != nil {
 		return err
 	} else if !ok {
@@ -158,7 +163,7 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 	// This can't fail now
 	srkContext, _ := tpm.WrapHandle(srkHandle)
 
-	// At this point, we know that srkContext corresponds to a valid shared SRK
+	// At this point, we know that the name and public area associated with srkContext correspond to an object on the TPM.
 
 	var err error
 
@@ -349,7 +354,7 @@ func DeleteKey(tpm *TPMConnection, path string, ownerAuth []byte) error {
 		return xerrors.Errorf("cannot open key data file: %w", err)
 	}
 
-	keyContext, data, err := loadKeyData(tpm.TPMContext, f)
+	keyContext, data, err := loadKeyData(tpm.TPMContext, f, session)
 	if err != nil {
 		switch e := err.(type) {
 		case keyFileError:

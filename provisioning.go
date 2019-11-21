@@ -51,10 +51,15 @@ const (
 
 const (
 	// AttrValidSRK indicates that the TPM contains a valid primary storage key with the expected properties at the
-	// expected location.
+	// expected location. Note that this does not mean that the object was created with the same template that ProvisionTPM
+	// uses, and is no guarantee that a call to ProvisionTPM wouldn't result in a different key being created.
 	AttrValidSRK ProvisionStatusAttributes = 1 << iota
 
-	// AttrValidEK indicates that the TPM contains a valid endorsement key at the expected location
+	// AttrValidEK indicates that the TPM contains a valid endorsement key at the expected location. On a TPMConnection created
+	// with SecureConnectToDefaultTPM, it means that the TPM contains the key associated with the verified endorsment certificate.
+	// On a TPMConnection created with ConnectToDefaultTPM, it means that the TPM contains a valid primary key with the expected
+	// properties at the expected location, but does not mean that the object was created with the the same template that
+	// ProvisionTPM uses, and is no guarantee that a call to ProvisionTPM wouldn't result in a different key being created.
 	AttrValidEK
 
 	AttrDAParamsOK         // The dictionary attack lockout parameters are configured correctly.
@@ -233,32 +238,30 @@ func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte,
 	session = tpm.HmacSession()
 
 	// Provision a storage root key
-	if status&AttrValidSRK == 0 {
-		srkContext, err := tpm.WrapHandle(srkHandle)
-		if err == nil {
-			if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, session.WithAuthValue(ownerAuth)); err != nil {
-				if isAuthFailError(err) {
-					return AuthFailError{tpm2.HandleOwner}
-				}
-				return xerrors.Errorf("cannot evict existing object at handle required by storage root key: %w", err)
-			}
-		} else if _, notFound := err.(tpm2.ResourceUnavailableError); !notFound {
-			return xerrors.Errorf("cannot create context for object at handle required by storage root key: %w", err)
-		}
-
-		srkContext, _, _, _, _, _, err = tpm.CreatePrimary(tpm2.HandleOwner, nil, &srkTemplate, nil, nil, session.WithAuthValue(ownerAuth))
-		if err != nil {
+	srkContext, err := tpm.WrapHandle(srkHandle)
+	if err == nil {
+		if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, session.WithAuthValue(ownerAuth)); err != nil {
 			if isAuthFailError(err) {
 				return AuthFailError{tpm2.HandleOwner}
 			}
-			return xerrors.Errorf("cannot create storage root key: %w", err)
+			return xerrors.Errorf("cannot evict existing object at handle required by storage root key: %w", err)
 		}
-		defer tpm.FlushContext(srkContext)
+	} else if _, notFound := err.(tpm2.ResourceUnavailableError); !notFound {
+		return xerrors.Errorf("cannot create context for object at handle required by storage root key: %w", err)
+	}
 
-		if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, session.WithAuthValue(ownerAuth)); err != nil {
-			// Owner auth failure would have been caught by CreatePrimary
-			return xerrors.Errorf("cannot make storage root key persistent: %w", err)
+	srkContext, _, _, _, _, _, err = tpm.CreatePrimary(tpm2.HandleOwner, nil, &srkTemplate, nil, nil, session.WithAuthValue(ownerAuth))
+	if err != nil {
+		if isAuthFailError(err) {
+			return AuthFailError{tpm2.HandleOwner}
 		}
+		return xerrors.Errorf("cannot create storage root key: %w", err)
+	}
+	defer tpm.FlushContext(srkContext)
+
+	if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, session.WithAuthValue(ownerAuth)); err != nil {
+		// Owner auth failure would have been caught by CreatePrimary
+		return xerrors.Errorf("cannot make storage root key persistent: %w", err)
 	}
 
 	if mode == ProvisionModeWithoutLockout {
@@ -316,12 +319,11 @@ func RequestTPMClearUsingPPI() error {
 // template would create the same object.
 func isObjectPrimaryKeyWithTemplate(tpm *tpm2.TPMContext, hierarchy tpm2.Handle, context tpm2.ResourceContext,
 	template *tpm2.Public, session *tpm2.Session) (bool, error) {
-	var auditSession *tpm2.Session
 	if session != nil {
-		auditSession = session.AddAttrs(tpm2.AttrAudit)
+		session = session.AddAttrs(tpm2.AttrAudit)
 	}
 
-	pub, name, qualifiedName, err := tpm.ReadPublic(context, auditSession)
+	pub, name, qualifiedName, err := tpm.ReadPublic(context, session)
 	if err != nil {
 		return false, xerrors.Errorf("cannot read public area of object: %w", err)
 	}

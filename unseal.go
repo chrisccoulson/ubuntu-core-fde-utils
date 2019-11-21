@@ -43,7 +43,7 @@ func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string) ([]byte, er
 	hmacSession := tpm.HmacSession()
 
 	// Load the key data
-	keyContext, data, err := loadKeyData(tpm.TPMContext, buf)
+	keyContext, data, err := loadKeyData(tpm.TPMContext, buf, hmacSession)
 	if err != nil {
 		var kfErr keyFileError
 		if xerrors.As(err, &kfErr) {
