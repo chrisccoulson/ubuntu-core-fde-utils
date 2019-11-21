@@ -318,6 +318,9 @@ func fetchIntermediates(cert *x509.Certificate) ([]*x509.Certificate, error) {
 
 	for {
 		if len(cert.IssuingCertificateURL) == 0 {
+			if cpuid.HasFeature(cpuid.HYPERVISOR) {
+				break
+			}
 			return nil, fmt.Errorf("cannot download certificate for issuer of %v: no issuer URLs", cert.Subject)
 		}
 
@@ -439,10 +442,11 @@ func parseTPMDeviceAttributesFromSAN(data []byte) (*TPMDeviceAttributes, pkix.RD
 				return nil, nil, errors.New("trailing bytes after SAN extension directory name")
 			}
 
+			var attrs TPMDeviceAttributes
+			hasManufacturer, hasModel, hasVersion := false, false, false
+			var rdnsOut pkix.RelativeDistinguishedNameSET
+
 			for _, rdns := range dirName {
-				var attrs TPMDeviceAttributes
-				hasManufacturer, hasModel, hasVersion := false, false, false
-				var rdnsOut pkix.RelativeDistinguishedNameSET
 				for _, atv := range rdns {
 					switch {
 					case atv.Type.Equal(oidTcgAttributeTpmManufacturer):
@@ -499,12 +503,12 @@ func parseTPMDeviceAttributesFromSAN(data []byte) (*TPMDeviceAttributes, pkix.RD
 					}
 					rdnsOut = append(rdnsOut, atv)
 				}
-				if hasManufacturer && hasModel && hasVersion {
-					return &attrs, pkix.RDNSequence{rdnsOut}, nil
-				}
-				if hasManufacturer || hasModel || hasVersion {
-					return nil, nil, errors.New("incomplete")
-				}
+			}
+			if hasManufacturer && hasModel && hasVersion {
+				return &attrs, pkix.RDNSequence{rdnsOut}, nil
+			}
+			if hasManufacturer || hasModel || hasVersion {
+				return nil, nil, errors.New("incomplete")
 			}
 		}
 	}
@@ -535,11 +539,6 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, *TPMDevic
 	var data ekCertData
 	if err := tpm2.UnmarshalFromReader(ekCertReader, &data); err != nil {
 		return nil, nil, certDataError{xerrors.Errorf("cannot unmarshal: %w", err)}
-	}
-
-	// Allow a fallback when running in a hypervisor in order to support swtpm
-	if len(data.Cert) == 0 && cpuid.HasFeature(cpuid.HYPERVISOR) {
-		return nil, nil, nil
 	}
 
 	cert, err := x509.ParseCertificate(data.Cert)
@@ -625,7 +624,14 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, *TPMDevic
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}
 	candidates, err := cert.Verify(opts)
 	if err != nil {
-		return nil, nil, verificationError{xerrors.Errorf("certificate verification failed: %w", err)}
+		// Allow a fallback when running in a hypervisor in order to support swtpm
+		if cpuid.HasFeature(cpuid.HYPERVISOR) {
+			candidates = make([][]*x509.Certificate, 1)
+			candidates[0] = make([]*x509.Certificate, 1)
+			candidates[0][0] = cert
+		} else {
+			return nil, nil, verificationError{xerrors.Errorf("certificate verification failed: %w", err)}
+		}
 	}
 
 	// Extended Key Usage MUST contain tcg-kp-EKCertificate (and also require that the usage is nested)
@@ -655,9 +661,7 @@ func fetchEkCertificate(tpm *TPMConnection, w io.Writer) error {
 
 	if cert, err := readEkCert(tpm.TPMContext); err != nil {
 		var unavailErr tpm2.ResourceUnavailableError
-		// Allow a fallback when running in a hypervisor in order to support swtpm. In this case, a missing EK cert is not an error,
-		// and we write a file that unmarshals correctly (albeit, with no contents)
-		if !xerrors.As(err, &unavailErr) || !cpuid.HasFeature(cpuid.HYPERVISOR) {
+		if !xerrors.As(err, &unavailErr) {
 			return xerrors.Errorf("cannot obtain endorsement certificate from TPM: %w", err)
 		}
 	} else {
