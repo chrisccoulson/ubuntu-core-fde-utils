@@ -68,17 +68,9 @@ func (e AuthFailError) Error() string {
 	return fmt.Sprintf("an authorization check failed for the hierarchy associated with %v", e.Handle)
 }
 
-// InvalidEkCertError is returned from SecureConnectToDefaultTPM if the supplied EK certificate data is invalid.
-type InvalidEkCertError struct {
-	msg string
-}
-
-func (e InvalidEkCertError) Error() string {
-	return fmt.Sprintf("invalid EK certificate: %s", e.msg)
-}
-
-// EkCertVerificationError is returned from SecureConnectToDefaultTPM if verification of the supplied EK certificate against the
-// built-in root CA certificates fails, or the supplied EK certificate does not have the correct properties.
+// EkCertVerificationError is returned from SecureConnectToDefaultTPM if verification of the EK certificate against the built-in
+// root CA certificates fails, or the EK certificate does not have the correct properties, or the supplied certificate data cannot
+// be unmarshalled correctly because it is invalid.
 type EkCertVerificationError struct {
 	msg string
 }

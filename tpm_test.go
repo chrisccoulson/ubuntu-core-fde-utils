@@ -613,7 +613,7 @@ func TestSecureConnectToDefaultTPM(t *testing.T) {
 		if err == nil {
 			t.Fatalf("SecureConnectToDefaultTPM should have failed")
 		}
-		if _, ok := err.(InvalidEkCertError); !ok {
+		if _, ok := err.(EkCertVerificationError); !ok {
 			t.Errorf("Unexpected error: %v", err)
 		}
 	})

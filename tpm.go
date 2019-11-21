@@ -551,14 +551,6 @@ func parseTPMDeviceAttributesFromSAN(data []byte) (*TPMDeviceAttributes, pkix.RD
 	return nil, nil, errors.New("no directoryName")
 }
 
-type certDataError struct {
-	err error
-}
-
-func (e certDataError) Error() string {
-	return e.err.Error()
-}
-
 type ekCertData struct {
 	Cert              []byte
 	IntermediateCerts [][]byte
@@ -573,19 +565,19 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, *TPMDevic
 	// Load EK cert and intermediates
 	var data ekCertData
 	if err := tpm2.UnmarshalFromReader(ekCertReader, &data); err != nil {
-		return nil, nil, certDataError{xerrors.Errorf("cannot unmarshal: %w", err)}
+		return nil, nil, xerrors.Errorf("cannot unmarshal: %w", err)
 	}
 
 	cert, err := x509.ParseCertificate(data.Cert)
 	if err != nil {
-		return nil, nil, certDataError{xerrors.Errorf("cannot parse endorsement key certificate: %w", err)}
+		return nil, nil, xerrors.Errorf("cannot parse endorsement key certificate: %w", err)
 	}
 
 	intermediates := x509.NewCertPool()
 	for _, d := range data.IntermediateCerts {
 		c, err := x509.ParseCertificate(d)
 		if err != nil {
-			return nil, nil, certDataError{xerrors.Errorf("cannot parse intermediate certificates: %w", err)}
+			return nil, nil, xerrors.Errorf("cannot parse intermediate certificates: %w", err)
 		}
 		intermediates.AddCert(c)
 	}
@@ -601,12 +593,12 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, *TPMDevic
 	}
 
 	if cert.PublicKeyAlgorithm != x509.RSA {
-		return nil, nil, verificationError{errors.New("certificate contains a public key with the wrong algorithm")}
+		return nil, nil, errors.New("certificate contains a public key with the wrong algorithm")
 	}
 
 	// MUST have valid basic constraints with CA=FALSE
 	if cert.IsCA || !cert.BasicConstraintsValid {
-		return nil, nil, verificationError{errors.New("certificate contains invalid basic constraints")}
+		return nil, nil, errors.New("certificate contains invalid basic constraints")
 	}
 
 	var attrs *TPMDeviceAttributes
@@ -614,14 +606,14 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, *TPMDevic
 		if e.Id.Equal(oidExtensionSubjectAltName) {
 			// SubjectAltName MUST be critical if subject is empty
 			if len(cert.Subject.Names) == 0 && !e.Critical {
-				return nil, nil, verificationError{errors.New("certificate with empty subject contains non-critical SAN extension")}
+				return nil, nil, errors.New("certificate with empty subject contains non-critical SAN extension")
 			}
 			var err error
 			var attrsRDN pkix.RDNSequence
 			attrs, attrsRDN, err = parseTPMDeviceAttributesFromSAN(e.Value)
 			// SubjectAltName MUST include TPM manufacturer, model and firmware version
 			if err != nil {
-				return nil, nil, verificationError{xerrors.Errorf("cannot parse TPM device attributes: %w", err)}
+				return nil, nil, xerrors.Errorf("cannot parse TPM device attributes: %w", err)
 			}
 			if len(cert.Subject.Names) == 0 {
 				// If subject is empty, fill the Subject field with the TPM device attributes so that String() returns something useful
@@ -634,7 +626,7 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, *TPMDevic
 
 	// SubjectAltName MUST exist. If it does exist but doesn't contain the correct TPM device attributes, we would have returned earlier.
 	if attrs == nil {
-		return nil, nil, verificationError{errors.New("certificate has no SAN extension")}
+		return nil, nil, errors.New("certificate has no SAN extension")
 	}
 
 	// If SAN contains only fields unhandled by crypto/x509 and it is marked as critical, then it ends up here. Remove it because
@@ -649,7 +641,7 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, *TPMDevic
 
 	// Key Usage MUST contain keyEncipherment
 	if cert.KeyUsage&x509.KeyUsageKeyEncipherment == 0 {
-		return nil, nil, verificationError{errors.New("certificate has incorrect key usage")}
+		return nil, nil, errors.New("certificate has incorrect key usage")
 	}
 
 	// Verify EK certificate for any usage - we've already verified that the leaf has the correct usage.
@@ -665,7 +657,7 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, *TPMDevic
 			candidates[0] = make([]*x509.Certificate, 1)
 			candidates[0][0] = cert
 		} else {
-			return nil, nil, verificationError{xerrors.Errorf("certificate verification failed: %w", err)}
+			return nil, nil, xerrors.Errorf("certificate verification failed: %w", err)
 		}
 	}
 
@@ -679,7 +671,7 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, *TPMDevic
 	}
 
 	if chain == nil {
-		return nil, nil, verificationError{errors.New("no certificate chain has the correct extended key usage")}
+		return nil, nil, errors.New("no certificate chain has the correct extended key usage")
 	}
 
 	// At this point, we've verified that the endorsent certificate has the correct properties and was issued by a trusted TPM
@@ -782,13 +774,16 @@ func ConnectToDefaultTPM() (*TPMConnection, error) {
 // provided, the ekCertReader argument should read from a file created previously by FetchAndSaveEkCertificate. This makes it
 // possible to connect to the TPM without requiring network access to download certificates.
 //
-// If the data read from ekCertReader cannot be unmarshalled or parsed correctly, a InvalidEkCertError error will be returned.
+// If the data read from ekCertReader cannot be unmarshalled or parsed correctly, a EkCertVerificationError error will be returned.
 //
 // If ekCertReader is nil, this function will attempt to obtain the endorsement key certificate for the TPM and then download the
-// required intermediate certificates. This requires network access. If network access is unavailable and there is no existing
-// EK certificate blob created previously by FetchAndSaveEkCertificate, then ConnectToDefaultTPM must be used instead.
+// required intermediate certificates. This requires network access. If this fails, a EkCertVerificationError error will be returned.
+// If network access is unavailable and there is no existing EK certificate blob created previously by FetchAndSaveEkCertificate,
+// then ConnectToDefaultTPM must be used instead.
 //
-// If verification of the endorsement key certificate fails, a EkCertVerificationError error will be returned.
+// If verification of the endorsement key certificate fails, a EkCertVerificationError error will be returned. If the endorsement
+// key certificate data was supplied by the caller, this might mean that the data is invalid and should be recreated with
+// FetchAndSaveEkCertificate.
 //
 // In order for the TPM to prove it is the device for which the endorsement key certificate was issued, an endorsement key is
 // required. If the TPM doesn't contain a valid persistent endorsement key at the expected location (eg, if ProvisionTPM hasn't been
@@ -826,15 +821,7 @@ func SecureConnectToDefaultTPM(ekCertReader io.Reader, endorsementAuth []byte) (
 
 	chain, attrs, err := verifyEkCertificate(ekCertReader)
 	if err != nil {
-		var cdErr certDataError
-		if xerrors.As(err, &cdErr) {
-			return nil, InvalidEkCertError{err.Error()}
-		}
-		var verifyErr verificationError
-		if xerrors.As(err, &verifyErr) {
-			return nil, EkCertVerificationError{err.Error()}
-		}
-		return nil, xerrors.Errorf("cannot verify EK certificate: %w", err)
+		return nil, EkCertVerificationError{err.Error()}
 	}
 
 	t.verifiedEkCertChain = chain
