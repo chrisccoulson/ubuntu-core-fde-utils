@@ -230,7 +230,7 @@ func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte,
 		}
 		return xerrors.Errorf("cannot reinitialize TPM connection after provisioning endorsement key: %w", err)
 	}
-	session, _ = tpm.HmacSession()
+	session = tpm.HmacSession()
 
 	// Provision a storage root key
 	if status&AttrValidSRK == 0 {
@@ -389,12 +389,11 @@ func hasValidSRK(tpm *tpm2.TPMContext, session *tpm2.Session) (bool, error) {
 func ProvisionStatus(tpm *TPMConnection) (ProvisionStatusAttributes, error) {
 	var out ProvisionStatusAttributes
 
-	if _, err := tpm.EkContext(); err == nil {
+	if rc, err := tpm.EkContext(); err == nil && rc.Handle() != tpm2.HandleUnassigned {
 		out |= AttrValidEK
 	}
 
-	session, _ := tpm.HmacSession()
-	if ok, err := hasValidSRK(tpm.TPMContext, session); err != nil {
+	if ok, err := hasValidSRK(tpm.TPMContext, tpm.HmacSession()); err != nil {
 		return 0, err
 	} else if ok {
 		out |= AttrValidSRK

@@ -265,11 +265,7 @@ func executePolicySession(tpm *TPMConnection, sessionContext tpm2.ResourceContex
 		return xerrors.Errorf("cannot obtain context for PIN NV index: %w", err)
 	}
 	// Use the HMAC session created when the connection was opened rather than creating a new one.
-	pinSession, err := tpm.HmacSession()
-	if err != nil {
-		return xerrors.Errorf("cannot obtain HMAC session for PIN verification: %w", err)
-	}
-
+	pinSession := tpm.HmacSession()
 	if _, _, err := tpm.PolicySecret(pinIndexContext, sessionContext, nil, nil, 0, pinSession.WithAuthValue([]byte(pin))); err != nil {
 		return xerrors.Errorf("cannot execute PolicySecret assertion: %w", err)
 	}

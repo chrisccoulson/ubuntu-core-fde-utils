@@ -74,34 +74,35 @@ type TPMConnection struct {
 	hmacSession              tpm2.ResourceContext
 }
 
-// VerifiedEkCertChain returns the verified endorsement certificate chain for the endorsement certificate obtained from
-// this TPM. It was verified using one of the built-in TPM manufacturer root CAs
+// VerifiedEkCertChain returns the verified certificate chain for the endorsement key certificate obtained from this TPM. It was
+// verified using one of the built-in TPM manufacturer root CA certificates.
 func (t *TPMConnection) VerifiedEkCertChain() []*x509.Certificate {
 	return t.verifiedEkCertChain
 }
 
+// VeririedDeviceAttributes returns the TPM device attributes for this TPM, obtained from the verified endorsement key certificate.
 func (t *TPMConnection) VerifiedDeviceAttributes() *TPMDeviceAttributes {
 	return t.verifiedDeviceAttributes
 }
 
-// EkContext returns a reference to the TPM's endorsement key, if one exists. If the endorsement certificate has been verified,
-// the returned ResourceContext will correspond to the key for which the certificate was issued.
+// EkContext returns a reference to the TPM's persistent endorsement key, if one exists. If the endorsement key certificate has been
+// verified, the returned ResourceContext will correspond to the object for which the certificate was issued and can safely be used
+// to share secrets with the TPM.
 func (t *TPMConnection) EkContext() (tpm2.ResourceContext, error) {
-	if t.ekContext == nil || t.ekContext.Handle() == tpm2.HandleUnassigned {
+	if t.ekContext == nil {
 		return nil, ErrProvisioning
 	}
 	return t.ekContext, nil
 }
 
-// HmacSession returns a HMAC session instance which was created to verify that the TPM contains the sensitive area of the endorsement
-// key (accessible from TPMConnection.EkContext), and is therefore the TPM for which the endorsement certificate was issued. It is
-// retained in order to reduce the number of sessions that need to be created during unseal operations, and is created with a
-// symmetric algorithm for parameter encryption.
-func (t *TPMConnection) HmacSession() (*tpm2.Session, error) {
-	if t.hmacSession == nil || t.hmacSession.Handle() == tpm2.HandleUnassigned {
-		return nil, ErrProvisioning
+// HmacSession returns a HMAC session instance which was created in order to conduct a proof-of-ownership check of the private part
+// of the endorsement key on the TPM. It is retained in order to reduce the number of sessions that need to be created during unseal
+// operations, and is created with a symmetric algorithm so that it is suitable for parameter encryption.
+func (t *TPMConnection) HmacSession() *tpm2.Session {
+	if t.hmacSession == nil {
+		return nil
 	}
-	return &tpm2.Session{Context: t.hmacSession, Attrs: tpm2.AttrContinueSession}, nil
+	return &tpm2.Session{Context: t.hmacSession, Attrs: tpm2.AttrContinueSession}
 }
 
 func (t *TPMConnection) Close() error {

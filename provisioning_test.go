@@ -185,11 +185,8 @@ func TestProvisionNewTPM(t *testing.T) {
 				t.Errorf("Use of the lockout hierarchy auth failed: %v", err)
 			}
 
-			hmacSession, err := tpm.HmacSession()
-			if err != nil {
-				t.Fatalf("No initial HMAC session: %v", err)
-			}
-			if hmacSession.Context.Handle().Type() != tpm2.HandleTypeHMACSession {
+			hmacSession := tpm.HmacSession()
+			if hmacSession == nil || hmacSession.Context == nil || hmacSession.Context.Handle().Type() != tpm2.HandleTypeHMACSession {
 				t.Errorf("Invalid HMAC session handle")
 			}
 			ekContext, err := tpm.EkContext()
@@ -386,11 +383,8 @@ func TestRecreateEK(t *testing.T) {
 			if ekContext.Handle().Type() != tpm2.HandleTypePersistent {
 				t.Errorf("Invalid EK handle type")
 			}
-			hmacSession, err := tpm.HmacSession()
-			if err != nil {
-				t.Fatalf("No initial HMAC session")
-			}
-			if hmacSession.Context.Handle().Type() != tpm2.HandleTypeHMACSession {
+			hmacSession := tpm.HmacSession()
+			if hmacSession == nil || hmacSession.Context == nil || hmacSession.Context.Handle().Type() != tpm2.HandleTypeHMACSession {
 				t.Errorf("Invalid HMAC session handle")
 			}
 
@@ -404,11 +398,8 @@ func TestRecreateEK(t *testing.T) {
 
 			validateEK(t, tpm)
 
-			hmacSession2, err := tpm.HmacSession()
-			if err != nil {
-				t.Fatalf("No initial HMAC session")
-			}
-			if hmacSession2.Context.Handle().Type() != tpm2.HandleTypeHMACSession {
+			hmacSession2 := tpm.HmacSession()
+			if hmacSession2 == nil || hmacSession2.Context == nil || hmacSession2.Context.Handle().Type() != tpm2.HandleTypeHMACSession {
 				t.Errorf("Invalid HMAC session handle")
 			}
 			ekContext2, err := tpm.EkContext()

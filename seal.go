@@ -145,10 +145,7 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 	}
 
 	// Use the HMAC session created when the connection was opened rather than creating a new one.
-	session, err := tpm.HmacSession()
-	if err != nil {
-		return err
-	}
+	session := tpm.HmacSession()
 
 	// Validate that we have a valid SRK at the expected location. We want to do this because if we seal against a non-primary key or
 	// a primary key that's created from a different template (even if it has the properties we desire - ie, it is restricted and
@@ -162,6 +159,8 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 	srkContext, _ := tpm.WrapHandle(srkHandle)
 
 	// At this point, we know that srkContext corresponds to a valid shared SRK
+
+	var err error
 
 	var pinIndex tpm2.ResourceContext
 	var pinIndexPolicies tpm2.DigestList
@@ -338,12 +337,8 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 //
 // This function requires the TPM to be correctly provisioned, else a ErrProvisioningError error will be returned.
 func DeleteKey(tpm *TPMConnection, path string, ownerAuth []byte) error {
-	hmacSession, err := tpm.HmacSession()
-	if err != nil {
-		return err
-	}
-
-	if ok, err := hasValidSRK(tpm.TPMContext, hmacSession); err != nil {
+	session := tpm.HmacSession()
+	if ok, err := hasValidSRK(tpm.TPMContext, session); err != nil {
 		return err
 	} else if !ok {
 		return ErrProvisioning
@@ -365,7 +360,7 @@ func DeleteKey(tpm *TPMConnection, path string, ownerAuth []byte) error {
 	tpm.FlushContext(keyContext)
 
 	if policyRevokeContext, err := tpm.WrapHandle(data.PolicyData.PolicyRevokeIndexHandle); err == nil {
-		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, policyRevokeContext, hmacSession.WithAuthValue(ownerAuth)); err != nil {
+		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, policyRevokeContext, session.WithAuthValue(ownerAuth)); err != nil {
 			if isAuthFailError(err) {
 				return AuthFailError{tpm2.HandleOwner}
 			}
@@ -374,7 +369,7 @@ func DeleteKey(tpm *TPMConnection, path string, ownerAuth []byte) error {
 	}
 
 	if pinContext, err := tpm.WrapHandle(data.PolicyData.PinIndexHandle); err == nil {
-		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, pinContext, hmacSession.WithAuthValue(ownerAuth)); err != nil {
+		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, pinContext, session.WithAuthValue(ownerAuth)); err != nil {
 			if isAuthFailError(err) {
 				return AuthFailError{tpm2.HandleOwner}
 			}

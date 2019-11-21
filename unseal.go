@@ -40,10 +40,7 @@ func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string) ([]byte, er
 	}
 
 	// Use the HMAC session created when the connection was opened for parameter encryption rather than creating a new one.
-	hmacSession, err := tpm.HmacSession()
-	if err != nil {
-		return nil, err
-	}
+	hmacSession := tpm.HmacSession()
 
 	// Load the key data
 	keyContext, data, err := loadKeyData(tpm.TPMContext, buf)

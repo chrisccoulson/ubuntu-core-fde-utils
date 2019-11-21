@@ -179,11 +179,6 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 }
 
 func performPINChange(tpm *TPMConnection, handle tpm2.Handle, policies tpm2.DigestList, oldAuth, newAuth string) error {
-	hmacSession, err := tpm.HmacSession()
-	if err != nil {
-		return err
-	}
-
 	pinIndexContext, err := tpm.WrapHandle(handle)
 	if err != nil {
 		return fmt.Errorf("cannot create context for PIN NV index: %v", err)
@@ -205,6 +200,7 @@ func performPINChange(tpm *TPMConnection, handle tpm2.Handle, policies tpm2.Dige
 		return fmt.Errorf("cannot execute PolicyOR assertion: %v", err)
 	}
 
+	hmacSession := tpm.HmacSession()
 	session := tpm2.Session{
 		Context:   sessionContext,
 		AuthValue: []byte(oldAuth)}
