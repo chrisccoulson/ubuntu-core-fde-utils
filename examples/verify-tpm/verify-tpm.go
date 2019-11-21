@@ -52,10 +52,15 @@ func main() {
 
 	tpm, err := fdeutil.SecureConnectToDefaultTPM(ekCertReader, []byte(endorsementAuth))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot verify that TPM is genuine: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Cannot verify that the TPM is genuine: %v\n", err)
 		os.Exit(1)
 	}
-	tpm.Close()
 
-	fmt.Println("TPM is genuine!")
+	fmt.Println("The TPM is genuine!")
+	fmt.Println("Verified device attributes:")
+	fmt.Println("- Manufacturer:", tpm.VerifiedDeviceAttributes().Manufacturer)
+	fmt.Println("- Model:", tpm.VerifiedDeviceAttributes().Model)
+	fmt.Printf("- Firmware version: 0x%08x\n", tpm.VerifiedDeviceAttributes().FirmwareVersion)
+
+	tpm.Close()
 }

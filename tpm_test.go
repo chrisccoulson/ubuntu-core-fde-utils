@@ -220,16 +220,36 @@ func certifyTPM(tpm *tpm2.TPMContext, caCert []byte, caKey crypto.PrivateKey) er
 
 	t := time.Now()
 
+	tpmDeviceAttrValues := pkix.RDNSequence{
+		pkix.RelativeDistinguishedNameSET{
+			pkix.AttributeTypeAndValue{Type: oidTcgAttributeTpmManufacturer, Value: "id:49424d00"},
+			pkix.AttributeTypeAndValue{Type: oidTcgAttributeTpmModel, Value: "FakeTPM"},
+			pkix.AttributeTypeAndValue{Type: oidTcgAttributeTpmVersion, Value: "id:00010002"}}}
+	tpmDeviceAttrData, err := asn1.Marshal(tpmDeviceAttrValues)
+	if err != nil {
+		return fmt.Errorf("cannot marshal SAN value: %v", err)
+	}
+	sanData, err := asn1.Marshal([]asn1.RawValue{
+		asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: sanDirectoryNameTag, IsCompound: true, Bytes: tpmDeviceAttrData}})
+	if err != nil {
+		return fmt.Errorf("cannot marshal SAN value: %v", err)
+	}
+	sanExtension := pkix.Extension{
+		Id:       oidExtensionSubjectAltName,
+		Critical: true,
+		Value:    sanData}
+
 	template := x509.Certificate{
 		SignatureAlgorithm:    x509.SHA256WithRSA,
 		SerialNumber:          serial,
 		NotBefore:             t.Add(time.Hour * -24),
 		NotAfter:              t.Add(time.Hour * 240),
 		KeyUsage:              x509.KeyUsageKeyEncipherment,
-		UnknownExtKeyUsage:    []asn1.ObjectIdentifier{oidTCGEkCertificate},
+		UnknownExtKeyUsage:    []asn1.ObjectIdentifier{oidTcgKpEkCertificate},
 		BasicConstraintsValid: true,
 		IsCA:                  false,
-		SubjectKeyId:          keyId}
+		SubjectKeyId:          keyId,
+		ExtraExtensions:       []pkix.Extension{sanExtension}}
 
 	root, err := x509.ParseCertificate(caCert)
 	if err != nil {

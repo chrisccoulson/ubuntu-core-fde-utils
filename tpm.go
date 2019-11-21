@@ -23,11 +23,15 @@ import (
 	"bytes"
 	"crypto/rsa"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"strings"
 	"time"
 
 	"github.com/chrisccoulson/go-tpm2"
@@ -43,25 +47,41 @@ const (
 	tpmPath string = "/dev/tpm0"
 
 	ekCertHandle tpm2.Handle = 0x01c00002
+
+	sanDirectoryNameTag = 4
 )
 
 var (
-	oidSubjectAlternativeName = asn1.ObjectIdentifier{2, 5, 29, 17}
-	oidTCGEkCertificate       = asn1.ObjectIdentifier{2, 23, 133, 8, 1}
+	oidExtensionSubjectAltName     = asn1.ObjectIdentifier{2, 5, 29, 17}
+	oidTcgAttributeTpmManufacturer = asn1.ObjectIdentifier{2, 23, 133, 2, 1}
+	oidTcgAttributeTpmModel        = asn1.ObjectIdentifier{2, 23, 133, 2, 2}
+	oidTcgAttributeTpmVersion      = asn1.ObjectIdentifier{2, 23, 133, 2, 3}
+	oidTcgKpEkCertificate          = asn1.ObjectIdentifier{2, 23, 133, 8, 1}
 )
+
+type TPMDeviceAttributes struct {
+	Manufacturer    tpm2.TPMManufacturer
+	Model           string
+	FirmwareVersion uint32
+}
 
 // TPMConnection corresponds to a connection to a TPM device, and is a wrapper around *tpm2.TPMContext.
 type TPMConnection struct {
 	*tpm2.TPMContext
-	verifiedEkCertChain []*x509.Certificate
-	ekContext           tpm2.ResourceContext
-	hmacSession         tpm2.ResourceContext
+	verifiedEkCertChain      []*x509.Certificate
+	verifiedDeviceAttributes *TPMDeviceAttributes
+	ekContext                tpm2.ResourceContext
+	hmacSession              tpm2.ResourceContext
 }
 
 // VerifiedEkCertChain returns the verified endorsement certificate chain for the endorsement certificate obtained from
 // this TPM. It was verified using one of the built-in TPM manufacturer root CAs
 func (t *TPMConnection) VerifiedEkCertChain() []*x509.Certificate {
 	return t.verifiedEkCertChain
+}
+
+func (t *TPMConnection) VerifiedDeviceAttributes() *TPMDeviceAttributes {
+	return t.verifiedDeviceAttributes
 }
 
 // EkContext returns a reference to the TPM's endorsement key, if one exists. If the endorsement certificate has been verified,
@@ -343,6 +363,20 @@ func fetchIntermediates(cert *x509.Certificate) ([]*x509.Certificate, error) {
 	return out, nil
 }
 
+var openDefaultTcti = func() (io.ReadWriteCloser, error) {
+	return tpm2.OpenTPMDevice(tpmPath)
+}
+
+func connectToDefaultTPM() (*tpm2.TPMContext, error) {
+	tcti, err := openDefaultTcti()
+	if err != nil {
+		return nil, xerrors.Errorf("cannot open TPM device: %w", err)
+	}
+
+	tpm, _ := tpm2.NewTPMContext(tcti)
+	return tpm, nil
+}
+
 func checkChainForEkCertUsage(chain []*x509.Certificate) bool {
 	if len(chain) == 0 {
 		return false
@@ -362,7 +396,7 @@ NextCert:
 		}
 
 		for _, usage := range cert.UnknownExtKeyUsage {
-			if usage.Equal(oidTCGEkCertificate) {
+			if usage.Equal(oidTcgKpEkCertificate) {
 				continue NextCert
 			}
 		}
@@ -373,18 +407,109 @@ NextCert:
 	return true
 }
 
-var openDefaultTcti = func() (io.ReadWriteCloser, error) {
-	return tpm2.OpenTPMDevice(tpmPath)
-}
-
-func connectToDefaultTPM() (*tpm2.TPMContext, error) {
-	tcti, err := openDefaultTcti()
-	if err != nil {
-		return nil, xerrors.Errorf("cannot open TPM device: %w", err)
+func parseTPMDeviceAttributesFromSAN(data []byte) (*TPMDeviceAttributes, pkix.RDNSequence, error) {
+	var seq asn1.RawValue
+	if rest, err := asn1.Unmarshal(data, &seq); err != nil {
+		return nil, nil, err
+	} else if len(rest) > 0 {
+		return nil, nil, errors.New("trailing bytes after SAN extension")
+	}
+	if !seq.IsCompound || seq.Tag != asn1.TagSequence || seq.Class != asn1.ClassUniversal {
+		return nil, nil, asn1.StructuralError{Msg: "invalid SAN sequence"}
 	}
 
-	tpm, _ := tpm2.NewTPMContext(tcti)
-	return tpm, nil
+	rest := seq.Bytes
+	for len(rest) > 0 {
+		var err error
+		var v asn1.RawValue
+		rest, err = asn1.Unmarshal(rest, &v)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if v.Class != asn1.ClassContextSpecific {
+			return nil, nil, asn1.StructuralError{Msg: "invalid SAN entry"}
+		}
+
+		if v.Tag == sanDirectoryNameTag {
+			var dirName pkix.RDNSequence
+			if rest, err := asn1.Unmarshal(v.Bytes, &dirName); err != nil {
+				return nil, nil, err
+			} else if len(rest) > 0 {
+				return nil, nil, errors.New("trailing bytes after SAN extension directory name")
+			}
+
+			for _, rdns := range dirName {
+				var attrs TPMDeviceAttributes
+				hasManufacturer, hasModel, hasVersion := false, false, false
+				var rdnsOut pkix.RelativeDistinguishedNameSET
+				for _, atv := range rdns {
+					switch {
+					case atv.Type.Equal(oidTcgAttributeTpmManufacturer):
+						if hasManufacturer {
+							return nil, nil, asn1.StructuralError{Msg: "duplicate TPM manufacturer"}
+						}
+						hasManufacturer = true
+						s, ok := atv.Value.(string)
+						if !ok {
+							return nil, nil, asn1.StructuralError{Msg: "invalid TPM attribute value"}
+						}
+						if !strings.HasPrefix(s, "id:") {
+							return nil, nil, asn1.StructuralError{Msg: "invalid TPM manufacturer"}
+						}
+						hex, err := hex.DecodeString(strings.TrimPrefix(s, "id:"))
+						if err != nil {
+							return nil, nil, asn1.StructuralError{Msg: fmt.Sprintf("invalid TPM manufacturer: %v", err)}
+						}
+						if len(hex) != 4 {
+							return nil, nil, asn1.StructuralError{Msg: "invalid TPM manufacturer: too short"}
+						}
+						attrs.Manufacturer = tpm2.TPMManufacturer(binary.BigEndian.Uint32(hex))
+					case atv.Type.Equal(oidTcgAttributeTpmModel):
+						if hasModel {
+							return nil, nil, asn1.StructuralError{Msg: "duplicate TPM model"}
+						}
+						hasModel = true
+						s, ok := atv.Value.(string)
+						if !ok {
+							return nil, nil, asn1.StructuralError{Msg: "invalid TPM attribute value"}
+						}
+						attrs.Model = s
+					case atv.Type.Equal(oidTcgAttributeTpmVersion):
+						if hasVersion {
+							return nil, nil, asn1.StructuralError{Msg: "duplicate TPM firmware version"}
+						}
+						hasVersion = true
+						s, ok := atv.Value.(string)
+						if !ok {
+							return nil, nil, asn1.StructuralError{Msg: "invalid TPM attribute value"}
+						}
+						if !strings.HasPrefix(s, "id:") {
+							return nil, nil, asn1.StructuralError{Msg: "invalid TPM firmware version"}
+						}
+						hex, err := hex.DecodeString(strings.TrimPrefix(s, "id:"))
+						if err != nil {
+							return nil, nil, asn1.StructuralError{Msg: fmt.Sprintf("invalid TPM firmware version: %v", err)}
+						}
+						b := make([]byte, 4)
+						copy(b[len(b)-len(hex):], hex)
+						attrs.FirmwareVersion = binary.BigEndian.Uint32(b)
+					default:
+						continue
+					}
+					rdnsOut = append(rdnsOut, atv)
+				}
+				if hasManufacturer && hasModel && hasVersion {
+					return &attrs, pkix.RDNSequence{rdnsOut}, nil
+				}
+				if hasManufacturer || hasModel || hasVersion {
+					return nil, nil, errors.New("incomplete")
+				}
+			}
+		}
+	}
+
+	return nil, nil, errors.New("not found")
 }
 
 type certDataError struct {
@@ -401,32 +526,32 @@ type ekCertData struct {
 }
 
 // verifyEkCertificate verifies the provided certificate and intermediate certificates against the built-in roots, and verifies
-// that the certificate is a valid EK certificate.
+// that the certificate is a valid EK certificate, according to the "TCG EK Credential Profile" specification.
 //
 // On success, it returns a verified certificate chain. This function will also return success if there is no certificate and
 // it is executed inside a guest VM, in order to support fallback to a non-secure connection when using swtpm in a guest VM.
-func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, error) {
+func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, *TPMDeviceAttributes, error) {
 	// Load EK cert and intermediates
 	var data ekCertData
 	if err := tpm2.UnmarshalFromReader(ekCertReader, &data); err != nil {
-		return nil, certDataError{xerrors.Errorf("cannot unmarshal: %w", err)}
+		return nil, nil, certDataError{xerrors.Errorf("cannot unmarshal: %w", err)}
 	}
 
 	// Allow a fallback when running in a hypervisor in order to support swtpm
 	if len(data.Cert) == 0 && cpuid.HasFeature(cpuid.HYPERVISOR) {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	cert, err := x509.ParseCertificate(data.Cert)
 	if err != nil {
-		return nil, certDataError{xerrors.Errorf("cannot parse endorsement key certificate: %w", err)}
+		return nil, nil, certDataError{xerrors.Errorf("cannot parse endorsement key certificate: %w", err)}
 	}
 
 	intermediates := x509.NewCertPool()
 	for _, d := range data.IntermediateCerts {
 		c, err := x509.ParseCertificate(d)
 		if err != nil {
-			return nil, certDataError{xerrors.Errorf("cannot parse intermediate certificates: %w", err)}
+			return nil, nil, certDataError{xerrors.Errorf("cannot parse intermediate certificates: %w", err)}
 		}
 		intermediates.AddCert(c)
 	}
@@ -441,31 +566,69 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, error) {
 		roots.AddCert(cert)
 	}
 
-	// If SAN contains only unhandled fields, it ends up here. Remove it and handle it ourselves below
-	// TODO: Parse the SAN data
+	if cert.PublicKeyAlgorithm != x509.RSA {
+		return nil, nil, verificationError{errors.New("certificate contains a public key with the wrong algorithm")}
+	}
+
+	// MUST have valid basic constraints with CA=FALSE
+	if cert.IsCA || !cert.BasicConstraintsValid {
+		return nil, nil, verificationError{errors.New("certificate contains invalid basic constraints")}
+	}
+
+	var attrs *TPMDeviceAttributes
+	for _, e := range cert.Extensions {
+		if e.Id.Equal(oidExtensionSubjectAltName) {
+			// SubjectAltName MUST be critical if subject is empty
+			if len(cert.Subject.Names) == 0 && !e.Critical {
+				return nil, nil, verificationError{errors.New("certificate with empty subject contains non-critical SAN extension")}
+			}
+			var err error
+			var attrsRDN pkix.RDNSequence
+			attrs, attrsRDN, err = parseTPMDeviceAttributesFromSAN(e.Value)
+			// SubjectAltName MUST include TPM manufacturer, model and firmware version
+			if err != nil {
+				return nil, nil, verificationError{xerrors.Errorf("cannot parse TPM device attributes: %w", err)}
+			}
+			if len(cert.Subject.Names) == 0 {
+				// If subject is empty, fill the Subject field with the TPM device attributes so that String() returns something useful
+				cert.Subject.FillFromRDNSequence(&attrsRDN)
+				cert.Subject.ExtraNames = cert.Subject.Names
+			}
+			break
+		}
+	}
+
+	// SubjectAltName MUST exist. If it does exist but doesn't contain the correct TPM device attributes, we would have returned earlier.
+	if attrs == nil {
+		return nil, nil, verificationError{errors.New("certificate has no SAN extension")}
+	}
+
+	// If SAN contains only fields unhandled by crypto/x509 and it is marked as critical, then it ends up here. Remove it because
+	// we've handled it ourselves and x509.Certificate.Verify fails if we leave it here.
 	for i, e := range cert.UnhandledCriticalExtensions {
-		if e.Equal(oidSubjectAlternativeName) {
+		if e.Equal(oidExtensionSubjectAltName) {
 			copy(cert.UnhandledCriticalExtensions[i:], cert.UnhandledCriticalExtensions[i+1:])
 			cert.UnhandledCriticalExtensions = cert.UnhandledCriticalExtensions[:len(cert.UnhandledCriticalExtensions)-1]
 			break
 		}
 	}
 
-	if cert.PublicKeyAlgorithm != x509.RSA {
-		return nil, verificationError{errors.New("certificate contains a public key with the wrong algorithm")}
+	// Key Usage MUST contain keyEncipherment
+	if cert.KeyUsage&x509.KeyUsageKeyEncipherment == 0 {
+		return nil, nil, verificationError{errors.New("certificate has incorrect key usage")}
 	}
 
-	// Verify EK certificate for any usage
+	// Verify EK certificate for any usage - we've already verified that the leaf has the correct usage.
 	opts := x509.VerifyOptions{
 		Intermediates: intermediates,
 		Roots:         roots,
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}
 	candidates, err := cert.Verify(opts)
 	if err != nil {
-		return nil, verificationError{xerrors.Errorf("certificate verification failed: %w", err)}
+		return nil, nil, verificationError{xerrors.Errorf("certificate verification failed: %w", err)}
 	}
 
-	// Make sure we have a chain that permits the tcg-kg-EKCertificate extended key usage
+	// Extended Key Usage MUST contain tcg-kp-EKCertificate (and also require that the usage is nested)
 	var chain []*x509.Certificate
 	for _, c := range candidates {
 		if checkChainForEkCertUsage(c) {
@@ -475,7 +638,7 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, error) {
 	}
 
 	if chain == nil {
-		return nil, verificationError{errors.New("certificate does not have the correct usage properties")}
+		return nil, nil, verificationError{errors.New("no certificate chain has the correct extended key usage")}
 	}
 
 	// At this point, we've verified that the endorsent certificate has the correct properties and was issued by a trusted TPM
@@ -484,7 +647,7 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, error) {
 	// private seed injected in to a genuine TPM by them. Secrets encrypted by this public key can only be decrypted by and used
 	// on the TPM for which this certificate was issued.
 
-	return chain, nil
+	return chain, attrs, nil
 }
 
 func fetchEkCertificate(tpm *TPMConnection, w io.Writer) error {
@@ -620,7 +783,7 @@ func SecureConnectToDefaultTPM(ekCertReader io.Reader, endorsementAuth []byte) (
 		ekCertReader = b
 	}
 
-	chain, err := verifyEkCertificate(ekCertReader)
+	chain, attrs, err := verifyEkCertificate(ekCertReader)
 	if err != nil {
 		var cdErr certDataError
 		if xerrors.As(err, &cdErr) {
@@ -634,6 +797,7 @@ func SecureConnectToDefaultTPM(ekCertReader io.Reader, endorsementAuth []byte) (
 	}
 
 	t.verifiedEkCertChain = chain
+	t.verifiedDeviceAttributes = attrs
 
 	if err := t.init(endorsementAuth); err != nil {
 		var unavailErr tpm2.ResourceUnavailableError
