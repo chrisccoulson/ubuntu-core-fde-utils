@@ -54,7 +54,9 @@ var (
 	testCACert []byte
 	testCAKey  crypto.PrivateKey
 
-	testEkCertData *ekCertData
+	testEkCert []byte
+
+	testEncodedEkCertChain []byte
 )
 
 func deleteKey(t *testing.T, tpm *TPMConnection, path string) {
@@ -89,10 +91,7 @@ func openTPMSimulatorForTesting(t *testing.T) (*TPMConnection, *tpm2.TctiMssim) 
 		return tcti, nil
 	}
 
-	certData := new(bytes.Buffer)
-	tpm2.MarshalToWriter(certData, testEkCertData)
-
-	tpm, err := SecureConnectToDefaultTPM(certData, nil)
+	tpm, err := SecureConnectToDefaultTPM(bytes.NewReader(testEncodedEkCertChain), nil)
 	if err != nil {
 		t.Fatalf("ConnectToDefaultTPM failed: %v", err)
 	}
@@ -265,7 +264,27 @@ func certifyTPM(tpm *tpm2.TPMContext) error {
 	if cert, err := createTestEkCert(tpm, testCACert, testCAKey); err != nil {
 		return err
 	} else {
-		testEkCertData = &ekCertData{Cert: cert}
+		caCert, _ := x509.ParseCertificate(testCACert)
+		b := new(bytes.Buffer)
+		if err := EncodeEkCertificateChain(nil, []*x509.Certificate{caCert}, b); err != nil {
+			return fmt.Errorf("cannot encode EK certificate chain: %v", err)
+		}
+		testEkCert = cert
+		testEncodedEkCertChain = b.Bytes()
+
+		nvPub := tpm2.NVPublic{
+			Index:   ekCertHandle,
+			NameAlg: tpm2.HashAlgorithmSHA256,
+			Attrs:   tpm2.MakeNVAttributes(tpm2.AttrNVPPWrite|tpm2.AttrNVAuthRead|tpm2.AttrNVNoDA|tpm2.AttrNVPlatformCreate, tpm2.NVTypeOrdinary),
+			Size:    uint16(len(cert))}
+		if err := tpm.NVDefineSpace(tpm2.HandlePlatform, nil, &nvPub, nil); err != nil {
+			return fmt.Errorf("cannot define NV index for EK certificate: %v", err)
+		}
+		platform, _ := tpm.WrapHandle(tpm2.HandlePlatform)
+		index, _ := tpm.WrapHandle(ekCertHandle)
+		if err := tpm.NVWrite(platform, index, tpm2.MaxNVBuffer(cert), 0, nil); err != nil {
+			return fmt.Errorf("cannot write EK certificate to NV index: %v", err)
+		}
 	}
 	return nil
 }
@@ -440,7 +459,7 @@ func TestSecureConnectToDefaultTPM(t *testing.T) {
 		if len(tpm.VerifiedEkCertChain()) != 2 {
 			t.Fatalf("Unexpected number of certificates in chain")
 		}
-		if !bytes.Equal(tpm.VerifiedEkCertChain()[0].Raw, testEkCertData.Cert) {
+		if !bytes.Equal(tpm.VerifiedEkCertChain()[0].Raw, testEkCert) {
 			t.Errorf("Unexpected leaf certificate")
 		}
 
@@ -495,10 +514,7 @@ func TestSecureConnectToDefaultTPM(t *testing.T) {
 			defer closeTPM(t, tpm)
 		}()
 
-		certData := new(bytes.Buffer)
-		tpm2.MarshalToWriter(certData, testEkCertData)
-
-		run(t, certData, false, nil, nil)
+		run(t, bytes.NewReader(testEncodedEkCertChain), false, nil, nil)
 	})
 
 	t.Run("UnprovisionedWithEndorsementAuth", func(t *testing.T) {
@@ -513,10 +529,7 @@ func TestSecureConnectToDefaultTPM(t *testing.T) {
 			}
 		}()
 
-		certData := new(bytes.Buffer)
-		tpm2.MarshalToWriter(certData, testEkCertData)
-
-		run(t, certData, false, testAuth, func(tpm *TPMConnection) {
+		run(t, bytes.NewReader(testEncodedEkCertChain), false, testAuth, func(tpm *TPMConnection) {
 			clearTPMWithPlatformAuth(t, tpm)
 		})
 	})
@@ -541,10 +554,7 @@ func TestSecureConnectToDefaultTPM(t *testing.T) {
 			clearTPMWithPlatformAuth(t, tpm)
 		}()
 
-		certData := new(bytes.Buffer)
-		tpm2.MarshalToWriter(certData, testEkCertData)
-
-		_, err := SecureConnectToDefaultTPM(certData, nil)
+		_, err := SecureConnectToDefaultTPM(bytes.NewReader(testEncodedEkCertChain), nil)
 		if err == nil {
 			t.Fatalf("SecureConnectToDefaultTPM should have failed")
 		}
@@ -564,39 +574,25 @@ func TestSecureConnectToDefaultTPM(t *testing.T) {
 			}
 		}()
 
-		certData := new(bytes.Buffer)
-		tpm2.MarshalToWriter(certData, testEkCertData)
-
-		run(t, certData, true, nil, nil)
+		run(t, bytes.NewReader(testEncodedEkCertChain), true, nil, nil)
 	})
 
-	t.Run("ReadEkCertFromTPM", func(t *testing.T) {
-		// Test that we can verify without a locally provided cert (ie, read it from the TPM)
+	t.Run("CallerProvidedEkCert", func(t *testing.T) {
+		// Test that we can verify without a TPM provisioned EK certificate
 		func() {
 			tpm := connectAndClear(t)
 			defer closeTPM(t, tpm)
-
-			nvPub := tpm2.NVPublic{
-				Index:   ekCertHandle,
-				NameAlg: tpm2.HashAlgorithmSHA256,
-				Attrs:   tpm2.MakeNVAttributes(tpm2.AttrNVPPWrite|tpm2.AttrNVAuthRead|tpm2.AttrNVNoDA|tpm2.AttrNVPlatformCreate, tpm2.NVTypeOrdinary),
-				Size:    uint16(len(testEkCertData.Cert))}
-			if err := tpm.NVDefineSpace(tpm2.HandlePlatform, nil, &nvPub, nil); err != nil {
-				t.Fatalf("NVDeviceSpace failed: %v", err)
-			}
-			platform, _ := tpm.WrapHandle(tpm2.HandlePlatform)
-			index, _ := tpm.WrapHandle(ekCertHandle)
-			if err := tpm.NVWrite(platform, index, tpm2.MaxNVBuffer(testEkCertData.Cert), 0, nil); err != nil {
-				t.Fatalf("NVWrite failed: %v", err)
-			}
 		}()
 
-		run(t, nil, false, nil, func(tpm *TPMConnection) {
-			index, _ := tpm.WrapHandle(ekCertHandle)
-			if err := tpm.NVUndefineSpace(tpm2.HandlePlatform, index, nil); err != nil {
-				t.Errorf("NVUndefineSpace failed: %v", err)
-			}
-		})
+		cert, _ := x509.ParseCertificate(testEkCert)
+		caCert, _ := x509.ParseCertificate(testCACert)
+
+		certData := new(bytes.Buffer)
+		if err := EncodeEkCertificateChain(cert, []*x509.Certificate{caCert}, certData); err != nil {
+			t.Fatalf("EncodeEkCertificateChain failed: %v", err)
+		}
+
+		run(t, certData, false, nil, nil)
 	})
 
 	t.Run("InvalidEkCert", func(t *testing.T) {
@@ -626,11 +622,10 @@ func TestSecureConnectToDefaultTPM(t *testing.T) {
 		}()
 
 		certData := func() io.Reader {
-			caCert, caKey, err := createTestCA()
+			caCertRaw, caKey, err := createTestCA()
 			if err != nil {
 				t.Fatalf("createTestCA failed: %v", err)
 			}
-			t.Logf("Raw untrusted CA cert: %x\n", caCert)
 
 			tpm, err := ConnectToDefaultTPM()
 			if err != nil {
@@ -638,15 +633,18 @@ func TestSecureConnectToDefaultTPM(t *testing.T) {
 			}
 			defer closeTPM(t, tpm)
 
-			cert, err := createTestEkCert(tpm.TPMContext, caCert, caKey)
+			certRaw, err := createTestEkCert(tpm.TPMContext, caCertRaw, caKey)
 			if err != nil {
 				t.Fatalf("createTestEkCert failed: %v", err)
 			}
-			t.Logf("Raw untrusted EK cert: %x\n", cert)
 
-			data := ekCertData{Cert: cert}
+			cert, _ := x509.ParseCertificate(certRaw)
+			caCert, _ := x509.ParseCertificate(caCertRaw)
+
 			b := new(bytes.Buffer)
-			tpm2.MarshalToWriter(b, data)
+			if err := EncodeEkCertificateChain(cert, []*x509.Certificate{caCert}, b); err != nil {
+				t.Fatalf("EncodeEkCertificateChain failed: %v", err)
+			}
 			return b
 		}()
 
@@ -677,10 +675,7 @@ func TestSecureConnectToDefaultTPM(t *testing.T) {
 			}
 		}()
 
-		certData := new(bytes.Buffer)
-		tpm2.MarshalToWriter(certData, testEkCertData)
-
-		run(t, certData, false, nil, nil)
+		run(t, bytes.NewReader(testEncodedEkCertChain), false, nil, nil)
 	})
 
 	t.Run("IncorrectPersistentEKWithEndorsementAuth", func(t *testing.T) {
@@ -707,10 +702,7 @@ func TestSecureConnectToDefaultTPM(t *testing.T) {
 			}
 		}()
 
-		certData := new(bytes.Buffer)
-		tpm2.MarshalToWriter(certData, testEkCertData)
-
-		run(t, certData, false, testAuth, func(tpm *TPMConnection) {
+		run(t, bytes.NewReader(testEncodedEkCertChain), false, testAuth, func(tpm *TPMConnection) {
 			clearTPMWithPlatformAuth(t, tpm)
 		})
 	})
@@ -747,10 +739,7 @@ func TestSecureConnectToDefaultTPM(t *testing.T) {
 			clearTPMWithPlatformAuth(t, tpm)
 		}()
 
-		certData := new(bytes.Buffer)
-		tpm2.MarshalToWriter(certData, testEkCertData)
-
-		_, err := SecureConnectToDefaultTPM(certData, nil)
+		_, err := SecureConnectToDefaultTPM(bytes.NewReader(testEncodedEkCertChain), nil)
 		if err == nil {
 			t.Fatalf("SecureConnectToDefaultTPM should have failed")
 		}
@@ -768,7 +757,10 @@ func TestMain(m *testing.M) {
 				fmt.Fprintf(os.Stderr, "Cannot create test TPM CA certificate and private key: %v\n", err)
 				return 1
 			} else {
-				rootCAs = append(rootCAs, cert)
+				h := crypto.SHA256.New()
+				h.Write(cert)
+				rootCAHashes = append(rootCAHashes, h.Sum(nil))
+
 				testCACert = cert
 				testCAKey = key
 			}

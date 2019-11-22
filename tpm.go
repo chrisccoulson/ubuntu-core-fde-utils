@@ -21,7 +21,9 @@ package fdeutil
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/rsa"
+	_ "crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -317,7 +319,7 @@ func (t *TPMConnection) init(endorsementAuth []byte) error {
 	return nil
 }
 
-func readEkCert(tpm *tpm2.TPMContext) (*x509.Certificate, error) {
+func readEkCertFromTPM(tpm *tpm2.TPMContext) ([]byte, error) {
 	ekCertIndex, err := tpm.WrapHandle(ekCertHandle)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot create context: %w", err)
@@ -328,72 +330,12 @@ func readEkCert(tpm *tpm2.TPMContext) (*x509.Certificate, error) {
 		return nil, xerrors.Errorf("cannot read public area of index: %w", err)
 	}
 
-	data, err := tpm.NVRead(ekCertIndex, ekCertIndex, ekCertPub.Size, 0, nil)
+	cert, err := tpm.NVRead(ekCertIndex, ekCertIndex, ekCertPub.Size, 0, nil)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot read index: %w", err)
 	}
 
-	cert, err := x509.ParseCertificate(data)
-	if err != nil {
-		return nil, xerrors.Errorf("cannot parse cert: %w", err)
-	}
-
 	return cert, nil
-}
-
-func fetchIntermediates(cert *x509.Certificate) ([]*x509.Certificate, error) {
-	if bytes.Equal(cert.RawIssuer, cert.RawSubject) {
-		return nil, nil
-	}
-
-	client := httputil.NewHTTPClient(&httputil.ClientOptions{Timeout: 10 * time.Second})
-	var out []*x509.Certificate
-
-	for {
-		if len(cert.IssuingCertificateURL) == 0 {
-			break
-		}
-
-		var parent *x509.Certificate
-		var err error
-		for _, issuerUrl := range cert.IssuingCertificateURL {
-			if p, e := func(url string) (*x509.Certificate, error) {
-				resp, err := client.Get(url)
-				if err != nil {
-					return nil, xerrors.Errorf("GET request failed: %w", err)
-				}
-				body, err := ioutil.ReadAll(resp.Body)
-				resp.Body.Close()
-				if err != nil {
-					return nil, xerrors.Errorf("cannot read body: %w", err)
-				}
-				cert, err := x509.ParseCertificate(body)
-				if err != nil {
-					return nil, xerrors.Errorf("cannot parse certificate: %w", err)
-				}
-				return cert, nil
-			}(issuerUrl); e == nil {
-				parent = p
-				err = nil
-				break
-			} else {
-				err = xerrors.Errorf("download from %s failed: %w", issuerUrl, e)
-			}
-		}
-
-		if err != nil {
-			return nil, xerrors.Errorf("cannot download certificate for issuer of %v: %w", cert.Subject, err)
-		}
-
-		if bytes.Equal(parent.RawIssuer, parent.RawSubject) {
-			break
-		}
-
-		out = append(out, parent)
-		cert = parent
-	}
-
-	return out, nil
 }
 
 var openDefaultTcti = func() (io.ReadWriteCloser, error) {
@@ -550,9 +492,26 @@ func parseTPMDeviceAttributesFromSAN(data []byte) (*TPMDeviceAttributes, pkix.RD
 	return nil, nil, errors.New("no directoryName")
 }
 
+func isCertificateTrustedCA(cert *x509.Certificate) bool {
+	h := crypto.SHA256.New()
+	h.Write(cert.Raw)
+	hash := h.Sum(nil)
+
+Outer:
+	for _, rootHash := range rootCAHashes {
+		for i, b := range rootHash {
+			if b != hash[i] {
+				continue Outer
+			}
+		}
+		return true
+	}
+	return false
+}
+
 type ekCertData struct {
-	Cert              []byte
-	IntermediateCerts [][]byte
+	Cert    []byte
+	Parents [][]byte
 }
 
 // verifyEkCertificate verifies the provided certificate and intermediate certificates against the built-in roots, and verifies
@@ -560,35 +519,26 @@ type ekCertData struct {
 //
 // On success, it returns a verified certificate chain. This function will also return success if there is no certificate and
 // it is executed inside a guest VM, in order to support fallback to a non-secure connection when using swtpm in a guest VM.
-func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, *TPMDeviceAttributes, error) {
-	// Load EK cert and intermediates
-	var data ekCertData
-	if err := tpm2.UnmarshalFromReader(ekCertReader, &data); err != nil {
-		return nil, nil, xerrors.Errorf("cannot unmarshal: %w", err)
-	}
-
+func verifyEkCertificate(data *ekCertData) ([]*x509.Certificate, *TPMDeviceAttributes, error) {
+	// Parse EK cert
 	cert, err := x509.ParseCertificate(data.Cert)
 	if err != nil {
 		return nil, nil, xerrors.Errorf("cannot parse endorsement key certificate: %w", err)
 	}
 
+	// Parse other certs, building root and intermediates store
+	roots := x509.NewCertPool()
 	intermediates := x509.NewCertPool()
-	for _, d := range data.IntermediateCerts {
+	for _, d := range data.Parents {
 		c, err := x509.ParseCertificate(d)
 		if err != nil {
-			return nil, nil, xerrors.Errorf("cannot parse intermediate certificates: %w", err)
+			return nil, nil, xerrors.Errorf("cannot parse certificate: %w", err)
 		}
-		intermediates.AddCert(c)
-	}
-
-	// Parse the built-in roots
-	roots := x509.NewCertPool()
-	for _, data := range rootCAs {
-		cert, err := x509.ParseCertificate(data)
-		if err != nil {
-			panic(fmt.Sprintf("cannot parse root CA: %v", err))
+		if isCertificateTrustedCA(c) {
+			roots.AddCert(c)
+		} else {
+			intermediates.AddCert(c)
 		}
-		roots.AddCert(cert)
 	}
 
 	if cert.PublicKeyAlgorithm != x509.RSA {
@@ -643,7 +593,7 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, *TPMDevic
 		return nil, nil, errors.New("certificate has incorrect key usage")
 	}
 
-	// Verify EK certificate for any usage - we've already verified that the leaf has the correct usage.
+	// Verify EK certificate for any usage - we're going to verify the Extended Key Usage afterwards
 	opts := x509.VerifyOptions{
 		Intermediates: intermediates,
 		Roots:         roots,
@@ -675,55 +625,162 @@ func verifyEkCertificate(ekCertReader io.Reader) ([]*x509.Certificate, *TPMDevic
 	return chain, attrs, nil
 }
 
-func fetchEkCertificate(tpm *TPMConnection, w io.Writer) error {
-	var data ekCertData
+func fetchParentCertificates(cert *x509.Certificate) ([][]byte, error) {
+	client := httputil.NewHTTPClient(&httputil.ClientOptions{Timeout: 10 * time.Second})
+	var out [][]byte
 
-	if cert, err := readEkCert(tpm.TPMContext); err != nil {
-		var unavailErr tpm2.ResourceUnavailableError
-		if !xerrors.As(err, &unavailErr) {
-			return xerrors.Errorf("cannot obtain endorsement certificate from TPM: %w", err)
+	for {
+		if bytes.Equal(cert.RawIssuer, cert.RawSubject) {
+			break
 		}
-	} else {
-		data.Cert = cert.Raw
 
-		intermediates, err := fetchIntermediates(cert)
+		if len(cert.IssuingCertificateURL) == 0 {
+			break
+		}
+
+		var parent *x509.Certificate
+		var err error
+		for _, issuerUrl := range cert.IssuingCertificateURL {
+			if p, e := func(url string) (*x509.Certificate, error) {
+				resp, err := client.Get(url)
+				if err != nil {
+					return nil, xerrors.Errorf("GET request failed: %w", err)
+				}
+				body, err := ioutil.ReadAll(resp.Body)
+				resp.Body.Close()
+				if err != nil {
+					return nil, xerrors.Errorf("cannot read body: %w", err)
+				}
+				cert, err := x509.ParseCertificate(body)
+				if err != nil {
+					return nil, xerrors.Errorf("cannot parse certificate: %w", err)
+				}
+				return cert, nil
+			}(issuerUrl); e == nil {
+				parent = p
+				err = nil
+				break
+			} else {
+				err = xerrors.Errorf("download from %s failed: %w", issuerUrl, e)
+			}
+		}
+
 		if err != nil {
-			return xerrors.Errorf("cannot obtain intermediate certificates for %s: %w", cert.Subject, err)
+			return nil, xerrors.Errorf("cannot download parent certificate of %v: %w", cert.Subject, err)
 		}
 
-		data.IntermediateCerts = make([][]byte, 0, len(intermediates))
-		for _, c := range intermediates {
-			data.IntermediateCerts = append(data.IntermediateCerts, c.Raw)
-		}
+		out = append(out, parent.Raw)
+		cert = parent
 	}
 
-	if err := tpm2.MarshalToWriter(w, &data); err != nil {
-		return xerrors.Errorf("cannot marshal cert data: %w", err)
-	}
-
-	return nil
+	return out, nil
 }
 
-// FetchAndSaveEkCertificate attempts to obtain the endorsement key certificate for the TPM assocated with the tpm parameter, and
-// then download the associated intermediate certificates.
-//
-// On success, the EK certificate and its intermediates are saved atomically to the file referenced by dest in a form that can be read
-// by SecureConnectToDefaultTPM. If no EK certificate can be obtained, this function will return an error unless executed inside a
-// guest VM. In this case, an empty certificate that can be unmarshalled correctly by SecureConnectToDefaultTPM will be written in
-// order to support fallback to a non-secure connection when connecting to swtpm inside a guest VM.
-func FetchAndSaveEkCertificate(tpm *TPMConnection, dest string) error {
+func fetchEkCertificateChain(tpm *tpm2.TPMContext, parentsOnly bool) (*ekCertData, error) {
+	var data ekCertData
+
+	if cert, err := readEkCertFromTPM(tpm); err != nil {
+		return nil, xerrors.Errorf("cannot obtain endorsement key certificate from TPM: %w", err)
+	} else {
+		if !parentsOnly {
+			data.Cert = cert
+		}
+
+		c, err := x509.ParseCertificate(cert)
+		if err != nil {
+			return nil, xerrors.Errorf("cannot parse endorsement key certificate: %w", err)
+		}
+
+		parents, err := fetchParentCertificates(c)
+		if err != nil {
+			return nil, xerrors.Errorf("cannot obtain parent certificates for %s: %w", c.Subject, err)
+		}
+		data.Parents = parents
+	}
+
+	return &data, nil
+}
+
+func saveEkCertificateChain(data *ekCertData, dest string) error {
 	f, err := osutil.NewAtomicFile(dest, 0600, 0, sys.UserID(osutil.NoChown), sys.GroupID(osutil.NoChown))
 	if err != nil {
 		return xerrors.Errorf("cannot create new atomic file: %w", err)
 	}
 	defer f.Cancel()
 
-	if err := fetchEkCertificate(tpm, f); err != nil {
-		return err
+	if err := tpm2.MarshalToWriter(f, data); err != nil {
+		return xerrors.Errorf("cannot marshal cert chain: %w", err)
 	}
 
 	if err := f.Commit(); err != nil {
 		return xerrors.Errorf("cannot atomically replace file: %w", err)
+	}
+
+	return nil
+}
+
+// FetchAndSaveEkCertificateChain attempts to obtain the endorsement key certificate for the TPM assocated with the tpm parameter,
+// download the parent certificates and then save them atomically to the specified file in a form that can be decoded by
+// SecureConnectToDefaultTPM. This function requires network access.
+//
+// This depends on the presence of the Authority Information Access extension in the leaf certificate and any intermediate certificates,
+// which must contain a URL for the parent certificate.
+//
+// This function will stop when it encounters a certificate that doesn't specify an issuer URL, or when it encounters a self-signed
+// certificate.
+//
+// If no endorsement key certificate can be obtained, an error will be returned.
+//
+// If parentsOnly is true, this function will only save the parent certificates as long as the endorsement key certificate can be
+// reliably obtained from the TPM.
+func FetchAndSaveEkCertificateChain(tpm *TPMConnection, parentsOnly bool, dest string) error {
+	data, err := fetchEkCertificateChain(tpm.TPMContext, parentsOnly)
+	if err != nil {
+		return err
+	}
+
+	return saveEkCertificateChain(data, dest)
+}
+
+// SaveEkCertificateChain will save the specified EK certificate and associated parent certificates atomically to the specified file
+// in a form that can be decoded by SecureConnectToDefaultTPM. This is useful in scenarios where the EK certificate cannot be located
+// automatically, or the EK certificate or any intermediate certificates lack the Authority Information Access extension but the
+// certificates have been downloaded manually by the caller.
+//
+// If the EK certificate can be obtained reliably from the TPM during establishment of a connection, then it can be omitted in order
+// to save a file that only contains parent certificates. In this case, SecureConnectToDefaultTPM will attempt to obtain the EK
+// certificate from the TPM and verify it against the supplied parent certificates.
+func SaveEkCertificateChain(ekCert *x509.Certificate, parents []*x509.Certificate, dest string) error {
+	var data ekCertData
+	if ekCert != nil {
+		data.Cert = ekCert.Raw
+	}
+	for _, c := range parents {
+		data.Parents = append(data.Parents, c.Raw)
+	}
+
+	return saveEkCertificateChain(&data, dest)
+}
+
+// EncodeCertificateChain will write the specified EK certificate and associated parent certificates to the specified io.Writer in a
+// form that can be decoded by SecureConnectToDefaultTPM. This is useful in scenarios where the EK certificate cannot be located
+// automatically, or the EK certificate or any intermediate certificates lack the Authority Information Access extension but the
+// certificates have been downloaded manually by the caller.
+//
+// If the EK certificate can be obtained reliably from the TPM during establishment of a connection, then it can be omitted in order
+// to save a file that only contains parent certificates. In this case, SecureConnectToDefaultTPM will attempt to obtain the EK
+// certificate from the TPM and verify it against the supplied parent certificates.
+func EncodeEkCertificateChain(ekCert *x509.Certificate, parents []*x509.Certificate, w io.Writer) error {
+	var data ekCertData
+	if ekCert != nil {
+		data.Cert = ekCert.Raw
+	}
+	for _, c := range parents {
+		data.Parents = append(data.Parents, c.Raw)
+	}
+
+	if err := tpm2.MarshalToWriter(w, &data); err != nil {
+		return xerrors.Errorf("cannot marshal cert chain: %w", err)
 	}
 
 	return nil
@@ -761,21 +818,26 @@ func ConnectToDefaultTPM() (*TPMConnection, error) {
 	return t, nil
 }
 
-// SecureConnectToDefaultTPM will attempt to connect to the default TPM, verify the manufacturer issued endorsement certificate
-// against the built-in CA roots and then verify that the TPM is the one for which the endorsement certificate was issued. If
-// provided, the ekCertReader argument should read from a file created previously by FetchAndSaveEkCertificate. This makes it
-// possible to connect to the TPM without requiring network access to download certificates.
+// SecureConnectToDefaultTPM will attempt to connect to the default TPM, verify the manufacturer issued endorsement key certificate
+// against the built-in CA roots and then verify that the TPM is the one for which the endorsement certificate was issued.
 //
-// If the data read from ekCertReader cannot be unmarshalled or parsed correctly, a EkCertVerificationError error will be returned.
+// If provided, the ekCertDataReader argument should read from a file or buffer created previously by FetchAndSaveEkCertificateChain,
+// SaveEkCertificateChain or EncodeEkCertificateChain. This makes it possible to connect to the TPM without requiring network access
+// to obtain certificates.
 //
-// If ekCertReader is nil, this function will attempt to obtain the endorsement key certificate for the TPM and then download the
-// required intermediate certificates. This requires network access. If this fails, a EkCertVerificationError error will be returned.
-// If network access is unavailable and there is no existing EK certificate blob created previously by FetchAndSaveEkCertificate,
-// then ConnectToDefaultTPM must be used instead.
+// If the data read from ekCertDataReader cannot be unmarshalled or parsed correctly, a EkCertVerificationError error will be
+// returned.
+//
+// If ekCertDataReader does not contain an endorsement key certificate, this function will attempt to obtain the certificate for the
+// TPM. This does not require network access. If this fails, a EkCertVerificationError error will be returned.
+//
+// If ekCertDataReader is nil, this function will attempt to obtain the endorsement key certificate for the TPM and then download the
+// parent certificates, which requires network access. If this fails, a EkCertVerificationError error will be returned. If network
+// access is unavailable and there is no existing EK certificate blob created previously by FetchAndSaveEkCertificateChain,
+// SaveEkCertificateChain or EncodeEkCertificateChain, then ConnectToDefaultTPM must be used instead.
 //
 // If verification of the endorsement key certificate fails, a EkCertVerificationError error will be returned. If the endorsement
-// key certificate data was supplied by the caller, this might mean that the data is invalid and should be recreated with
-// FetchAndSaveEkCertificate.
+// key certificate data was supplied by the caller, this might mean that the data is invalid and should be recreated.
 //
 // In order for the TPM to prove it is the device for which the endorsement key certificate was issued, an endorsement key is
 // required. If the TPM doesn't contain a valid persistent endorsement key at the expected location (eg, if ProvisionTPM hasn't been
@@ -787,7 +849,7 @@ func ConnectToDefaultTPM() (*TPMConnection, error) {
 // returned. This can happen if there is an object at the persistent endorsement key index but it is not the object for which the
 // endorsement key certificate was issued, and creation of a transient endorsement key fails because the correct endorsement hierarchy
 // authorization value hasn't been provided.
-func SecureConnectToDefaultTPM(ekCertReader io.Reader, endorsementAuth []byte) (*TPMConnection, error) {
+func SecureConnectToDefaultTPM(ekCertDataReader io.Reader, endorsementAuth []byte) (*TPMConnection, error) {
 	tpm, err := connectToDefaultTPM()
 	if err != nil {
 		return nil, err
@@ -803,15 +865,29 @@ func SecureConnectToDefaultTPM(ekCertReader io.Reader, endorsementAuth []byte) (
 
 	t := &TPMConnection{TPMContext: tpm}
 
-	if ekCertReader == nil {
-		b := new(bytes.Buffer)
-		if err := fetchEkCertificate(t, b); err != nil {
+	var certData *ekCertData
+	if ekCertDataReader != nil {
+		// Unmarshal supplied EK cert data
+		if err := tpm2.UnmarshalFromReader(ekCertDataReader, &certData); err != nil {
+			return nil, EkCertVerificationError{fmt.Sprintf("cannot unmarshal supplied EK certificate data: %v", err)}
+		}
+		if len(certData.Cert) == 0 {
+			// The supplied data only contains parent certificates. Retrieve the EK cert from the TPM.
+			if cert, err := readEkCertFromTPM(tpm); err != nil {
+				return nil, EkCertVerificationError{fmt.Sprintf("cannot obtain endorsement key certificate from TPM: %v", err)}
+			} else {
+				certData.Cert = cert
+			}
+		}
+	} else {
+		data, err := fetchEkCertificateChain(tpm, false)
+		if err != nil {
 			return nil, EkCertVerificationError{err.Error()}
 		}
-		ekCertReader = b
+		certData = data
 	}
 
-	chain, attrs, err := verifyEkCertificate(ekCertReader)
+	chain, attrs, err := verifyEkCertificate(certData)
 	if err != nil {
 		return nil, EkCertVerificationError{err.Error()}
 	}

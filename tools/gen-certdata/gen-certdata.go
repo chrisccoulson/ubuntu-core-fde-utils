@@ -21,6 +21,8 @@ package main
 
 import (
 	"bytes"
+	"crypto"
+	_ "crypto/sha256"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -47,34 +49,35 @@ func main() {
 
 	buffer.WriteString("package fdeutil\n\n")
 	buffer.WriteString("var (\n")
+	buffer.WriteString("\trootCAHashes = [][]byte{\n")
 
-	for i, fi := range files {
-		buffer.WriteString(fmt.Sprintf("\trootCA%d = []byte{", i))
+	for _, fi := range files {
+		buffer.WriteString("\t\t[]byte{")
 		path := filepath.Join(in, fi.Name())
-		f, err := os.Open(path)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Cannot open file: %v\n", err)
-			os.Exit(1)
-		}
-		data, err := ioutil.ReadAll(f)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Cannot read file: %v\n", err)
-			os.Exit(1)
-		}
-		for i, b := range data {
+		data := func() []byte {
+			f, err := os.Open(path)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Cannot open file: %v\n", err)
+				os.Exit(1)
+			}
+			defer f.Close()
+			data, err := ioutil.ReadAll(f)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Cannot read file: %v\n", err)
+				os.Exit(1)
+			}
+			return data
+		}()
+		h := crypto.SHA256.New()
+		h.Write(data)
+		hash := h.Sum(nil)
+		for i, b := range hash {
 			if i > 0 {
 				buffer.WriteString(", ")
 			}
 			buffer.WriteString(fmt.Sprintf("0x%02x", b))
 		}
-		buffer.WriteString("}\n")
-	}
-
-	buffer.WriteString("\n")
-	buffer.WriteString("\trootCAs = [][]byte{\n")
-
-	for i, _ := range files {
-		buffer.WriteString(fmt.Sprintf("\t\trootCA%d,\n", i))
+		buffer.WriteString("},\n")
 	}
 
 	buffer.WriteString("\t}\n")
