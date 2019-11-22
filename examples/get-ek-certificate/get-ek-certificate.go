@@ -45,6 +45,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Cannot acquire TPM context: %v\n", err)
 		os.Exit(1)
 	}
+	defer tpm.Close()
 
 	if err := fdeutil.FetchAndSaveEkCertificateChain(tpm, parentsOnly, flag.Args()[0]); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot fetch and save EK certificate and intermediates: %v\n", err)
