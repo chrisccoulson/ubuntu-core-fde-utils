@@ -419,6 +419,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 		err     string
 	}{
 		{
+			// Test with a classic style boot chain with grub and kernel verified against the UEFI db
 			desc:    "VerifyFromDbClassic",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
@@ -441,6 +442,8 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 					0x60, 0xfb, 0xc5, 0x20, 0x8a, 0x8b, 0xfc, 0x06, 0x81}},
 		},
 		{
+			// Test with a classic style boot chain with grub and kernel verified against the UEFI db, and grub signed by the
+			// actual CA certificate
 			desc:    "VerifyDirectCASignature",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
@@ -463,6 +466,8 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 					0x60, 0xfb, 0xc5, 0x20, 0x8a, 0x8b, 0xfc, 0x06, 0x81}},
 		},
 		{
+			// Test with a UC20 style bootchain with normal and recovery systems, and the normal path booting via a chainloaded GRUB. GRUB
+			// and the kernel are verified by the UEFI db
 			desc:    "VerifyFromDbUC20",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
@@ -492,6 +497,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 					0x60, 0xfb, 0xc5, 0x20, 0x8a, 0x8b, 0xfc, 0x06, 0x81}},
 		},
 		{
+			// Test with a GRUB binary that has an invalid signature
 			desc:    "InvalidGrubSignature",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
@@ -508,19 +514,15 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 									&OSComponent{
 										LoadType: DirectLoadWithShimVerify,
 										Image:    FileOSComponent("testdata/mock.efi.signed.1")}}}}}}},
-			err: "cannot process events from event log: cannot process KEK measurement: cannot " +
-				"process KEK measurement event with current contents: cannot process subsequent " +
-				"events from event log: cannot process db measurement: cannot process db " +
-				"measurement event with current contents: cannot process subsequent events from " +
-				"event log: cannot process dbx measurement: cannot process dbx measurement " +
-				"event with current contents: cannot process subsequent events from event log: " +
-				"cannot compute OS load events: cannot compute events for component at index 0: " +
-				"cannot process Shim executable: cannot compute events for subsequent " +
-				"components: cannot compute events for component at index 0: cannot process " +
-				"executable: cannot compute measurement for PE binary verification: no root " +
-				"certificate found",
+			err: "cannot process events from event log: cannot process KEK measurement event: cannot process KEK measurement event 0: cannot " +
+				"process subsequent events from event log: cannot process db measurement event: cannot process db measurement event 0: cannot " +
+				"process subsequent events from event log: cannot process dbx measurement event: cannot process dbx measurement event 0: cannot " +
+				"process subsequent events from event log: cannot compute OS load events: cannot compute events for component at index 0: " +
+				"cannot process Shim executable: cannot compute events for subsequent components: cannot compute events for component at index " +
+				"0: cannot process executable: cannot compute measurement for PE binary verification: no root certificate found",
 		},
 		{
+			// Test with an unsigned kernel
 			desc:    "NoKernelSignature",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
@@ -537,20 +539,16 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 									&OSComponent{
 										LoadType: DirectLoadWithShimVerify,
 										Image:    FileOSComponent("testdata/mock.efi")}}}}}}},
-			err: "cannot process events from event log: cannot process KEK measurement: cannot " +
-				"process KEK measurement event with current contents: cannot process subsequent " +
-				"events from event log: cannot process db measurement: cannot process db " +
-				"measurement event with current contents: cannot process subsequent events from " +
-				"event log: cannot process dbx measurement: cannot process dbx measurement " +
-				"event with current contents: cannot process subsequent events from event log: " +
-				"cannot compute OS load events: cannot compute events for component at index 0: " +
-				"cannot process Shim executable: cannot compute events for subsequent " +
-				"components: cannot compute events for component at index 0: cannot process " +
-				"executable: cannot compute events for subsequent components: cannot compute " +
-				"events for component at index 0: cannot process executable: cannot compute " +
-				"measurement for PE binary verification: cannot read signature length: EOF",
+			err: "cannot process events from event log: cannot process KEK measurement event: cannot process KEK measurement event 0: cannot " +
+				"process subsequent events from event log: cannot process db measurement event: cannot process db measurement event 0: cannot " +
+				"process subsequent events from event log: cannot process dbx measurement event: cannot process dbx measurement event 0: cannot " +
+				"process subsequent events from event log: cannot compute OS load events: cannot compute events for component at index 0: " +
+				"cannot process Shim executable: cannot compute events for subsequent components: cannot compute events for component at index " +
+				"0: cannot process executable: cannot compute events for subsequent components: cannot compute events for component at index 0: " +
+				"cannot process executable: cannot compute measurement for PE binary verification: cannot read signature length: EOF",
 		},
 		{
+			// Test with secure boot enforcement disabled in shim
 			desc:    "ShimVerificationDisabled",
 			logPath: "testdata/eventlog2.bin",
 			efivars: "testdata/efivars1",
@@ -570,6 +568,8 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			err: "the current boot was performed with validation disabled in Shim",
 		},
 		{
+			// Test with a UC20 style bootchain with normal and recovery systems, and the normal path booting via a chainloaded GRUB. GRUB
+			// and the kernel are verified by shim's vendor cert
 			desc:    "VerifyGrubAndKernelWithShimVendorCert",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
@@ -599,6 +599,8 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 					0x53, 0x8c, 0x50, 0x7d, 0xaf, 0x16, 0x5a, 0xe8, 0xe6}},
 		},
 		{
+			// Test with a UC20 style bootchain with normal and recovery systems, and the normal path booting via a chainloaded GRUB. GRUB
+			// and the kernel are verified by shim's vendor cert
 			desc:    "VerifyFromDbUC20_2",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars2",
@@ -628,6 +630,8 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 					0x7a, 0xef, 0x52, 0x11, 0x39, 0x81, 0x7b, 0xc9, 0x76}},
 		},
 		{
+			// Test with a UC20 style bootchain with normal and recovery systems, and the normal path booting via a chainloaded GRUB. GRUB
+			// is verified by shim's vendor cert and the kernel is verified by the UEFI db
 			desc:    "VerifyFromDbUC20_3",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
@@ -657,6 +661,8 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 					0xe0, 0xde, 0x03, 0xcd, 0xe9, 0xed, 0xbb, 0xf3, 0x94}},
 		},
 		{
+			// Test with a UC20 style bootchain with normal and recovery systems, and the normal path booting via a chainloaded GRUB. Two
+			// kernels are supplied for both normal and recovery paths signed with alternate keys
 			desc:    "KernelKeyRotationUC20",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
@@ -695,6 +701,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 					0xce, 0x55, 0x52, 0x2c, 0x07, 0x40, 0x50, 0xe4, 0x28}},
 		},
 		{
+			// Verify that DirectLoadWithShimVerify fails if there are no shim binaries in the boot chain.
 			desc:    "MissingShimVendorCertSection",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
@@ -711,19 +718,16 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 									&OSComponent{
 										LoadType: DirectLoadWithShimVerify,
 										Image:    FileOSComponent("testdata/mock.efi.signed.1")}}}}}}},
-			err: "cannot process events from event log: cannot process KEK measurement: cannot " +
-				"process KEK measurement event with current contents: cannot process subsequent " +
-				"events from event log: cannot process db measurement: cannot process db " +
-				"measurement event with current contents: cannot process subsequent events from " +
-				"event log: cannot process dbx measurement: cannot process dbx measurement " +
-				"event with current contents: cannot process subsequent events from event log: " +
-				"cannot compute OS load events: cannot compute events for component at index 0: " +
-				"cannot process executable: cannot compute events for subsequent components: " +
-				"cannot compute events for component at index 0: cannot process executable: " +
-				"cannot compute measurement for PE binary verification: shim verification " +
-				"specified without being preceeded by a shim executable",
+			err: "cannot process events from event log: cannot process KEK measurement event: cannot process KEK measurement event 0: " +
+				"cannot process subsequent events from event log: cannot process db measurement event: cannot process db measurement event 0: " +
+				"cannot process subsequent events from event log: cannot process dbx measurement event: cannot process dbx measurement event " +
+				"0: cannot process subsequent events from event log: cannot compute OS load events: cannot compute events for component at " +
+				"index 0: cannot process executable: cannot compute events for subsequent components: cannot compute events for component at " +
+				"index 0: cannot process executable: cannot compute measurement for PE binary verification: shim verification specified " +
+				"without being preceeded by a shim executable",
 		},
 		{
+			// Test that shim binaries without a vendor cert work correctly
 			desc:    "NoShimVendorCert",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
@@ -746,6 +750,8 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 					0x60, 0xfb, 0xc5, 0x20, 0x8a, 0x8b, 0xfc, 0x06, 0x81}},
 		},
 		{
+			// Test with a UC20 style bootchain with normal and recovery systems, and the normal path booting via a chainloaded GRUB. The
+			// normal and recovery chains have different trust paths
 			desc:    "MismatchedNormalAndRecoverySystemsUC20",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
@@ -802,6 +808,35 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 				tpm2.Digest{0x38, 0xae, 0x1e, 0x75, 0xea, 0x72, 0x37, 0x98, 0x3f, 0x4d, 0x44, 0xc3,
 					0x69, 0x5e, 0x08, 0xa1, 0xd7, 0xb6, 0x0d, 0x8c, 0xba, 0xc3, 0xc6, 0x5e,
 					0x57, 0x64, 0x73, 0xb7, 0x27, 0x77, 0x61, 0x6e}},
+		},
+		{
+			desc:    "DbAndDbxUpdate",
+			logPath: "testdata/eventlog1.bin",
+			efivars: "testdata/efivars1",
+			params: &SealParams{
+				LoadPaths: []*OSComponent{
+					&OSComponent{
+						LoadType: FirmwareLoad,
+						Image:    FileOSComponent("testdata/mockshim1.efi.signed.1"),
+						Next: []*OSComponent{
+							&OSComponent{
+								LoadType: DirectLoadWithShimVerify,
+								Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+								Next: []*OSComponent{
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1")}}}}}},
+				SecureBootDbKeystores: []string{"testdata/updates3"}},
+			digests: tpm2.DigestList{
+				tpm2.Digest{0xe8, 0x01, 0x30, 0xf2, 0xd8, 0x21, 0x2d, 0x69, 0x69, 0xf0, 0xcd,
+					0x20, 0xef, 0xfc, 0x3b, 0xbd, 0xed, 0x14, 0x58, 0x48, 0x61, 0xf8, 0xf5,
+					0x60, 0xfb, 0xc5, 0x20, 0x8a, 0x8b, 0xfc, 0x06, 0x81},
+				tpm2.Digest{0x38, 0xae, 0x1e, 0x75, 0xea, 0x72, 0x37, 0x98, 0x3f, 0x4d, 0x44, 0xc3,
+					0x69, 0x5e, 0x08, 0xa1, 0xd7, 0xb6, 0x0d, 0x8c, 0xba, 0xc3, 0xc6, 0x5e,
+					0x57, 0x64, 0x73, 0xb7, 0x27, 0x77, 0x61, 0x6e},
+				tpm2.Digest{0x3d, 0x61, 0x2a, 0x0e, 0xda, 0x6d, 0xeb, 0x41, 0x98, 0x2b, 0x81, 0xd4,
+					0xc2, 0x46, 0x95, 0xcf, 0x72, 0x1e, 0x00, 0x23, 0x3b, 0x40, 0x48, 0x9a,
+					0xf5, 0x91, 0x8d, 0xae, 0x86, 0x53, 0x20, 0xac}},
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {

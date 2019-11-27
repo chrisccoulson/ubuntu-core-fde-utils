@@ -21,6 +21,7 @@
 - updates1/ contains a UEFI db update containing the second test CA certificate already enrolled in efivars2/.
 - updates2/ contains a UEFI forbidden signature db update based on the contents of the forbidden signature
   database from efivars3/, but with 2 sha256 signatures changed (one digest and one owner GUID).
+- updates3/ contains updates from updates/ and updates1/
 
 - eventlog1.bin is an event log from a QEMU instance running OVMF with the following configuration:
   - "Ubuntu OVMF Secure Boot (PK/KEK key)" enrolled in to PK.

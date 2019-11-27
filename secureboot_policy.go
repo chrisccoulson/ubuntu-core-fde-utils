@@ -86,6 +86,11 @@ type classifiedEvent struct {
 	event *tcglog.ValidatedEvent
 }
 
+type uefiSigDbUpdate struct {
+	dbType string
+	path   string
+}
+
 // classifySecureBootEvents iterates over a sequence of events and determines which events correspond to
 // measurements of db, dbx and which measurement corresponds to verification of the initial boot executable.
 // It returns a list of classified events for the secure boot policy PCR (#7)
@@ -459,17 +464,18 @@ type secureBootDbSet struct {
 }
 
 type secureBootPolicyGen struct {
-	alg        tpm2.AlgorithmId
-	loadPaths  []*OSComponent
-	kekUpdates []string
-	dbUpdates  []string
-	dbxUpdates []string
+	alg          tpm2.AlgorithmId
+	loadPaths    []*OSComponent
+	sigDbUpdates []uefiSigDbUpdate
 
 	dbStack  []*secureBootDbSet
 	pcrStack []tpm2.Digest
 
 	firmwareVerificationEvents []tpm2.DigestList
 	shimVerificationEvents     []tpm2.DigestList
+
+	measuredSigDbs      []string
+	sigDbUpdatesApplied int
 
 	outputDigests tpm2.DigestList
 }
@@ -576,50 +582,40 @@ func (g *secureBootPolicyGen) computeAndExtendVariableMeasurement(varName *tcglo
 	return nil
 }
 
-func (g *secureBootPolicyGen) processKek(kek []byte, events []classifiedEvent) error {
-	// Compute and extend a measurement for KEK
-	if err := g.computeAndExtendVariableMeasurement(&efiGlobalVariableGuid, kekName, kek); err != nil {
-		return fmt.Errorf("cannot compute and extend measurement for KEK: %v", err)
+func (g *secureBootPolicyGen) processSignatureDbMeasurement(name string, data []byte, events []classifiedEvent) error {
+	var guid *tcglog.EFIGUID
+	switch name {
+	case kekName:
+		guid = &efiGlobalVariableGuid
+	case dbName:
+		guid = &efiImageSecurityDatabaseGuid
+	case dbxName:
+		guid = &efiImageSecurityDatabaseGuid
+	default:
+		panic("invalid name")
 	}
 
-	// Continue replaying events
-	if err := g.processEvents(events); err != nil {
-		return fmt.Errorf("cannot process subsequent events from event log: %v", err)
+	// Compute and extend a measurement
+	if err := g.computeAndExtendVariableMeasurement(guid, name, data); err != nil {
+		return fmt.Errorf("cannot compute and extend measurement for %s: %v", name, err)
 	}
 
-	return nil
-}
+	g.measuredSigDbs = append(g.measuredSigDbs, name)
+	defer func() {
+		g.measuredSigDbs = g.measuredSigDbs[:len(g.measuredSigDbs)-1]
+	}()
 
-func (g *secureBootPolicyGen) processDb(db []byte, events []classifiedEvent) error {
-	// Compute and extend a measurement for db
-	if err := g.computeAndExtendVariableMeasurement(&efiImageSecurityDatabaseGuid, dbName, db); err != nil {
-		return fmt.Errorf("cannot compute and extend measurement for db: %v", err)
-	}
+	if name == dbName {
+		// Enter a new secure boot DB set scope
+		g.enterDbScope()
+		defer g.exitDbScope()
 
-	// Enter a new secure boot DB set scope
-	g.enterDbScope()
-	defer g.exitDbScope()
-
-	// Decode this db and update the secure boot DB set
-	signatures, err := decodeSecureBootDb(bytes.NewReader(db))
-	if err != nil {
-		return fmt.Errorf("cannot decode secure boot db: %v", err)
-	}
-	g.dbSet().uefiDb = secureBootDb{variableName: efiImageSecurityDatabaseGuid, unicodeName: dbName,
-		signatures: signatures}
-
-	// Continue replaying events
-	if err := g.processEvents(events); err != nil {
-		return fmt.Errorf("cannot process subsequent events from event log: %v", err)
-	}
-
-	return nil
-}
-
-func (g *secureBootPolicyGen) processDbx(dbx []byte, events []classifiedEvent) error {
-	// Compute and extend a measurement for dbx
-	if err := g.computeAndExtendVariableMeasurement(&efiImageSecurityDatabaseGuid, dbxName, dbx); err != nil {
-		return fmt.Errorf("cannot compute and extend measurement for dbx: %v", err)
+		// Decode this db and update the secure boot DB set
+		signatures, err := decodeSecureBootDb(bytes.NewReader(data))
+		if err != nil {
+			return fmt.Errorf("cannot decode secure boot db: %v", err)
+		}
+		g.dbSet().uefiDb = secureBootDb{variableName: *guid, unicodeName: name, signatures: signatures}
 	}
 
 	// Continue replaying events
@@ -952,85 +948,102 @@ func computeEfivarPath(filename string) string {
 	return filepath.Join(efivarsPathForTesting, filename)
 }
 
-func (g *secureBootPolicyGen) processEvents(events []classifiedEvent) error {
-	handleSignatureDb := func(name, filename string, updates []string, fn func([]byte) error) error {
-		// Handle current contents
-		path := computeEfivarPath(filename)
+func (g *secureBootPolicyGen) computeSignatureDbEvents(name, filename string, events []classifiedEvent) error {
+	path := computeEfivarPath(filename)
 
-		var contents []byte
-		if f, err := os.Open(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("cannot open %s: %v", path, err)
-		} else if f != nil {
-			c, err := func() ([]byte, error) {
-				defer f.Close()
-				return ioutil.ReadAll(f)
-			}()
-			if err != nil {
-				return fmt.Errorf("cannot read contents of %s: %v", path, err)
-			}
-			contents = c[4:]
+	var data []byte
+	if f, err := os.Open(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("cannot open %s: %v", path, err)
+	} else if f != nil {
+		d, err := func() ([]byte, error) {
+			defer f.Close()
+			return ioutil.ReadAll(f)
+		}()
+		if err != nil {
+			return fmt.Errorf("cannot read contents of %s: %v", path, err)
 		}
-
-		run := func() error {
-			g.enterMeasurementScope()
-			defer g.exitMeasurementScope()
-			return fn(contents)
-		}
-
-		if err := run(); err != nil {
-			return fmt.Errorf("cannot process %s measurement event with current contents: %v",
-				name, err)
-		}
-
-		// Handle updates
-		for _, path := range updates {
-			if f, err := os.Open(path); err != nil {
-				return fmt.Errorf("cannot open %s: %v", path, err)
-			} else {
-				c, err := computeDbUpdate(bytes.NewReader(contents), f)
-				if err != nil {
-					return fmt.Errorf("cannot compute signature database update for %s: %v",
-						path, err)
-				}
-				contents = c
-			}
-
-			if err := run(); err != nil {
-				return fmt.Errorf("cannot process %s measurement event with update from %s: %v",
-					name, path, err)
-			}
-		}
-
-		return nil
+		data = d[4:]
 	}
 
+	computeUpdate := func(path string) error {
+		if f, err := os.Open(path); err != nil {
+			return fmt.Errorf("cannot open %s: %v", path, err)
+		} else if d, err := computeDbUpdate(bytes.NewReader(data), f); err != nil {
+			return fmt.Errorf("cannot compute signature database update for %s: %v", path, err)
+		} else {
+			data = d
+			return nil
+		}
+	}
+
+	for i := 0; i < g.sigDbUpdatesApplied && i < len(g.sigDbUpdates); i++ {
+		if g.sigDbUpdates[i].dbType != name {
+			continue
+		}
+		if err := computeUpdate(g.sigDbUpdates[i].path); err != nil {
+			return err
+		}
+	}
+
+	run := func() error {
+		g.enterMeasurementScope()
+		defer g.exitMeasurementScope()
+		return g.processSignatureDbMeasurement(name, data, events)
+	}
+
+	if err := run(); err != nil {
+		return fmt.Errorf("cannot process %s measurement event 0: %v", name, err)
+	}
+
+	updates := g.sigDbUpdates[g.sigDbUpdatesApplied:]
+
+Outer:
+	for i, update := range updates {
+		if update.dbType != name {
+			for _, x := range g.measuredSigDbs {
+				if x == update.dbType {
+					break Outer
+				}
+			}
+			continue
+		}
+		if err := computeUpdate(update.path); err != nil {
+			return err
+		}
+		if err := func() error {
+			origApplied := g.sigDbUpdatesApplied
+			g.sigDbUpdatesApplied += i + 1
+			defer func() {
+				g.sigDbUpdatesApplied = origApplied
+			}()
+			return run()
+		}(); err != nil {
+			return fmt.Errorf("cannot process %s measurement event %d for update from %s: %v", name, i+1, update.path, err)
+		}
+	}
+
+	return nil
+}
+
+func (g *secureBootPolicyGen) processEvents(events []classifiedEvent) error {
 Loop:
 	for i, event := range events {
 		switch event.class {
 		case eventClassUnclassified:
 			g.extendMeasurement(tpm2.Digest(event.event.Event.Digests[tcglog.AlgorithmId(g.alg)]))
 		case eventClassKEK:
-			if err := handleSignatureDb(kekName, kekFilename, g.kekUpdates,
-				func(contents []byte) error {
-					return g.processKek(contents, events[i+1:])
-				}); err != nil {
-				return fmt.Errorf("cannot process KEK measurement: %v", err)
+			if err := g.computeSignatureDbEvents(kekName, kekFilename, events[i+1:]); err != nil {
+				return fmt.Errorf("cannot process KEK measurement event: %v", err)
 			}
 			break Loop
 		case eventClassDb:
-			if err := handleSignatureDb(dbName, dbFilename, g.dbUpdates,
-				func(contents []byte) error {
-					return g.processDb(contents, events[i+1:])
-				}); err != nil {
-				return fmt.Errorf("cannot process db measurement: %v", err)
+			if err := g.computeSignatureDbEvents(dbName, dbFilename, events[i+1:]); err != nil {
+				return fmt.Errorf("cannot process db measurement event: %v", err)
 			}
 			break Loop
 		case eventClassDbx:
-			if err := handleSignatureDb(dbxName, dbxFilename, g.dbxUpdates,
-				func(contents []byte) error {
-					return g.processDbx(contents, events[i+1:])
-				}); err != nil {
-				return fmt.Errorf("cannot process dbx measurement: %v", err)
+			if err := g.computeSignatureDbEvents(dbxName, dbxFilename, events[i+1:]); err != nil {
+				return fmt.Errorf("cannot process dbx measurement event: %v", err)
 			}
 			break Loop
 		case eventClassDriverVerification:
@@ -1054,7 +1067,7 @@ Loop:
 	return nil
 }
 
-func (g *secureBootPolicyGen) findDbUpdates(keyStores []string) error {
+func (g *secureBootPolicyGen) buildDbUpdates(keyStores []string) error {
 	if len(keyStores) == 0 {
 		return nil
 	}
@@ -1099,14 +1112,7 @@ func (g *secureBootPolicyGen) findDbUpdates(keyStores []string) error {
 			if strings.HasPrefix("..", rel) {
 				continue
 			}
-			switch filepath.Dir(rel) {
-			case kekName:
-				g.kekUpdates = append(g.kekUpdates, line)
-			case dbName:
-				g.dbUpdates = append(g.dbUpdates, line)
-			case dbxName:
-				g.dbxUpdates = append(g.dbxUpdates, line)
-			}
+			g.sigDbUpdates = append(g.sigDbUpdates, uefiSigDbUpdate{filepath.Dir(rel), line})
 		}
 	}
 
@@ -1117,8 +1123,8 @@ func (g *secureBootPolicyGen) run(params *SealParams, secureBootEvents []classif
 	error) {
 	g.loadPaths = params.LoadPaths
 
-	if err := g.findDbUpdates(params.SecureBootDbKeystores); err != nil {
-		return nil, fmt.Errorf("cannot find DB updates: %v", err)
+	if err := g.buildDbUpdates(params.SecureBootDbKeystores); err != nil {
+		return nil, fmt.Errorf("cannot build UEFI signature database update list: %v", err)
 	}
 
 	g.enterDbScope()
@@ -1152,9 +1158,7 @@ func (g *secureBootPolicyGen) run(params *SealParams, secureBootEvents []classif
 
 	defer func() {
 		g.loadPaths = nil
-		g.kekUpdates = nil
-		g.dbUpdates = nil
-		g.dbxUpdates = nil
+		g.sigDbUpdates = nil
 		g.outputDigests = nil
 		if len(g.dbStack) != 1 {
 			panic("mismatched number of enterDbScope / exitDbScope calls")
@@ -1164,6 +1168,12 @@ func (g *secureBootPolicyGen) run(params *SealParams, secureBootEvents []classif
 		}
 		if len(g.shimVerificationEvents) != 0 {
 			panic("mismatched number of enterShimScope / exitShimScope calls")
+		}
+		if len(g.measuredSigDbs) != 0 {
+			panic("non-zero measuredSigDbs length")
+		}
+		if g.sigDbUpdatesApplied != 0 {
+			panic("inconsistent sigDbUpdatesApplied")
 		}
 	}()
 
