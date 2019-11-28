@@ -86,11 +86,6 @@ type classifiedEvent struct {
 	event *tcglog.ValidatedEvent
 }
 
-type uefiSigDbUpdate struct {
-	dbType string
-	path   string
-}
-
 // classifySecureBootEvents iterates over a sequence of events and determines which events correspond to
 // measurements of db, dbx and which measurement corresponds to verification of the initial boot executable.
 // It returns a list of classified events for the secure boot policy PCR (#7)
@@ -463,16 +458,34 @@ type secureBootDbSet struct {
 	shimDb secureBootDb
 }
 
+type secureBootMeasurementContext struct {
+	pcrValue                   tpm2.Digest
+	firmwareVerificationEvents tpm2.DigestList
+	shimVerificationEvents     tpm2.DigestList
+}
+
+type secureBootShimContext struct {
+	dbSet              *secureBootDbSet
+	verificationEvents tpm2.DigestList
+	loaded             bool
+}
+
+type uefiSigDbUpdate struct {
+	dbType string
+	path   string
+}
+
 type secureBootPolicyGen struct {
 	alg          tpm2.HashAlgorithmId
 	loadPaths    []*OSComponent
 	sigDbUpdates []uefiSigDbUpdate
 
-	dbStack  []*secureBootDbSet
-	pcrStack []tpm2.Digest
+	dbSet    *secureBootDbSet
+	pcrValue tpm2.Digest
 
-	firmwareVerificationEvents []tpm2.DigestList
-	shimVerificationEvents     []tpm2.DigestList
+	firmwareVerificationEvents tpm2.DigestList
+	shimVerificationEvents     tpm2.DigestList
+	shimLoaded                 bool
 
 	measuredSigDbs      []string
 	sigDbUpdatesApplied int
@@ -480,89 +493,85 @@ type secureBootPolicyGen struct {
 	outputDigests tpm2.DigestList
 }
 
-func (g *secureBootPolicyGen) enterDbScope() {
-	newDbSet := &secureBootDbSet{}
-	if len(g.dbStack) > 0 {
-		top := g.dbStack[len(g.dbStack)-1]
-		newDbSet.uefiDb = top.uefiDb
-		newDbSet.mokDb = top.mokDb
-		newDbSet.shimDb = top.shimDb
+func (g *secureBootPolicyGen) enterDbScope() *secureBootDbSet {
+	current := g.dbSet
+	g.dbSet = &secureBootDbSet{}
+	if current != nil {
+		g.dbSet.uefiDb = current.uefiDb
+		g.dbSet.mokDb = current.mokDb
+		g.dbSet.shimDb = current.shimDb
 	}
-	g.dbStack = append(g.dbStack, newDbSet)
+	return current
 }
 
-func (g *secureBootPolicyGen) exitDbScope() {
-	g.dbStack = g.dbStack[0 : len(g.dbStack)-1]
+func (g *secureBootPolicyGen) exitDbScope(restore *secureBootDbSet) {
+	g.dbSet = restore
 }
 
-func (g *secureBootPolicyGen) dbSet() *secureBootDbSet {
-	return g.dbStack[len(g.dbStack)-1]
+func (g *secureBootPolicyGen) enterMeasurementScope() *secureBootMeasurementContext {
+	context := &secureBootMeasurementContext{}
+
+	context.pcrValue = g.pcrValue
+	g.pcrValue = make(tpm2.Digest, g.alg.Size())
+	copy(g.pcrValue, context.pcrValue)
+
+	context.firmwareVerificationEvents = g.firmwareVerificationEvents
+	g.firmwareVerificationEvents = make(tpm2.DigestList, len(context.firmwareVerificationEvents))
+	copy(g.firmwareVerificationEvents, context.firmwareVerificationEvents)
+
+	context.shimVerificationEvents = g.shimVerificationEvents
+	g.shimVerificationEvents = make(tpm2.DigestList, len(context.shimVerificationEvents))
+	copy(g.shimVerificationEvents, context.shimVerificationEvents)
+
+	return context
 }
 
-func (g *secureBootPolicyGen) enterMeasurementScope() {
-	newPcrScope := make(tpm2.Digest, g.alg.Size())
-	if len(g.pcrStack) > 0 {
-		copy(newPcrScope, g.pcrStack[len(g.pcrStack)-1])
-	}
-	g.pcrStack = append(g.pcrStack, newPcrScope)
-
-	newFVScope := make(tpm2.DigestList, 0)
-	if len(g.firmwareVerificationEvents) > 0 {
-		top := g.firmwareVerificationEvents[len(g.firmwareVerificationEvents)-1]
-		newFVScope = make(tpm2.DigestList, len(top))
-		copy(newFVScope, top)
-	}
-	g.firmwareVerificationEvents = append(g.firmwareVerificationEvents, newFVScope)
-
-	if len(g.shimVerificationEvents) > 0 {
-		top := g.shimVerificationEvents[len(g.shimVerificationEvents)-1]
-		newShimScope := make(tpm2.DigestList, len(top))
-		copy(newShimScope, top)
-		g.shimVerificationEvents = append(g.shimVerificationEvents, newShimScope)
-	}
+func (g *secureBootPolicyGen) exitMeasurementScope(restore *secureBootMeasurementContext) {
+	g.shimVerificationEvents = restore.shimVerificationEvents
+	g.firmwareVerificationEvents = restore.firmwareVerificationEvents
+	g.pcrValue = restore.pcrValue
 }
 
-func (g *secureBootPolicyGen) exitMeasurementScope() {
-	if len(g.shimVerificationEvents) > 0 {
-		g.shimVerificationEvents = g.shimVerificationEvents[0 : len(g.shimVerificationEvents)-1]
-	}
-	g.firmwareVerificationEvents = g.firmwareVerificationEvents[0 : len(g.firmwareVerificationEvents)-1]
-	g.pcrStack = g.pcrStack[0 : len(g.pcrStack)-1]
+func (g *secureBootPolicyGen) enterShimScope() *secureBootShimContext {
+	context := &secureBootShimContext{}
+
+	context.dbSet = g.enterDbScope()
+	g.dbSet.shimDb = secureBootDb{}
+
+	context.verificationEvents = g.shimVerificationEvents
+	g.shimVerificationEvents = make(tpm2.DigestList, 0)
+
+	context.loaded = g.shimLoaded
+	g.shimLoaded = true
+
+	return context
 }
 
-func (g *secureBootPolicyGen) enterShimScope() {
-	g.shimVerificationEvents = append(g.shimVerificationEvents, make([]tpm2.Digest, 0))
-	newDbSet := &secureBootDbSet{}
-	if len(g.dbStack) > 0 {
-		top := g.dbStack[len(g.dbStack)-1]
-		newDbSet.uefiDb = top.uefiDb
-		newDbSet.mokDb = top.mokDb
-	}
-	g.dbStack = append(g.dbStack, newDbSet)
-}
-
-func (g *secureBootPolicyGen) exitShimScope() {
-	g.dbStack = g.dbStack[0 : len(g.dbStack)-1]
-	g.shimVerificationEvents = g.shimVerificationEvents[0 : len(g.shimVerificationEvents)-1]
+func (g *secureBootPolicyGen) exitShimScope(restore *secureBootShimContext) {
+	g.shimLoaded = restore.loaded
+	g.shimVerificationEvents = restore.verificationEvents
+	g.exitDbScope(restore.dbSet)
 }
 
 func (g *secureBootPolicyGen) extendMeasurement(digest tpm2.Digest) {
-	top := g.pcrStack[len(g.pcrStack)-1]
+	if len(digest) != len(g.pcrValue) {
+		panic("invalid digest length")
+	}
 
 	h := g.alg.NewHash()
-	h.Write(top)
+	h.Write(g.pcrValue)
 	h.Write(digest)
 
-	copy(top, h.Sum(nil))
+	copy(g.pcrValue, h.Sum(nil))
 }
 
 func (g *secureBootPolicyGen) extendVerificationMeasurement(digest tpm2.Digest, mode OSComponentLoadType) {
 	var digests *tpm2.DigestList
 	switch mode {
 	case FirmwareLoad:
-		digests = &g.firmwareVerificationEvents[len(g.firmwareVerificationEvents)-1]
+		digests = &g.firmwareVerificationEvents
 	case DirectLoadWithShimVerify:
-		digests = &g.shimVerificationEvents[len(g.shimVerificationEvents)-1]
+		digests = &g.shimVerificationEvents
 	}
 	g.extendMeasurement(digest)
 	*digests = append(*digests, digest)
@@ -607,15 +616,15 @@ func (g *secureBootPolicyGen) processSignatureDbMeasurement(name string, data []
 
 	if name == dbName {
 		// Enter a new secure boot DB set scope
-		g.enterDbScope()
-		defer g.exitDbScope()
+		ctx := g.enterDbScope()
+		defer g.exitDbScope(ctx)
 
 		// Decode this db and update the secure boot DB set
 		signatures, err := decodeSecureBootDb(bytes.NewReader(data))
 		if err != nil {
 			return fmt.Errorf("cannot decode secure boot db: %v", err)
 		}
-		g.dbSet().uefiDb = secureBootDb{variableName: *guid, unicodeName: name, signatures: signatures}
+		g.dbSet.uefiDb = secureBootDb{variableName: *guid, unicodeName: name, signatures: signatures}
 	}
 
 	// Continue replaying events
@@ -626,9 +635,8 @@ func (g *secureBootPolicyGen) processSignatureDbMeasurement(name string, data []
 	return nil
 }
 
-func (g *secureBootPolicyGen) computeAndExtendVerificationMeasurement(r io.ReaderAt,
-	mode OSComponentLoadType) error {
-	if mode == DirectLoadWithShimVerify && len(g.shimVerificationEvents) == 0 {
+func (g *secureBootPolicyGen) computeAndExtendVerificationMeasurement(r io.ReaderAt, mode OSComponentLoadType) error {
+	if mode == DirectLoadWithShimVerify && !g.shimLoaded {
 		return errors.New("shim verification specified without being preceeded by a shim executable")
 	}
 
@@ -708,9 +716,9 @@ func (g *secureBootPolicyGen) computeAndExtendVerificationMeasurement(r io.Reade
 
 	// Look for the issuing authority in the UEFI db, and if the verifier is shim, also look in MOK db and
 	// at shim's vendor cert
-	dbs := []*secureBootDb{&g.dbSet().uefiDb}
+	dbs := []*secureBootDb{&g.dbSet.uefiDb}
 	if mode == DirectLoadWithShimVerify {
-		dbs = append(dbs, &g.dbSet().mokDb, &g.dbSet().shimDb)
+		dbs = append(dbs, &g.dbSet.mokDb, &g.dbSet.shimDb)
 	}
 
 	var root *efiSignatureData
@@ -778,9 +786,9 @@ Outer:
 	var digests *tpm2.DigestList
 	switch mode {
 	case FirmwareLoad:
-		digests = &g.firmwareVerificationEvents[len(g.firmwareVerificationEvents)-1]
+		digests = &g.firmwareVerificationEvents
 	case DirectLoadWithShimVerify:
-		digests = &g.shimVerificationEvents[len(g.shimVerificationEvents)-1]
+		digests = &g.shimVerificationEvents
 	}
 	for _, d := range *digests {
 		if bytes.Equal(d, digest) {
@@ -842,8 +850,8 @@ func (g *secureBootPolicyGen) processShimExecutable(r io.ReaderAt, mode OSCompon
 	}
 
 	// Ensure we start with an empty list of shim measurements and an empty vendor cert
-	g.enterShimScope()
-	defer g.exitShimScope()
+	ctx := g.enterShimScope()
+	defer g.exitShimScope(ctx)
 
 	// Extract this shim's vendor cert and update the secure boot DB set
 	vendorCert, err := readShimVendorCert(r)
@@ -851,7 +859,7 @@ func (g *secureBootPolicyGen) processShimExecutable(r io.ReaderAt, mode OSCompon
 		return fmt.Errorf("cannot extract vendor certificate from Shim: %v", err)
 	}
 	if vendorCert != nil {
-		g.dbSet().shimDb = secureBootDb{variableName: shimGuid,
+		g.dbSet.shimDb = secureBootDb{variableName: shimGuid,
 			unicodeName: shimName,
 			signatures: []*efiSignatureData{
 				&efiSignatureData{signatureType: efiCertX509Guid, data: vendorCert}}}
@@ -918,20 +926,19 @@ func (g *secureBootPolicyGen) computeOSLoadEvents(component *OSComponent) error 
 
 func (g *secureBootPolicyGen) continueComputingOSLoadEvents(next []*OSComponent) error {
 	if len(next) == 0 {
-		digest := g.pcrStack[len(g.pcrStack)-1]
 		for _, d := range g.outputDigests {
-			if bytes.Equal(d, digest) {
+			if bytes.Equal(d, g.pcrValue) {
 				return nil
 			}
 		}
-		g.outputDigests = append(g.outputDigests, digest)
+		g.outputDigests = append(g.outputDigests, g.pcrValue)
 		return nil
 	}
 
 	for i, component := range next {
 		if err := func() error {
-			g.enterMeasurementScope()
-			defer g.exitMeasurementScope()
+			ctx := g.enterMeasurementScope()
+			defer g.exitMeasurementScope(ctx)
 			return g.computeOSLoadEvents(component)
 		}(); err != nil {
 			return fmt.Errorf("cannot compute events for component at index %d: %v", i, err)
@@ -986,8 +993,8 @@ func (g *secureBootPolicyGen) computeSignatureDbEvents(name, filename string, ev
 	}
 
 	run := func() error {
-		g.enterMeasurementScope()
-		defer g.exitMeasurementScope()
+		ctx := g.enterMeasurementScope()
+		defer g.exitMeasurementScope(ctx)
 		return g.processSignatureDbMeasurement(name, data, events)
 	}
 
@@ -1064,7 +1071,7 @@ Loop:
 		// exclusive to that. Extend it now before proceding to ccompute the OS load events (and
 		// if the initial OS verification event is the same then it will be filtered out anyway)
 		g.extendVerificationMeasurement(tpm2.Digest(event.event.Event.Digests[tcglog.AlgorithmId(g.alg)]), FirmwareLoad)
-			fallthrough
+		fallthrough
 	case eventClassInitialAppVerification:
 		if err := g.continueComputingOSLoadEvents(g.loadPaths); err != nil {
 			return fmt.Errorf("cannot compute OS load events: %v", err)
@@ -1128,16 +1135,39 @@ func (g *secureBootPolicyGen) buildDbUpdates(keyStores []string) error {
 	return nil
 }
 
-func (g *secureBootPolicyGen) run(params *SealParams, secureBootEvents []classifiedEvent) (tpm2.DigestList,
-	error) {
+func (g *secureBootPolicyGen) run(params *SealParams, secureBootEvents []classifiedEvent) (tpm2.DigestList, error) {
+	defer func() {
+		g.loadPaths = nil
+		g.sigDbUpdates = nil
+		g.outputDigests = nil
+		if len(g.pcrValue) != 0 {
+			panic("non-zero pcrValue length")
+		}
+		if len(g.firmwareVerificationEvents) != 0 {
+			panic("non-zero firmwareVerificationEvents length")
+		}
+		if len(g.shimVerificationEvents) != 0 {
+			panic("non-zero shimVerificationEvents length")
+		}
+		if g.dbSet != nil {
+			panic("non-nil dbSet")
+		}
+		if len(g.measuredSigDbs) != 0 {
+			panic("non-zero measuredSigDbs length")
+		}
+		if g.sigDbUpdatesApplied != 0 {
+			panic("inconsistent sigDbUpdatesApplied value")
+		}
+	}()
+
 	g.loadPaths = params.LoadPaths
 
 	if err := g.buildDbUpdates(params.SecureBootDbKeystores); err != nil {
 		return nil, fmt.Errorf("cannot build UEFI signature database update list: %v", err)
 	}
 
-	g.enterDbScope()
-	defer g.exitDbScope()
+	dbCtx := g.enterDbScope()
+	defer g.exitDbScope(dbCtx)
 
 	// The MOK db is mirrored by Shim from a variable that's only accessible to boot services, to a variable
 	// that's accessible at runtime. It also adds the vendor certificate to the mirrored variable. The problem
@@ -1162,29 +1192,8 @@ func (g *secureBootPolicyGen) run(params *SealParams, secureBootEvents []classif
 	//		secureBootDb{variableName: shimGuid, unicodeName: mokListName, certs: certs}
 	//}
 
-	g.enterMeasurementScope()
-	defer g.exitMeasurementScope()
-
-	defer func() {
-		g.loadPaths = nil
-		g.sigDbUpdates = nil
-		g.outputDigests = nil
-		if len(g.dbStack) != 1 {
-			panic("mismatched number of enterDbScope / exitDbScope calls")
-		}
-		if len(g.pcrStack) != 1 || len(g.firmwareVerificationEvents) != 1 {
-			panic("mismatched number of enterMeasurementScope / exitMeasurementScope calls")
-		}
-		if len(g.shimVerificationEvents) != 0 {
-			panic("mismatched number of enterShimScope / exitShimScope calls")
-		}
-		if len(g.measuredSigDbs) != 0 {
-			panic("non-zero measuredSigDbs length")
-		}
-		if g.sigDbUpdatesApplied != 0 {
-			panic("inconsistent sigDbUpdatesApplied")
-		}
-	}()
+	mCtx := g.enterMeasurementScope()
+	defer g.exitMeasurementScope(mCtx)
 
 	if err := g.processEvents(secureBootEvents); err != nil {
 		return nil, fmt.Errorf("cannot process events from event log: %v", err)
