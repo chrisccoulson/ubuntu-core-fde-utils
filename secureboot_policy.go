@@ -1027,41 +1027,50 @@ Outer:
 
 func (g *secureBootPolicyGen) processEvents(events []classifiedEvent) error {
 Loop:
-	for i, event := range events {
+	for ; len(events) > 0; events = events[1:] {
+		event := events[0]
 		switch event.class {
 		case eventClassUnclassified:
 			g.extendMeasurement(tpm2.Digest(event.event.Event.Digests[tcglog.AlgorithmId(g.alg)]))
-		case eventClassKEK:
-			if err := g.computeSignatureDbEvents(kekName, kekFilename, events[i+1:]); err != nil {
-				return fmt.Errorf("cannot process KEK measurement event: %v", err)
-			}
-			break Loop
-		case eventClassDb:
-			if err := g.computeSignatureDbEvents(dbName, dbFilename, events[i+1:]); err != nil {
-				return fmt.Errorf("cannot process db measurement event: %v", err)
-			}
-			break Loop
-		case eventClassDbx:
-			if err := g.computeSignatureDbEvents(dbxName, dbxFilename, events[i+1:]); err != nil {
-				return fmt.Errorf("cannot process dbx measurement event: %v", err)
-			}
-			break Loop
 		case eventClassDriverVerification:
-			g.extendVerificationMeasurement(
-				tpm2.Digest(event.event.Event.Digests[tcglog.AlgorithmId(g.alg)]), FirmwareLoad)
-		case eventClassDriverAndInitialAppVerification:
-			// The event corresponds to the verification of the initial EFI executable, but it's not
-			// exclusive to that. Extend it now before proceding to ccompute the OS load events (and
-			// if the initial OS verification event is the same then it will be filtered out anyway)
-			g.extendVerificationMeasurement(
-				tpm2.Digest(event.event.Event.Digests[tcglog.AlgorithmId(g.alg)]), FirmwareLoad)
-			fallthrough
-		case eventClassInitialAppVerification:
-			if err := g.continueComputingOSLoadEvents(g.loadPaths); err != nil {
-				return fmt.Errorf("cannot compute OS load events: %v", err)
-			}
+			g.extendVerificationMeasurement(tpm2.Digest(event.event.Event.Digests[tcglog.AlgorithmId(g.alg)]), FirmwareLoad)
+		default:
 			break Loop
 		}
+	}
+
+	if len(events) == 0 {
+		panic("malformed event log - missing pre-OS to OS transition")
+	}
+
+	event := events[0]
+	events = events[1:]
+
+	switch event.class {
+	case eventClassKEK:
+		if err := g.computeSignatureDbEvents(kekName, kekFilename, events); err != nil {
+			return fmt.Errorf("cannot process KEK measurement event: %v", err)
+		}
+	case eventClassDb:
+		if err := g.computeSignatureDbEvents(dbName, dbFilename, events); err != nil {
+			return fmt.Errorf("cannot process db measurement event: %v", err)
+		}
+	case eventClassDbx:
+		if err := g.computeSignatureDbEvents(dbxName, dbxFilename, events); err != nil {
+			return fmt.Errorf("cannot process dbx measurement event: %v", err)
+		}
+	case eventClassDriverAndInitialAppVerification:
+		// The event corresponds to the verification of the initial EFI executable, but it's not
+		// exclusive to that. Extend it now before proceding to ccompute the OS load events (and
+		// if the initial OS verification event is the same then it will be filtered out anyway)
+		g.extendVerificationMeasurement(tpm2.Digest(event.event.Event.Digests[tcglog.AlgorithmId(g.alg)]), FirmwareLoad)
+			fallthrough
+	case eventClassInitialAppVerification:
+		if err := g.continueComputingOSLoadEvents(g.loadPaths); err != nil {
+			return fmt.Errorf("cannot compute OS load events: %v", err)
+		}
+	default:
+		panic("invalid event class")
 	}
 
 	return nil
