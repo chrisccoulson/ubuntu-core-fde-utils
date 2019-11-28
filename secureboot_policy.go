@@ -19,6 +19,8 @@ import (
 	"github.com/chrisccoulson/tcglog-parser"
 	"github.com/fullsailor/pkcs7"
 	"github.com/snapcore/snapd/osutil"
+
+	"golang.org/x/xerrors"
 )
 
 type eventClass int
@@ -214,9 +216,9 @@ func (e *efiSignatureData) encode(buf io.Writer) error {
 
 // iterateSecureBootDb iterates the contents of a secure boot database, calling fn on each EFI_SIGNATURE_DATA
 // entry
-func iterateSecureBootDb(r io.ReaderAt, fn func(*tcglog.EFIGUID, *io.SectionReader, *io.SectionReader,
-	bool) (bool, error)) error {
+func iterateSecureBootDb(r io.ReaderAt, fn func(*tcglog.EFIGUID, *io.SectionReader, *io.SectionReader, bool) (bool, error)) error {
 	offset := int64(0)
+	i := 0
 	// Iterate over each EFI_SIGNATURE_LIST entry
 	for {
 		sr := io.NewSectionReader(r, offset, (1<<63)-1-offset)
@@ -227,14 +229,14 @@ func iterateSecureBootDb(r io.ReaderAt, fn func(*tcglog.EFIGUID, *io.SectionRead
 			if err == io.EOF {
 				break
 			}
-			return fmt.Errorf("cannot decode SignatureType from EFI_SIGNATURE_LIST: %v", err)
+			return xerrors.Errorf("cannot decode SignatureType from EFI_SIGNATURE_LIST at index %d: %w", i, err)
 		}
 
 		// Decode EFI_SIGNATURE_LIST.SignatureListSize, which indicates the size of the entire
 		// EFI_SIGNATURE_LIST, including all of the EFI_SIGNATURE_DATA entries.
 		var signatureListSize uint32
 		if err := binary.Read(sr, binary.LittleEndian, &signatureListSize); err != nil {
-			return fmt.Errorf("cannot read SignatureListSize from EFI_SIGNATURE_LIST: %v", err)
+			return xerrors.Errorf("cannot read SignatureListSize from EFI_SIGNATURE_LIST at index %d: %w", i, err)
 		}
 
 		// Decode EFI_SIGNATURE_LIST.SignatureHeaderSize, which indicates the size of the optional
@@ -242,14 +244,14 @@ func iterateSecureBootDb(r io.ReaderAt, fn func(*tcglog.EFIGUID, *io.SectionRead
 		// Always zero for the signature types we care about
 		var signatureHeaderSize uint32
 		if err := binary.Read(sr, binary.LittleEndian, &signatureHeaderSize); err != nil {
-			return fmt.Errorf("cannot read SignatureHeaderSize from EFI_SIGNATURE_LIST: %v", err)
+			return xerrors.Errorf("cannot read SignatureHeaderSize from EFI_SIGNATURE_LIST at index %d: %w", i, err)
 		}
 
 		// Decode EFI_SIGNATURE_LIST.SignatureSize, which indicates the size of each EFI_SIGNATURE_DATA
 		// entry
 		var signatureSize uint32
 		if err := binary.Read(sr, binary.LittleEndian, &signatureSize); err != nil {
-			return fmt.Errorf("cannot read SignatureSize from EFI_SIGNATURE_LIST: %v", err)
+			return xerrors.Errorf("cannot read SignatureSize from EFI_SIGNATURE_LIST at index %d: %w", i, err)
 		}
 
 		headerStart, _ := sr.Seek(0, io.SeekCurrent)
@@ -264,12 +266,11 @@ func iterateSecureBootDb(r io.ReaderAt, fn func(*tcglog.EFIGUID, *io.SectionRead
 		numOfSignatures := (int64(signatureListSize) - sigListHeaderSize) / int64(signatureSize)
 
 		// Iterate over each EFI_SIGNATURE_DATA entry
-		for i := int64(0); i < numOfSignatures; i++ {
-			ssr := io.NewSectionReader(sr, sigListHeaderSize+(i*int64(signatureSize)),
-				int64(signatureSize))
-			final := i == numOfSignatures-1
+		for j := int64(0); j < numOfSignatures; j++ {
+			ssr := io.NewSectionReader(sr, sigListHeaderSize+(j*int64(signatureSize)), int64(signatureSize))
+			final := j == numOfSignatures-1
 			if cont, err := fn(signatureType, hsr, ssr, final); err != nil {
-				return fmt.Errorf("cannot process EFI_SIGNATURE_DATA at index %d: %v", i, err)
+				return xerrors.Errorf("cannot process EFI_SIGNATURE_DATA at index %d in EFI_SIGNATURE_LIST at index %d: %w", j, i, err)
 			} else if !cont {
 				return nil
 			}
@@ -277,6 +278,7 @@ func iterateSecureBootDb(r io.ReaderAt, fn func(*tcglog.EFIGUID, *io.SectionRead
 
 		// Advance to the next EFI_SIGNATURE_LIST entry
 		offset += int64(signatureListSize)
+		i += 1
 	}
 	return nil
 }
@@ -288,13 +290,13 @@ func decodeSecureBootDb(r io.ReaderAt) ([]*efiSignatureData, error) {
 		// Decode EFI_SIGNATURE_DATA.SignatureOwner
 		signatureOwner, err := decodeEFIGUID(s)
 		if err != nil {
-			return false, fmt.Errorf("cannot decode SignatureOwner: %v", err)
+			return false, xerrors.Errorf("cannot decode SignatureOwner: %w", err)
 		}
 
-		// Obtain and decode the X509 certificate
+		// Obtain and signature data
 		data, err := ioutil.ReadAll(s)
 		if err != nil {
-			return false, fmt.Errorf("cannot obtain contents: %v", err)
+			return false, xerrors.Errorf("cannot obtain signature contents: %w", err)
 		}
 
 		out = append(out, &efiSignatureData{signatureType: *t, owner: *signatureOwner, data: data})
@@ -320,7 +322,7 @@ func computeDbUpdate(db, dbUpdate io.ReaderAt) ([]byte, error) {
 	// Obtain EFI_VARIABLE_AUTHENTICATION_2.AuthInfo.Hdr.dwLength
 	var dwLength uint32
 	if err := binary.Read(dbuReader, binary.LittleEndian, &dwLength); err != nil {
-		return nil, fmt.Errorf("cannot read signature length: %v", err)
+		return nil, xerrors.Errorf("cannot read EFI_VARIABLE_AUTHENTICATION_2.AuthInfo.Hdr.dwLength field: %w", err)
 	}
 
 	// Skip to EFI_VARIABLE_AUTHENTICATION_2.AuthInfo.CertType
@@ -328,7 +330,7 @@ func computeDbUpdate(db, dbUpdate io.ReaderAt) ([]byte, error) {
 
 	certType, err := decodeEFIGUID(dbuReader)
 	if err != nil {
-		return nil, fmt.Errorf("cannot decode cert type: %v", err)
+		return nil, xerrors.Errorf("cannot decode EFI_VARIABLE_AUTHENTICATION_2.AuthInfo.CertType: %w", err)
 	}
 	if *certType != efiCertPkcs7Guid {
 		return nil, fmt.Errorf("unexpected cert type %s", certType)
@@ -338,110 +340,97 @@ func computeDbUpdate(db, dbUpdate io.ReaderAt) ([]byte, error) {
 	// the length of EFI_VARIABLE_AUTHENTICATION_2.Timestamp
 	offset := int64(dwLength + 16)
 
+	sigReader := io.NewSectionReader(dbuReader, offset, (1<<63)-1)
+
 	// Iterate over the EFI_SIGNATURE_DATA entries in the database update
-	if err := iterateSecureBootDb(io.NewSectionReader(dbuReader, offset, (1<<63)-1),
-		func(newType *tcglog.EFIGUID, headerReader, newSignatureReader *io.SectionReader,
-			finalSignature bool) (bool, error) {
-			newSignature, err := ioutil.ReadAll(newSignatureReader)
-			if err != nil {
-				return false, fmt.Errorf("cannot obtain contents for new signature: %v", err)
-			}
+	if err := iterateSecureBootDb(sigReader, func(t *tcglog.EFIGUID, h, s *io.SectionReader, f bool) (bool, error) {
+		data, err := ioutil.ReadAll(s)
+		if err != nil {
+			return false, xerrors.Errorf("cannot obtain new signature contents: %w", err)
+		}
 
-			isNewSignature := true
+		isNewSignature := true
 
-			// For each EFI_SIGNATURE_DATA entry in the database update, iterate over the existing
-			// database to find a match in order to filter out duplicates
-			if err := iterateSecureBootDb(db, func(t *tcglog.EFIGUID, unused1 *io.SectionReader,
-				signatureReader *io.SectionReader, unused2 bool) (bool, error) {
-				if *newType != *t {
-					// EFI_SIGNATURE_LIST.SignatureType don't match
-					return true, nil
-				}
-				signature, err := ioutil.ReadAll(signatureReader)
-				if err != nil {
-					return false, fmt.Errorf("cannot obtain contents for current "+
-						"signature: %v", err)
-				}
-				if !bytes.Equal(newSignature, signature) {
-					// EFI_SIGNATURE_DATA doesn't match
-					return true, nil
-				}
-				// We've found a match. Mark the entry as not new and tell the inner loop to abort
-				isNewSignature = false
-				return false, nil
-			}); err != nil {
-				return false, fmt.Errorf("cannot iterate current database: %v", err)
-			}
-
-			// If this is a new EFI_SIGNATURE_DATA entry, append it to signatures
-			if isNewSignature {
-				if _, err := signatures.Write(newSignature); err != nil {
-					return false, fmt.Errorf(
-						"cannot write new signature to temporary buffer: %v", err)
-				}
-			}
-
-			// If this isn't the final signature in a list, or it is but the list contains no new
-			// signatures, return early
-			if !finalSignature || signatures.Len() == 0 {
+		// For each EFI_SIGNATURE_DATA entry in the database update, iterate over the existing
+		// database to find a match in order to filter out duplicates
+		if err := iterateSecureBootDb(db, func(xt *tcglog.EFIGUID, u1 *io.SectionReader, xs *io.SectionReader, u2 bool) (bool, error) {
+			if *t != *xt {
+				// EFI_SIGNATURE_LIST.SignatureType don't match
 				return true, nil
 			}
-
-			// This is the final signature in a list and this list has new signatures. Encode the
-			// filtered EFI_SIGNATURE_LIST update to filteredDbUpdate
-
-			// Encode EFI_SIGNATURE_LIST.SignatureType
-			if err := newType.Encode(&filteredDbUpdate); err != nil {
-				return false, fmt.Errorf(
-					"cannot encode new EFI_SIGNATURE_LIST SignatureType: %v", err)
+			xdata, err := ioutil.ReadAll(xs)
+			if err != nil {
+				return false, xerrors.Errorf("cannot obtain existing signature contents: %w", err)
 			}
-
-			// Calculate and encode EFI_SIGNATURE_LIST.SignatureListSize
-			signatureListSize := uint32(binary.Size(tcglog.EFIGUID{})) + 12 +
-				uint32(headerReader.Size()) + uint32(signatures.Len())
-			if err := binary.Write(&filteredDbUpdate, binary.LittleEndian,
-				uint32(signatureListSize)); err != nil {
-				return false, fmt.Errorf(
-					"cannot write new EFI_SIGNATURE_LIST SignatureListSize: %v", err)
+			if !bytes.Equal(data, xdata) {
+				// EFI_SIGNATURE_DATA doesn't match
+				return true, nil
 			}
-
-			// Encode EFI_SIGNATURE_LIST.SignatureHeaderSize
-			if err := binary.Write(&filteredDbUpdate, binary.LittleEndian,
-				uint32(headerReader.Size())); err != nil {
-				return false, fmt.Errorf(
-					"cannot write new EFI_SIGNATURE_LIST SignatureHeaderSize: %v", err)
-			}
-
-			// Encode EFI_SIGNATURE_LIST.SignatureSize
-			if err := binary.Write(&filteredDbUpdate, binary.LittleEndian,
-				uint32(newSignatureReader.Size())); err != nil {
-				return false, fmt.Errorf(
-					"cannot write new EFI_SIGNATURE_LIST SignatureSize: %v", err)
-			}
-
-			// Write EFI_SIGNATURE_LIST.SignatureHeader
-			if _, err := filteredDbUpdate.ReadFrom(headerReader); err != nil {
-				return false, fmt.Errorf(
-					"cannot write new EFI_SIGNATURE_LIST SignatureHeader: %v", err)
-			}
-
-			// Write the saved EFI_SIGNATURE_DATA entries for this list
-			if _, err := filteredDbUpdate.ReadFrom(&signatures); err != nil {
-				return false, fmt.Errorf("cannot write new EFI_SIGNATURE_DATA entries: %v", err)
-			}
-			return true, nil
+			// We've found a match. Mark the entry as not new and tell the inner loop to abort
+			isNewSignature = false
+			return false, nil
 		}); err != nil {
-		return nil, fmt.Errorf("cannot iterate update: %v", err)
+			return false, xerrors.Errorf("cannot iterate current signature database: %w", err)
+		}
+
+		// If this is a new EFI_SIGNATURE_DATA entry, append it to signatures
+		if isNewSignature {
+			if _, err := signatures.Write(data); err != nil {
+				return false, xerrors.Errorf("cannot write new signature to temporary buffer: %w", err)
+			}
+		}
+
+		// If this isn't the final signature in a list, or it is but the list contains no new signatures, return early
+		if !f || signatures.Len() == 0 {
+			return true, nil
+		}
+
+		// This is the final signature in a list and this list has new signatures. Encode the filtered EFI_SIGNATURE_LIST update to
+		// filteredDbUpdate
+
+		// Encode EFI_SIGNATURE_LIST.SignatureType
+		if err := t.Encode(&filteredDbUpdate); err != nil {
+			return false, xerrors.Errorf("cannot encode new EFI_SIGNATURE_LIST.SignatureType: %w", err)
+		}
+
+		// Calculate and encode EFI_SIGNATURE_LIST.SignatureListSize
+		signatureListSize := uint32(binary.Size(tcglog.EFIGUID{})) + 12 + uint32(h.Size()) + uint32(signatures.Len())
+		if err := binary.Write(&filteredDbUpdate, binary.LittleEndian, uint32(signatureListSize)); err != nil {
+			return false, xerrors.Errorf("cannot write new EFI_SIGNATURE_LIST.SignatureListSize: %w", err)
+		}
+
+		// Encode EFI_SIGNATURE_LIST.SignatureHeaderSize
+		if err := binary.Write(&filteredDbUpdate, binary.LittleEndian, uint32(h.Size())); err != nil {
+			return false, xerrors.Errorf("cannot write new EFI_SIGNATURE_LIST.SignatureHeaderSize: %w", err)
+		}
+
+		// Encode EFI_SIGNATURE_LIST.SignatureSize
+		if err := binary.Write(&filteredDbUpdate, binary.LittleEndian, uint32(s.Size())); err != nil {
+			return false, xerrors.Errorf("cannot write new EFI_SIGNATURE_LIST.SignatureSize: %w", err)
+		}
+
+		// Write EFI_SIGNATURE_LIST.SignatureHeader
+		if _, err := filteredDbUpdate.ReadFrom(h); err != nil {
+			return false, xerrors.Errorf("cannot write new EFI_SIGNATURE_LIST.SignatureHeader: %w", err)
+		}
+
+		// Write the saved EFI_SIGNATURE_DATA entries for this list
+		if _, err := filteredDbUpdate.ReadFrom(&signatures); err != nil {
+			return false, xerrors.Errorf("cannot write new EFI_SIGNATURE_DATA entries: %w", err)
+		}
+		return true, nil
+	}); err != nil {
+		return nil, err
 	}
 
 	dbReader := io.NewSectionReader(db, 0, (1<<63)-1)
 
 	var buf bytes.Buffer
 	if _, err := buf.ReadFrom(dbReader); err != nil {
-		return nil, fmt.Errorf("cannot write existing db contents to buffer: %v", err)
+		return nil, xerrors.Errorf("cannot write existing db contents to buffer: %w", err)
 	}
 	if _, err := buf.ReadFrom(&filteredDbUpdate); err != nil {
-		return nil, fmt.Errorf("cannot write filtered update contents to buffer: %v", err)
+		return nil, xerrors.Errorf("cannot write filtered update contents to buffer: %w", err)
 	}
 	return buf.Bytes(), nil
 }
@@ -585,7 +574,7 @@ func (g *secureBootPolicyGen) computeAndExtendVariableMeasurement(varName *tcglo
 		VariableData: varData}
 	hash := g.alg.NewHash()
 	if err := data.Encode(hash); err != nil {
-		return fmt.Errorf("cannot encode EFI_VARIABLE_DATA: %v", err)
+		return xerrors.Errorf("cannot encode EFI_VARIABLE_DATA: %w", err)
 	}
 	g.extendMeasurement(hash.Sum(nil))
 	return nil
@@ -606,7 +595,7 @@ func (g *secureBootPolicyGen) processSignatureDbMeasurement(name string, data []
 
 	// Compute and extend a measurement
 	if err := g.computeAndExtendVariableMeasurement(guid, name, data); err != nil {
-		return fmt.Errorf("cannot compute and extend measurement for %s: %v", name, err)
+		return xerrors.Errorf("cannot compute and extend measurement for %s: %w", name, err)
 	}
 
 	g.measuredSigDbs = append(g.measuredSigDbs, name)
@@ -622,14 +611,14 @@ func (g *secureBootPolicyGen) processSignatureDbMeasurement(name string, data []
 		// Decode this db and update the secure boot DB set
 		signatures, err := decodeSecureBootDb(bytes.NewReader(data))
 		if err != nil {
-			return fmt.Errorf("cannot decode secure boot db: %v", err)
+			return xerrors.Errorf("cannot decode secure boot db: %w", err)
 		}
 		g.dbSet.uefiDb = secureBootDb{variableName: *guid, unicodeName: name, signatures: signatures}
 	}
 
 	// Continue replaying events
 	if err := g.processEvents(events); err != nil {
-		return fmt.Errorf("cannot process subsequent events from event log: %v", err)
+		return xerrors.Errorf("cannot process subsequent events from event log: %w", err)
 	}
 
 	return nil
@@ -642,7 +631,7 @@ func (g *secureBootPolicyGen) computeAndExtendVerificationMeasurement(r io.Reade
 
 	pefile, err := pe.NewFile(r)
 	if err != nil {
-		return fmt.Errorf("cannot decode PE binary: %v", err)
+		return xerrors.Errorf("cannot decode PE binary: %w", err)
 	}
 
 	if pefile.OptionalHeader == nil {
@@ -651,7 +640,7 @@ func (g *secureBootPolicyGen) computeAndExtendVerificationMeasurement(r io.Reade
 		// We copy the required functionality from that commit in to this file for now.
 		h, err := tryHarderToGetOptionalPeHeader(pefile, r)
 		if err != nil {
-			return fmt.Errorf("cannot decode optional header: %v", err)
+			return xerrors.Errorf("cannot decode optional header: %w", err)
 		}
 		pefile.OptionalHeader = h
 	}
@@ -661,14 +650,12 @@ func (g *secureBootPolicyGen) computeAndExtendVerificationMeasurement(r io.Reade
 	switch oh := pefile.OptionalHeader.(type) {
 	case *pe.OptionalHeader32:
 		if oh.NumberOfRvaAndSizes < 5 {
-			return errors.New("cannot obtain security directory entry: invalid number of data " +
-				"directories")
+			return errors.New("cannot obtain security directory entry: invalid number of data directories")
 		}
 		dd = &oh.DataDirectory[4]
 	case *pe.OptionalHeader64:
 		if oh.NumberOfRvaAndSizes < 5 {
-			return errors.New("cannot obtain security directory entry: invalid number of data " +
-				"directories")
+			return errors.New("cannot obtain security directory entry: invalid number of data directories")
 		}
 		dd = &oh.DataDirectory[4]
 	default:
@@ -681,31 +668,30 @@ func (g *secureBootPolicyGen) computeAndExtendVerificationMeasurement(r io.Reade
 	// Obtain the length of the certificate, including the size of WIN_CERTIFICATE
 	var dwLength uint32
 	if err := binary.Read(secReader, binary.LittleEndian, &dwLength); err != nil {
-		return fmt.Errorf("cannot read signature length: %v", err)
+		return xerrors.Errorf("cannot read signature length: %w", err)
 	}
 	// Skip over WIN_CERTIFICATE.wRevision
 	if _, err := secReader.Seek(2, io.SeekCurrent); err != nil {
-		return fmt.Errorf("cannot advance beyond signature revision level: %v", err)
+		return xerrors.Errorf("cannot advance beyond signature revision level: %w", err)
 	}
 	// Obtain WIN_CERTIFICATE.wCertificateType
 	var wCertificateType uint16
 	if err := binary.Read(secReader, binary.LittleEndian, &wCertificateType); err != nil {
-		return fmt.Errorf("cannot read signature type: %v", err)
+		return xerrors.Errorf("cannot read signature type: %w", err)
 	}
 	if wCertificateType != winCertTypePKCSSignedData {
-		return fmt.Errorf("unexpected value %d for wCertificateType: not an Authenticode signature",
-			wCertificateType)
+		return fmt.Errorf("unexpected value %d for wCertificateType: not an Authenticode signature", wCertificateType)
 	}
 	// Allocate a byte slice and fill it with the entire signature
 	data := make([]byte, dwLength-8)
 	if _, err := io.ReadFull(secReader, data); err != nil {
-		return fmt.Errorf("cannot read signature: %v", err)
+		return xerrors.Errorf("cannot read signature: %w", err)
 	}
 
 	// Decode the signature
 	p7, err := pkcs7.Parse(data)
 	if err != nil {
-		return fmt.Errorf("cannot decode signature: %v", err)
+		return xerrors.Errorf("cannot decode signature: %w", err)
 	}
 
 	// Grab the certificate for the signing key
@@ -764,7 +750,7 @@ Outer:
 		// Firmware measures the entire EFI_SIGNATURE_DATA, including the SignatureOwner
 		varData = new(bytes.Buffer)
 		if err := root.encode(varData); err != nil {
-			return fmt.Errorf("cannot encode EFI_SIGNATURE_DATA for authority: %v", err)
+			return xerrors.Errorf("cannot encode EFI_SIGNATURE_DATA for authority: %w", err)
 		}
 	case DirectLoadWithShimVerify:
 		// Shim measures the certificate data, rather than the entire EFI_SIGNATURE_DATA
@@ -778,7 +764,7 @@ Outer:
 		VariableData: varData.Bytes()}
 	hash := g.alg.NewHash()
 	if err := eventData.Encode(hash); err != nil {
-		return fmt.Errorf("cannot encode EFI_VARIABLE_DATA: %v", err)
+		return xerrors.Errorf("cannot encode EFI_VARIABLE_DATA: %w", err)
 	}
 	digest := hash.Sum(nil)
 
@@ -803,7 +789,7 @@ Outer:
 func readShimVendorCert(r io.ReaderAt) ([]byte, error) {
 	pefile, err := pe.NewFile(r)
 	if err != nil {
-		return nil, fmt.Errorf("cannot decode PE binary: %v", err)
+		return nil, xerrors.Errorf("cannot decode PE binary: %w", err)
 	}
 
 	// Shim's vendor certificate is in the .vendor_cert section.
@@ -816,7 +802,7 @@ func readShimVendorCert(r io.ReaderAt) ([]byte, error) {
 	sectionReader := io.NewSectionReader(section, 0, (1<<63)-1)
 	var certSize uint32
 	if err := binary.Read(sectionReader, binary.LittleEndian, &certSize); err != nil {
-		return nil, fmt.Errorf("cannot read vendor cert size: %v", err)
+		return nil, xerrors.Errorf("cannot read vendor cert size: %w", err)
 	}
 
 	// A size of zero is valid
@@ -825,18 +811,18 @@ func readShimVendorCert(r io.ReaderAt) ([]byte, error) {
 	}
 
 	if _, err := sectionReader.Seek(4, io.SeekCurrent); err != nil {
-		return nil, fmt.Errorf("cannot seek ahead to read vendor cert offset: %v", err)
+		return nil, xerrors.Errorf("cannot seek ahead to read vendor cert offset: %w", err)
 	}
 
 	var certOffset uint32
 	if err := binary.Read(sectionReader, binary.LittleEndian, &certOffset); err != nil {
-		return nil, fmt.Errorf("cannot read vendor cert offset: %v", err)
+		return nil, xerrors.Errorf("cannot read vendor cert offset: %w", err)
 	}
 
 	certReader := io.NewSectionReader(section, int64(certOffset), int64(certSize))
 	certData, err := ioutil.ReadAll(certReader)
 	if err != nil {
-		return nil, fmt.Errorf("cannot read vendor cert data: %v", err)
+		return nil, xerrors.Errorf("cannot read vendor cert data: %w", err)
 	}
 
 	return certData, nil
@@ -846,7 +832,7 @@ func (g *secureBootPolicyGen) processShimExecutable(r io.ReaderAt, mode OSCompon
 	next []*OSComponent) error {
 	// Compute and extend a measurement for verification of this shim executable
 	if err := g.computeAndExtendVerificationMeasurement(r, mode); err != nil {
-		return fmt.Errorf("cannot compute measurement for PE binary verification: %v", err)
+		return xerrors.Errorf("cannot compute measurement for PE binary verification: %w", err)
 	}
 
 	// Ensure we start with an empty list of shim measurements and an empty vendor cert
@@ -856,11 +842,12 @@ func (g *secureBootPolicyGen) processShimExecutable(r io.ReaderAt, mode OSCompon
 	// Extract this shim's vendor cert and update the secure boot DB set
 	vendorCert, err := readShimVendorCert(r)
 	if err != nil {
-		return fmt.Errorf("cannot extract vendor certificate from Shim: %v", err)
+		return xerrors.Errorf("cannot extract vendor certificate from Shim: %w", err)
 	}
 	if vendorCert != nil {
-		g.dbSet.shimDb = secureBootDb{variableName: shimGuid,
-			unicodeName: shimName,
+		g.dbSet.shimDb = secureBootDb{
+			variableName: shimGuid,
+			unicodeName:  shimName,
 			signatures: []*efiSignatureData{
 				&efiSignatureData{signatureType: efiCertX509Guid, data: vendorCert}}}
 	}
@@ -873,7 +860,7 @@ func (g *secureBootPolicyGen) processShimExecutable(r io.ReaderAt, mode OSCompon
 
 	// Continue computing events
 	if err := g.continueComputingOSLoadEvents(next); err != nil {
-		return fmt.Errorf("cannot compute events for subsequent components: %v", err)
+		return xerrors.Errorf("cannot compute events for subsequent components: %w", err)
 	}
 
 	return nil
@@ -883,12 +870,12 @@ func (g *secureBootPolicyGen) processExecutable(r io.ReaderAt, mode OSComponentL
 	next []*OSComponent) error {
 	// Compute and extend a measurement for verification of this executable
 	if err := g.computeAndExtendVerificationMeasurement(r, mode); err != nil {
-		return fmt.Errorf("cannot compute measurement for PE binary verification: %v", err)
+		return xerrors.Errorf("cannot compute measurement for PE binary verification: %w", err)
 	}
 
 	// Continue computing events
 	if err := g.continueComputingOSLoadEvents(next); err != nil {
-		return fmt.Errorf("cannot compute events for subsequent components: %v", err)
+		return xerrors.Errorf("cannot compute events for subsequent components: %w", err)
 	}
 
 	return nil
@@ -897,7 +884,7 @@ func (g *secureBootPolicyGen) processExecutable(r io.ReaderAt, mode OSComponentL
 func isShimExecutable(r io.ReaderAt) (bool, error) {
 	pefile, err := pe.NewFile(r)
 	if err != nil {
-		return false, fmt.Errorf("cannot decode PE binary: %v", err)
+		return false, xerrors.Errorf("cannot decode PE binary: %w", err)
 	}
 	return pefile.Section(".vendor_cert") != nil, nil
 }
@@ -905,19 +892,19 @@ func isShimExecutable(r io.ReaderAt) (bool, error) {
 func (g *secureBootPolicyGen) computeOSLoadEvents(component *OSComponent) error {
 	b, err := component.Image.ReadAll()
 	if err != nil {
-		return fmt.Errorf("cannot read OS component: %v", err)
+		return xerrors.Errorf("cannot read image: %w", err)
 	}
 
 	r := bytes.NewReader(b)
 	if isShim, err := isShimExecutable(r); err != nil {
-		return fmt.Errorf("cannot determine type of OS component: %v", err)
+		return xerrors.Errorf("cannot determine type: %w", err)
 	} else if isShim {
 		if err := g.processShimExecutable(r, component.LoadType, component.Next); err != nil {
-			return fmt.Errorf("cannot process Shim executable: %v", err)
+			return xerrors.Errorf("cannot process Shim executable: %w", err)
 		}
 	} else {
 		if err := g.processExecutable(r, component.LoadType, component.Next); err != nil {
-			return fmt.Errorf("cannot process executable: %v", err)
+			return xerrors.Errorf("cannot process executable: %w", err)
 		}
 	}
 
@@ -941,7 +928,7 @@ func (g *secureBootPolicyGen) continueComputingOSLoadEvents(next []*OSComponent)
 			defer g.exitMeasurementScope(ctx)
 			return g.computeOSLoadEvents(component)
 		}(); err != nil {
-			return fmt.Errorf("cannot compute events for component at index %d: %v", i, err)
+			return xerrors.Errorf("cannot compute events for component at index %d (%s): %w", i, component.Image, err)
 		}
 	}
 
@@ -960,23 +947,23 @@ func (g *secureBootPolicyGen) computeSignatureDbEvents(name, filename string, ev
 
 	var data []byte
 	if f, err := os.Open(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("cannot open %s: %v", path, err)
+		return xerrors.Errorf("cannot open %s: %w", path, err)
 	} else if f != nil {
 		d, err := func() ([]byte, error) {
 			defer f.Close()
 			return ioutil.ReadAll(f)
 		}()
 		if err != nil {
-			return fmt.Errorf("cannot read contents of %s: %v", path, err)
+			return xerrors.Errorf("cannot read contents of %s: %w", path, err)
 		}
 		data = d[4:]
 	}
 
 	computeUpdate := func(path string) error {
 		if f, err := os.Open(path); err != nil {
-			return fmt.Errorf("cannot open %s: %v", path, err)
+			return xerrors.Errorf("cannot open %s: %w", path, err)
 		} else if d, err := computeDbUpdate(bytes.NewReader(data), f); err != nil {
-			return fmt.Errorf("cannot compute signature database update for %s: %v", path, err)
+			return xerrors.Errorf("cannot compute signature database update for %s: %w", path, err)
 		} else {
 			data = d
 			return nil
@@ -999,7 +986,7 @@ func (g *secureBootPolicyGen) computeSignatureDbEvents(name, filename string, ev
 	}
 
 	if err := run(); err != nil {
-		return fmt.Errorf("cannot process %s measurement event 0: %v", name, err)
+		return xerrors.Errorf("cannot process %s measurement event 0: %w", name, err)
 	}
 
 	updates := g.sigDbUpdates[g.sigDbUpdatesApplied:]
@@ -1025,7 +1012,7 @@ Outer:
 			}()
 			return run()
 		}(); err != nil {
-			return fmt.Errorf("cannot process %s measurement event %d for update from %s: %v", name, i+1, update.path, err)
+			return xerrors.Errorf("cannot process %s measurement event %d for update from %s: %w", name, i+1, update.path, err)
 		}
 	}
 
@@ -1033,6 +1020,7 @@ Outer:
 }
 
 func (g *secureBootPolicyGen) processEvents(events []classifiedEvent) error {
+	// Loop over events until we reach to one that we recompute
 Loop:
 	for ; len(events) > 0; events = events[1:] {
 		event := events[0]
@@ -1056,15 +1044,15 @@ Loop:
 	switch event.class {
 	case eventClassKEK:
 		if err := g.computeSignatureDbEvents(kekName, kekFilename, events); err != nil {
-			return fmt.Errorf("cannot process KEK measurement event: %v", err)
+			return xerrors.Errorf("cannot process KEK measurement event: %w", err)
 		}
 	case eventClassDb:
 		if err := g.computeSignatureDbEvents(dbName, dbFilename, events); err != nil {
-			return fmt.Errorf("cannot process db measurement event: %v", err)
+			return xerrors.Errorf("cannot process db measurement event: %w", err)
 		}
 	case eventClassDbx:
 		if err := g.computeSignatureDbEvents(dbxName, dbxFilename, events); err != nil {
-			return fmt.Errorf("cannot process dbx measurement event: %v", err)
+			return xerrors.Errorf("cannot process dbx measurement event: %w", err)
 		}
 	case eventClassDriverAndInitialAppVerification:
 		// The event corresponds to the verification of the initial EFI executable, but it's not
@@ -1074,7 +1062,7 @@ Loop:
 		fallthrough
 	case eventClassInitialAppVerification:
 		if err := g.continueComputingOSLoadEvents(g.loadPaths); err != nil {
-			return fmt.Errorf("cannot compute OS load events: %v", err)
+			return xerrors.Errorf("cannot compute OS load events: %w", err)
 		}
 	default:
 		panic("invalid event class")
@@ -1090,7 +1078,7 @@ func (g *secureBootPolicyGen) buildDbUpdates(keyStores []string) error {
 
 	sbKeySync, err := exec.LookPath(sbKeySyncExe)
 	if err != nil {
-		return fmt.Errorf("lookup failed %s: %v", sbKeySyncExe, err)
+		return xerrors.Errorf("lookup failed %s: %w", sbKeySyncExe, err)
 	}
 
 	args := []string{"--dry-run", "--verbose", "--no-default-keystores", "--efivars-path"}
@@ -1163,7 +1151,7 @@ func (g *secureBootPolicyGen) run(params *SealParams, secureBootEvents []classif
 	g.loadPaths = params.LoadPaths
 
 	if err := g.buildDbUpdates(params.SecureBootDbKeystores); err != nil {
-		return nil, fmt.Errorf("cannot build UEFI signature database update list: %v", err)
+		return nil, xerrors.Errorf("cannot build UEFI signature database update list: %w", err)
 	}
 
 	dbCtx := g.enterDbScope()
@@ -1196,7 +1184,7 @@ func (g *secureBootPolicyGen) run(params *SealParams, secureBootEvents []classif
 	defer g.exitMeasurementScope(mCtx)
 
 	if err := g.processEvents(secureBootEvents); err != nil {
-		return nil, fmt.Errorf("cannot process events from event log: %v", err)
+		return nil, xerrors.Errorf("cannot process events from event log: %w", err)
 	}
 
 	return g.outputDigests, nil
@@ -1228,7 +1216,7 @@ func computeSecureBootPolicyDigests(tpm *tpm2.TPMContext, alg tpm2.HashAlgorithm
 	// Load and replay event log
 	log, err := tcglog.ReplayAndValidateLog(logPath, tcglog.LogOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("cannot parse and validate event log: %v", err)
+		return nil, xerrors.Errorf("cannot parse and validate event log: %w", err)
 	}
 
 	if !log.Algorithms.Contains(tcglog.AlgorithmId(alg)) {
@@ -1243,75 +1231,59 @@ func computeSecureBootPolicyDigests(tpm *tpm2.TPMContext, alg tpm2.HashAlgorithm
 	// Read the current value of PCR7 (secure boot policy) to make sure it is consistent with the log
 	// TODO: Read this from the TPM during early boot and store the value somewhere, to allow other components
 	// to measure to this PCR without breaking our ability to detect if the log is sane
-	_, digests, err := tpm.PCRRead(tpm2.PCRSelectionList{
-		tpm2.PCRSelection{Hash: alg, Select: []int{secureBootPCR}}})
+	_, digests, err := tpm.PCRRead(tpm2.PCRSelectionList{tpm2.PCRSelection{Hash: alg, Select: []int{secureBootPCR}}})
 	if err != nil {
-		return nil, fmt.Errorf("cannot read current secure boot policy PCR value from TPM: %v", err)
+		return nil, xerrors.Errorf("cannot read current secure boot policy PCR value from TPM: %w", err)
 	}
 	digestFromLog := log.ExpectedPCRValues[tcglog.PCRIndex(secureBootPCR)][tcglog.AlgorithmId(alg)]
 	if !bytes.Equal(digests[alg][secureBootPCR], digestFromLog) {
-		return nil, fmt.Errorf("secure boot policy PCR value is not consistent with the events from the "+
-			"event log (TPM value: %x, value calculated from replaying log: %x)", digests[0],
-			digestFromLog)
+		return nil, fmt.Errorf("secure boot policy PCR value is not consistent with the events from the event log (TPM value: %x, value "+
+			"calculated from replaying log: %x)", digests[0], digestFromLog)
 	}
 
 	// First pass over the log to make sure things on the current boot are sane.
 	for _, event := range log.ValidatedEvents {
 		switch event.Event.PCRIndex {
 		case bootManagerCodePCR:
-			if event.Event.EventType == tcglog.EventTypeEFIAction &&
-				event.Event.Data.String() == returningFromEfiApplicationEvent {
-				// Firmware should record this event if an EFI application returns to the boot
-				// manager. Bail out if this happened because the policy might not make sense.
-				return nil, errors.New("the current boot was preceeded by a boot attempt to " +
-					"another EFI application that returned to the boot manager without a " +
-					"reboot in between")
+			if event.Event.EventType == tcglog.EventTypeEFIAction && event.Event.Data.String() == returningFromEfiApplicationEvent {
+				// Firmware should record this event if an EFI application returns to the boot manager. Bail out if this happened because the
+				// policy might not make sense.
+				return nil, errors.New("the current boot was preceeded by a boot attempt to another EFI application that returned to the boot " +
+					"manager without a reboot in between")
 			}
 		case secureBootPCR:
 			switch event.Event.EventType {
 			case tcglog.EventTypeEFIVariableDriverConfig:
 				efiVarData, isEfiVar := event.Event.Data.(*tcglog.EFIVariableEventData)
 				if !isEfiVar {
-					return nil, fmt.Errorf("%s secure boot policy event has invalid event "+
-						"data", event.Event.EventType)
+					return nil, fmt.Errorf("%s secure boot policy event has invalid event data", event.Event.EventType)
 				}
-				if efiVarData.VariableName == efiGlobalVariableGuid &&
-					efiVarData.UnicodeName == sbStateName {
+				if efiVarData.VariableName == efiGlobalVariableGuid && efiVarData.UnicodeName == sbStateName {
 					switch {
 					case event.Event.Index > 0:
-						// The spec says that secure boot policy must be measured again if
-						// the system supports changing it before ExitBootServices without
-						// a reboot. But the policy we create won't make sense, so bail
-						// out
-						return nil, errors.New("secure boot policy was modified after " +
-							"the initial secure boot configuration measurement " +
-							"without performing a reboot")
+						// The spec says that secure boot policy must be measured again if the system supports changing it before ExitBootServices
+						// without a reboot. But the policy we create won't make sense, so bail out
+						return nil, errors.New("secure boot policy was modified after the initial secure boot configuration measurement without " +
+							"performing a reboot")
 					case efiVarData.VariableData[0] == 0x00:
-						// This actually shouldn't happen - there's no event log when
-						// secure boot is disabled on the devices I've tested on
-						return nil, errors.New("the current boot was performed with " +
-							"secure boot disabled in firmware")
+						// This actually shouldn't happen - there's no event log when secure boot is disabled on the devices I've tested on
+						return nil, errors.New("the current boot was performed with secure boot disabled in firmware")
 					}
 				}
 			case tcglog.EventTypeSeparator:
 			case tcglog.EventTypeEFIVariableAuthority:
 				efiVarData, isEfiVar := event.Event.Data.(*tcglog.EFIVariableEventData)
 				if !isEfiVar {
-					return nil, fmt.Errorf("%s secure boot policy event has invalid event "+
-						"data", event.Event.EventType)
+					return nil, fmt.Errorf("%s secure boot policy event has invalid event data", event.Event.EventType)
 				}
-				if efiVarData.VariableName == shimGuid &&
-					efiVarData.UnicodeName == mokSbStateName {
-					// MokSBState is set to 0x01 if secure boot enforcement is disabled in
-					// shim. The variable is deleted when secure boot enforcement is enabled,
-					// so don't bother looking at the value here. It doesn't make a lot of
-					// sense to create a policy if secure boot enforcement is disabled in shim
-					return nil, errors.New("the current boot was performed with validation " +
-						"disabled in Shim")
+				if efiVarData.VariableName == shimGuid && efiVarData.UnicodeName == mokSbStateName {
+					// MokSBState is set to 0x01 if secure boot enforcement is disabled in shim. The variable is deleted when secure boot enforcement
+					// is enabled, so don't bother looking at the value here. It doesn't make a lot of sense to create a policy if secure boot
+					// enforcement is disabled in shim
+					return nil, errors.New("the current boot was performed with validation disabled in Shim")
 				}
 			default:
-				return nil, fmt.Errorf("unexpected secure boot policy event type: %s",
-					event.Event.EventType)
+				return nil, fmt.Errorf("unexpected secure boot policy event type: %s", event.Event.EventType)
 			}
 		}
 	}
@@ -1319,7 +1291,7 @@ func computeSecureBootPolicyDigests(tpm *tpm2.TPMContext, alg tpm2.HashAlgorithm
 	// Classify secure boot policy events to identify the interesting ones.
 	events, err := classifySecureBootEvents(log.ValidatedEvents)
 	if err != nil {
-		return nil, fmt.Errorf("cannot classify secure boot policy events from event log: %v", err)
+		return nil, xerrors.Errorf("cannot classify secure boot policy events from event log: %w", err)
 	}
 
 	// Pass over the classified secure boot policy events again and make sure the events that are interesting
@@ -1331,15 +1303,14 @@ func computeSecureBootPolicyDigests(tpm *tpm2.TPMContext, alg tpm2.HashAlgorithm
 		}
 
 		if len(event.event.IncorrectDigestValues) != 0 {
-			return nil, fmt.Errorf("digest for secure boot policy %s event at index %d is not "+
-				"consistent with the associated event data", event.event.Event.EventType,
-				event.event.Event.Index)
+			return nil, fmt.Errorf("digest for secure boot policy %s event at index %d is not consistent with the associated event data",
+				event.event.Event.EventType, event.event.Event.Index)
 		}
 
 		// Detect the problem fixed by https://github.com/rhboot/shim/pull/178 in shim
 		if event.event.MeasuredTrailingBytes > 0 {
-			return nil, fmt.Errorf("digest for secure boot policy %s event at index %d contains "+
-				"trailing bytes", event.event.Event.EventType, event.event.Event.Index)
+			return nil, fmt.Errorf("digest for secure boot policy %s event at index %d contains trailing bytes", event.event.Event.EventType,
+				event.event.Event.Index)
 		}
 	}
 
