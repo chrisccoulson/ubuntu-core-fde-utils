@@ -284,18 +284,26 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 
 	// Compute PCR digests
 	var secureBootDigests tpm2.DigestList
+	var ubuntuBootParamsDigests tpm2.DigestList
 	if params != nil {
 		secureBootDigests, err = computeSecureBootPolicyDigests(tpm.TPMContext, defaultHashAlgorithm, params)
 		if err != nil {
 			return fmt.Errorf("cannot compute secure boot policy digests: %v", err)
 		}
+		_, pcrValues, err := tpm.PCRRead(tpm2.PCRSelectionList{
+			tpm2.PCRSelection{Hash: defaultHashAlgorithm, Select: tpm2.PCRSelectionData{ubuntuBootParamsPCR}}})
+		if err != nil {
+			return xerrors.Errorf("cannot read current PCR values: %w", err)
+		}
+		ubuntuBootParamsDigests = append(ubuntuBootParamsDigests, pcrValues[defaultHashAlgorithm][ubuntuBootParamsPCR])
 	} else {
 		_, pcrValues, err := tpm.PCRRead(tpm2.PCRSelectionList{
-			tpm2.PCRSelection{Hash: defaultHashAlgorithm, Select: tpm2.PCRSelectionData{secureBootPCR}}})
+			tpm2.PCRSelection{Hash: defaultHashAlgorithm, Select: tpm2.PCRSelectionData{secureBootPCR, ubuntuBootParamsPCR}}})
 		if err != nil {
-			return xerrors.Errorf("cannot read secure boot PCR value: %w", err)
+			return xerrors.Errorf("cannot read current PCR values: %w", err)
 		}
 		secureBootDigests = append(secureBootDigests, pcrValues[defaultHashAlgorithm][secureBootPCR])
+		ubuntuBootParamsDigests = append(ubuntuBootParamsDigests, pcrValues[defaultHashAlgorithm][ubuntuBootParamsPCR])
 	}
 
 	// Use the PCR digests and NV index names to generate a single policy digest
@@ -303,7 +311,7 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 		secureBootPCRAlg:           defaultHashAlgorithm,
 		ubuntuBootParamsPCRAlg:     defaultHashAlgorithm,
 		secureBootPCRDigests:       secureBootDigests,
-		ubuntuBootParamsPCRDigests: tpm2.DigestList{make(tpm2.Digest, 32)},
+		ubuntuBootParamsPCRDigests: ubuntuBootParamsDigests,
 		pinIndex:                   pinIndex,
 		policyRevokeIndex:          policyRevokeIndex,
 		policyRevokeCount:          nextPolicyRevokeCount}
