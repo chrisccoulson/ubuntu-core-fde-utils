@@ -25,6 +25,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/chrisccoulson/go-tpm2"
@@ -600,4 +601,279 @@ func TestUnsealProvisioningError(t *testing.T) {
 
 		run(t)
 	})
+}
+
+func TestCreateAndUnsealWithParams(t *testing.T) {
+	tpm, tcti := openTPMSimulatorForTesting(t)
+	defer closeTPM(t, tpm)
+
+	defer func() {
+		eventLogPathForTesting = ""
+		efivarsPathForTesting = ""
+	}()
+
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+		t.Fatalf("Failed to provision TPM for test: %v", err)
+	}
+
+	for _, data := range []struct {
+		desc            string
+		creationLogPath string
+		trustedLogPath  string
+		efivars         string
+		params          *SealParams
+		err             string
+		errType         reflect.Type
+	}{
+		{
+			// Test sealing and unsealing with a classic layout
+			desc:            "Classic",
+			creationLogPath: "testdata/eventlog1.bin",
+			trustedLogPath:  "testdata/eventlog3.bin",
+			efivars:         "testdata/efivars1",
+			params: &SealParams{
+				LoadPaths: []*OSComponent{
+					&OSComponent{
+						LoadType: FirmwareLoad,
+						Image:    FileOSComponent("testdata/mockshim2.efi.signed.1"),
+						Next: []*OSComponent{
+							&OSComponent{
+								LoadType: DirectLoadWithShimVerify,
+								Image:    FileOSComponent("testdata/mock.efi.signed.2"),
+								Next: []*OSComponent{
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.2")}}}}}}},
+		},
+		{
+			// Test sealing and unsealing with a UC20 style layout
+			desc:            "UC20",
+			creationLogPath: "testdata/eventlog1.bin",
+			trustedLogPath:  "testdata/eventlog4.bin",
+			efivars:         "testdata/efivars1",
+			params: &SealParams{
+				LoadPaths: []*OSComponent{
+					&OSComponent{
+						LoadType: FirmwareLoad,
+						Image:    FileOSComponent("testdata/mockshim2.efi.signed.1"),
+						Next: []*OSComponent{
+							&OSComponent{
+								LoadType: DirectLoadWithShimVerify,
+								Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+								Next: []*OSComponent{
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1")},
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+										Next: []*OSComponent{
+											&OSComponent{
+												LoadType: DirectLoadWithShimVerify,
+												Image:    FileOSComponent("testdata/mock.efi.signed.1")}}}}}}}}},
+		},
+		{
+			// Test sealing before upgrading to a kernel signed with a new key, and then unsealing with the old kernel
+			desc:            "UC20KernelKeyRotationUnsealPreUpgrade",
+			creationLogPath: "testdata/eventlog1.bin",
+			trustedLogPath:  "testdata/eventlog5.bin",
+			efivars:         "testdata/efivars2",
+			params: &SealParams{
+				LoadPaths: []*OSComponent{
+					&OSComponent{
+						LoadType: FirmwareLoad,
+						Image:    FileOSComponent("testdata/mockshim2.efi.signed.1"),
+						Next: []*OSComponent{
+							&OSComponent{
+								LoadType: DirectLoadWithShimVerify,
+								Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+								Next: []*OSComponent{
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1")},
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.2")},
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+										Next: []*OSComponent{
+											&OSComponent{
+												LoadType: DirectLoadWithShimVerify,
+												Image:    FileOSComponent("testdata/mock.efi.signed.1")},
+											&OSComponent{
+												LoadType: DirectLoadWithShimVerify,
+												Image:    FileOSComponent("testdata/mock.efi.signed.2")}}}}}}}}},
+		},
+		{
+			// Test sealing before upgrading to a kernel signed with a new key, and then unsealing post-upgrade with the new kernel
+			desc:            "UC20KernelKeyRotationUnsealPostUpgrade",
+			creationLogPath: "testdata/eventlog1.bin",
+			trustedLogPath:  "testdata/eventlog6.bin",
+			efivars:         "testdata/efivars2",
+			params: &SealParams{
+				LoadPaths: []*OSComponent{
+					&OSComponent{
+						LoadType: FirmwareLoad,
+						Image:    FileOSComponent("testdata/mockshim2.efi.signed.1"),
+						Next: []*OSComponent{
+							&OSComponent{
+								LoadType: DirectLoadWithShimVerify,
+								Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+								Next: []*OSComponent{
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1")},
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.2")},
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+										Next: []*OSComponent{
+											&OSComponent{
+												LoadType: DirectLoadWithShimVerify,
+												Image:    FileOSComponent("testdata/mock.efi.signed.1")},
+											&OSComponent{
+												LoadType: DirectLoadWithShimVerify,
+												Image:    FileOSComponent("testdata/mock.efi.signed.2")}}}}}}}}},
+		},
+		{
+			// Test sealing before applying a UEFI signature DB update and then unsealing before the update is applied
+			desc:            "DbUpdateUnsealPreUpdate",
+			creationLogPath: "testdata/eventlog1.bin",
+			trustedLogPath:  "testdata/eventlog4.bin",
+			efivars:         "testdata/efivars1",
+			params: &SealParams{
+				LoadPaths: []*OSComponent{
+					&OSComponent{
+						LoadType: FirmwareLoad,
+						Image:    FileOSComponent("testdata/mockshim2.efi.signed.1"),
+						Next: []*OSComponent{
+							&OSComponent{
+								LoadType: DirectLoadWithShimVerify,
+								Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+								Next: []*OSComponent{
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1")},
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+										Next: []*OSComponent{
+											&OSComponent{
+												LoadType: DirectLoadWithShimVerify,
+												Image:    FileOSComponent("testdata/mock.efi.signed.1")}}}}}}}},
+				SecureBootDbKeystores: []string{"testdata/updates1"}},
+		},
+		{
+			// Test sealing before applying a UEFI signature DB update and then unsealing post-update
+			desc:            "DbUpdateUnsealPostUpdate",
+			creationLogPath: "testdata/eventlog1.bin",
+			trustedLogPath:  "testdata/eventlog5.bin",
+			efivars:         "testdata/efivars1",
+			params: &SealParams{
+				LoadPaths: []*OSComponent{
+					&OSComponent{
+						LoadType: FirmwareLoad,
+						Image:    FileOSComponent("testdata/mockshim2.efi.signed.1"),
+						Next: []*OSComponent{
+							&OSComponent{
+								LoadType: DirectLoadWithShimVerify,
+								Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+								Next: []*OSComponent{
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1")},
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+										Next: []*OSComponent{
+											&OSComponent{
+												LoadType: DirectLoadWithShimVerify,
+												Image:    FileOSComponent("testdata/mock.efi.signed.1")}}}}}}}},
+				SecureBootDbKeystores: []string{"testdata/updates1"}},
+		},
+		{
+			desc:            "PolicyFail",
+			creationLogPath: "testdata/eventlog1.bin",
+			trustedLogPath:  "testdata/eventlog5.bin",
+			efivars:         "testdata/efivars2",
+			params: &SealParams{
+				LoadPaths: []*OSComponent{
+					&OSComponent{
+						LoadType: FirmwareLoad,
+						Image:    FileOSComponent("testdata/mockshim2.efi.signed.1"),
+						Next: []*OSComponent{
+							&OSComponent{
+								LoadType: DirectLoadWithShimVerify,
+								Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+								Next: []*OSComponent{
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.2")},
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+										Next: []*OSComponent{
+											&OSComponent{
+												LoadType: DirectLoadWithShimVerify,
+												Image:    FileOSComponent("testdata/mock.efi.signed.2")}}}}}}}}},
+			err:     "invalid key data file: the authorization policy check failed during unsealing",
+			errType: reflect.TypeOf(InvalidKeyFileError{}),
+		},
+	} {
+		t.Run(data.desc, func(t *testing.T) {
+			resetTPMSimulator(t, tpm, tcti)
+			replayLogToTPM(t, tpm, tcti, data.creationLogPath)
+
+			eventLogPathForTesting = data.creationLogPath
+			efivarsPathForTesting = data.efivars
+
+			key := make([]byte, 64)
+			rand.Read(key)
+
+			tmpDir, err := ioutil.TempDir("", "_TestCreateAndUnsealWithParams_"+data.desc+"_")
+			if err != nil {
+				t.Fatalf("Creating temporary directory failed: %v", err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			dest := tmpDir + "/keydata"
+
+			if err := SealKeyToTPM(tpm, dest, &testCreationParams, data.params, key); err != nil {
+				t.Fatalf("SealKeyToTPM failed: %v", err)
+			}
+			defer deleteKey(t, tpm, dest)
+
+			resetTPMSimulator(t, tpm, tcti)
+			replayLogToTPM(t, tpm, tcti, data.trustedLogPath)
+
+			f, err := os.Open(dest)
+			if err != nil {
+				t.Fatalf("Failed to open key data file: %v", err)
+			}
+
+			keyUnsealed, err := UnsealKeyFromTPM(tpm, f, "")
+			if data.err == "" {
+				if err != nil {
+					t.Fatalf("UnsealKeyFromTPM failed: %v", err)
+				}
+
+				if !bytes.Equal(key, keyUnsealed) {
+					t.Errorf("TPM returned the wrong key")
+				}
+			} else {
+				if err == nil {
+					t.Fatalf("UnsealKeyFromTPM should have failed")
+				}
+				if err.Error() != data.err {
+					t.Errorf("Unexpected error string: %s", err)
+				}
+				if data.errType != nil && data.errType != reflect.ValueOf(err).Type() {
+					t.Errorf("Unexpected error type")
+				}
+			}
+		})
+	}
 }
