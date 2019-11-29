@@ -300,15 +300,13 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 
 	// Use the PCR digests and NV index names to generate a single policy digest
 	policyComputeIn := policyComputeInput{
-		secureBootPCRAlg:     defaultHashAlgorithm,
-		grubPCRAlg:           defaultHashAlgorithm,
-		snapModelPCRAlg:      defaultHashAlgorithm,
-		secureBootPCRDigests: secureBootDigests,
-		grubPCRDigests:       tpm2.DigestList{make(tpm2.Digest, 32)},
-		snapModelPCRDigests:  tpm2.DigestList{make(tpm2.Digest, 32)},
-		pinIndex:             pinIndex,
-		policyRevokeIndex:    policyRevokeIndex,
-		policyRevokeCount:    nextPolicyRevokeCount}
+		secureBootPCRAlg:           defaultHashAlgorithm,
+		ubuntuBootParamsPCRAlg:     defaultHashAlgorithm,
+		secureBootPCRDigests:       secureBootDigests,
+		ubuntuBootParamsPCRDigests: tpm2.DigestList{make(tpm2.Digest, 32)},
+		pinIndex:                   pinIndex,
+		policyRevokeIndex:          policyRevokeIndex,
+		policyRevokeCount:          nextPolicyRevokeCount}
 
 	policyData, authPolicy, err := computePolicy(defaultHashAlgorithm, &policyComputeIn)
 	if err != nil {

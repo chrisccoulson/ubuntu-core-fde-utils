@@ -72,77 +72,66 @@ func TestComputePolicy(t *testing.T) {
 			desc: "Single",
 			alg:  tpm2.HashAlgorithmSHA256,
 			input: policyComputeInput{
-				secureBootPCRAlg:     tpm2.HashAlgorithmSHA256,
-				grubPCRAlg:           tpm2.HashAlgorithmSHA256,
-				snapModelPCRAlg:      tpm2.HashAlgorithmSHA256,
-				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
-				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
-				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][2]},
-				pinIndex:             pinIndex,
-				policyRevokeIndex:    revokeIndex,
-				policyRevokeCount:    10,
+				secureBootPCRAlg:           tpm2.HashAlgorithmSHA256,
+				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
+				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
+				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
+				pinIndex:                   pinIndex,
+				policyRevokeIndex:          revokeIndex,
+				policyRevokeCount:          10,
 			},
-			output: tpm2.Digest{0xa8, 0x14, 0x47, 0x66, 0x4c, 0xbb, 0x32, 0x61, 0x8c, 0x9b, 0x31, 0xfa,
-				0xd6, 0x20, 0xdb, 0xff, 0xba, 0x66, 0x37, 0xdc, 0xbf, 0x85, 0x4e, 0x19, 0xac, 0xf5,
-				0xf8, 0xb4, 0x14, 0x99, 0xb8, 0x52},
+			output: tpm2.Digest{0x02, 0xc6, 0xa7, 0x61, 0xeb, 0x2e, 0xce, 0x14, 0xc5, 0xe1, 0xc5, 0x24, 0x83, 0x0c, 0xa8, 0xc1, 0x70, 0xdc,
+				0x30, 0x92, 0xd6, 0x2c, 0x49, 0x48, 0x8e, 0x91, 0x69, 0x4d, 0x6a, 0x79, 0x70, 0xef},
 		},
 		{
 			desc: "SHA1Session",
 			alg:  tpm2.HashAlgorithmSHA1,
 			input: policyComputeInput{
-				secureBootPCRAlg:     tpm2.HashAlgorithmSHA256,
-				grubPCRAlg:           tpm2.HashAlgorithmSHA256,
-				snapModelPCRAlg:      tpm2.HashAlgorithmSHA256,
-				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
-				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
-				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][2]},
-				pinObjectName:        pinName,
-				pinIndex:             pinIndex,
-				policyRevokeIndex:    revokeIndex,
-				policyRevokeCount:    4551,
+				secureBootPCRAlg:           tpm2.HashAlgorithmSHA256,
+				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
+				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
+				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
+				pinObjectName:              pinName,
+				pinIndex:                   pinIndex,
+				policyRevokeIndex:          revokeIndex,
+				policyRevokeCount:          4551,
 			},
-			output: tpm2.Digest{0xf1, 0xe0, 0xaa, 0x57, 0xfc, 0x19, 0x03, 0x86, 0x9a, 0x43, 0xca, 0x5a,
-				0x3a, 0x56, 0xb8, 0x48, 0xe7, 0x7f, 0xe7, 0xc7},
+			output: tpm2.Digest{0x7b, 0x0d, 0x31, 0x62, 0xda, 0x67, 0x50, 0x08, 0x02, 0xea, 0x1e, 0x70, 0x22, 0x3b, 0x1c, 0x73, 0xf4, 0xd2,
+				0x80, 0x07},
 		},
 		{
 			desc: "SHA256SessionWithSHA512PCRs",
 			alg:  tpm2.HashAlgorithmSHA256,
 			input: policyComputeInput{
-				secureBootPCRAlg:     tpm2.HashAlgorithmSHA512,
-				grubPCRAlg:           tpm2.HashAlgorithmSHA512,
-				snapModelPCRAlg:      tpm2.HashAlgorithmSHA512,
-				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA512][0]},
-				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA512][1]},
-				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA512][2]},
-				pinIndex:             pinIndex,
-				policyRevokeIndex:    revokeIndex,
-				policyRevokeCount:    403,
+				secureBootPCRAlg:           tpm2.HashAlgorithmSHA512,
+				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA512,
+				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA512][0]},
+				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA512][1]},
+				pinIndex:                   pinIndex,
+				policyRevokeIndex:          revokeIndex,
+				policyRevokeCount:          403,
 			},
-			output: tpm2.Digest{0x77, 0x9b, 0x50, 0x0a, 0x46, 0x37, 0x26, 0x3b, 0xbb, 0xde, 0xa6, 0xe4,
-				0x0d, 0xd1, 0x69, 0x94, 0x7d, 0x2c, 0x4c, 0xff, 0x72, 0xbc, 0x8e, 0xad, 0xf4, 0x86,
-				0x3b, 0x9c, 0xfb, 0x6a, 0x93, 0x69},
+			output: tpm2.Digest{0x1e, 0x97, 0xd2, 0x1c, 0xc8, 0xbd, 0x31, 0xc2, 0x63, 0x58, 0xb3, 0x65, 0xc9, 0x2a, 0xae, 0x56, 0x11, 0x36,
+				0x91, 0x3c, 0x14, 0x5c, 0x5a, 0x2d, 0xa4, 0x44, 0x0c, 0xc5, 0xd4, 0x70, 0x89, 0xff},
 		},
 		{
 			desc: "MultiplePCRValues",
 			alg:  tpm2.HashAlgorithmSHA256,
 			input: policyComputeInput{
-				secureBootPCRAlg: tpm2.HashAlgorithmSHA256,
-				grubPCRAlg:       tpm2.HashAlgorithmSHA256,
-				snapModelPCRAlg:  tpm2.HashAlgorithmSHA512,
+				secureBootPCRAlg:       tpm2.HashAlgorithmSHA256,
+				ubuntuBootParamsPCRAlg: tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests: tpm2.DigestList{
 					digestMatrix[tpm2.HashAlgorithmSHA256][0],
 					digestMatrix[tpm2.HashAlgorithmSHA256][1]},
-				grubPCRDigests: tpm2.DigestList{
+				ubuntuBootParamsPCRDigests: tpm2.DigestList{
 					digestMatrix[tpm2.HashAlgorithmSHA256][3],
 					digestMatrix[tpm2.HashAlgorithmSHA256][2]},
-				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA512][2]},
-				pinIndex:            pinIndex,
-				policyRevokeIndex:   revokeIndex,
-				policyRevokeCount:   5,
+				pinIndex:          pinIndex,
+				policyRevokeIndex: revokeIndex,
+				policyRevokeCount: 5,
 			},
-			output: tpm2.Digest{0xb7, 0x15, 0xc1, 0xad, 0x46, 0x47, 0xd6, 0x1d, 0x73, 0x03, 0xb8, 0x26,
-				0xfa, 0x74, 0xc4, 0x72, 0x08, 0x71, 0xc6, 0x83, 0x99, 0x80, 0x4c, 0x9b, 0x4c, 0x89,
-				0x03, 0x52, 0x72, 0xed, 0xdc, 0x16},
+			output: tpm2.Digest{0x99, 0x66, 0x62, 0x60, 0x64, 0x25, 0xe0, 0x89, 0x98, 0xae, 0xcf, 0x07, 0x4c, 0xc0, 0x48, 0x46, 0x5a, 0x25,
+				0x33, 0x95, 0x1d, 0xd5, 0x28, 0x89, 0xb2, 0xd6, 0x30, 0xd4, 0xb5, 0x32, 0xe4, 0x87},
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {
@@ -156,20 +145,14 @@ func TestComputePolicy(t *testing.T) {
 			if dataout.SecureBootPCRAlg != data.input.secureBootPCRAlg {
 				t.Errorf("Unexpected secure boot PCR algorithm %v", dataout.SecureBootPCRAlg)
 			}
-			if dataout.GrubPCRAlg != data.input.grubPCRAlg {
-				t.Errorf("Unexpected grub PCR algorithm %v", dataout.GrubPCRAlg)
-			}
-			if dataout.SnapModelPCRAlg != data.input.snapModelPCRAlg {
-				t.Errorf("Unexpected secure snap model PCR algorithm %v", dataout.SnapModelPCRAlg)
+			if dataout.UbuntuBootParamsPCRAlg != data.input.ubuntuBootParamsPCRAlg {
+				t.Errorf("Unexpected ubuntu boot params PCR algorithm %v", dataout.UbuntuBootParamsPCRAlg)
 			}
 			if len(dataout.SecureBootORDigests) != len(data.input.secureBootPCRDigests) {
 				t.Errorf("Unexpected number of secure boot OR digests")
 			}
-			if len(dataout.GrubORDigests) != len(data.input.grubPCRDigests) {
-				t.Errorf("Unexpected number of grub OR digests")
-			}
-			if len(dataout.SnapModelORDigests) != len(data.input.snapModelPCRDigests) {
-				t.Errorf("Unexpected number of snap model OR digests")
+			if len(dataout.UbuntuBootParamsORDigests) != len(data.input.ubuntuBootParamsPCRDigests) {
+				t.Errorf("Unexpected number of ubuntu boot params OR digests")
 			}
 			if dataout.PolicyRevokeIndexHandle != data.input.policyRevokeIndex.Handle() {
 				t.Errorf("Unexpected policy revocation NV index handle")
@@ -179,8 +162,7 @@ func TestComputePolicy(t *testing.T) {
 			}
 
 			digestSize := data.alg.Size()
-			for _, l := range []tpm2.DigestList{dataout.SecureBootORDigests,
-				dataout.GrubORDigests, dataout.SnapModelORDigests} {
+			for _, l := range []tpm2.DigestList{dataout.SecureBootORDigests, dataout.UbuntuBootParamsORDigests} {
 				for _, digest := range l {
 					if len(digest) != int(digestSize) {
 						t.Errorf("Unexpected digest size")
@@ -189,8 +171,7 @@ func TestComputePolicy(t *testing.T) {
 			}
 
 			if !bytes.Equal(data.output, policy) {
-				t.Errorf("Unexpected policy digest returned (got %x, expected %x)", policy,
-					data.output)
+				t.Errorf("Unexpected policy digest returned (got %x, expected %x)", policy, data.output)
 			}
 		})
 	}
@@ -290,13 +271,11 @@ func TestExecutePolicy(t *testing.T) {
 			desc: "Single",
 			alg:  tpm2.HashAlgorithmSHA256,
 			input: policyComputeInput{
-				secureBootPCRAlg:     tpm2.HashAlgorithmSHA256,
-				grubPCRAlg:           tpm2.HashAlgorithmSHA256,
-				snapModelPCRAlg:      tpm2.HashAlgorithmSHA256,
-				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
-				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
-				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][2]},
-				policyRevokeCount:    policyRevokeCount,
+				secureBootPCRAlg:           tpm2.HashAlgorithmSHA256,
+				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
+				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
+				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
+				policyRevokeCount:          policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -304,12 +283,8 @@ func TestExecutePolicy(t *testing.T) {
 					data:  "foo",
 				},
 				{
-					index: grubPCR,
+					index: ubuntuBootParamsPCR,
 					data:  "bar",
-				},
-				{
-					index: snapModelPCR,
-					data:  "xyz",
 				},
 			},
 			policyMatch: true,
@@ -318,13 +293,11 @@ func TestExecutePolicy(t *testing.T) {
 			desc: "SHA1SessionWithSHA256PCRs",
 			alg:  tpm2.HashAlgorithmSHA1,
 			input: policyComputeInput{
-				secureBootPCRAlg:     tpm2.HashAlgorithmSHA256,
-				grubPCRAlg:           tpm2.HashAlgorithmSHA256,
-				snapModelPCRAlg:      tpm2.HashAlgorithmSHA256,
-				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
-				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
-				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][2]},
-				policyRevokeCount:    policyRevokeCount,
+				secureBootPCRAlg:           tpm2.HashAlgorithmSHA256,
+				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
+				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
+				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
+				policyRevokeCount:          policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -332,12 +305,8 @@ func TestExecutePolicy(t *testing.T) {
 					data:  "foo",
 				},
 				{
-					index: grubPCR,
+					index: ubuntuBootParamsPCR,
 					data:  "bar",
-				},
-				{
-					index: snapModelPCR,
-					data:  "xyz",
 				},
 			},
 			policyMatch: true,
@@ -346,13 +315,11 @@ func TestExecutePolicy(t *testing.T) {
 			desc: "SHA1Session",
 			alg:  tpm2.HashAlgorithmSHA1,
 			input: policyComputeInput{
-				secureBootPCRAlg:     tpm2.HashAlgorithmSHA1,
-				grubPCRAlg:           tpm2.HashAlgorithmSHA1,
-				snapModelPCRAlg:      tpm2.HashAlgorithmSHA1,
-				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA1][0]},
-				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA1][1]},
-				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA1][2]},
-				policyRevokeCount:    policyRevokeCount,
+				secureBootPCRAlg:           tpm2.HashAlgorithmSHA1,
+				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA1,
+				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA1][0]},
+				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA1][1]},
+				policyRevokeCount:          policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -360,12 +327,8 @@ func TestExecutePolicy(t *testing.T) {
 					data:  "foo",
 				},
 				{
-					index: grubPCR,
+					index: ubuntuBootParamsPCR,
 					data:  "bar",
-				},
-				{
-					index: snapModelPCR,
-					data:  "xyz",
 				},
 			},
 			policyMatch: true,
@@ -374,13 +337,11 @@ func TestExecutePolicy(t *testing.T) {
 			desc: "WithPIN",
 			alg:  tpm2.HashAlgorithmSHA256,
 			input: policyComputeInput{
-				secureBootPCRAlg:     tpm2.HashAlgorithmSHA256,
-				grubPCRAlg:           tpm2.HashAlgorithmSHA256,
-				snapModelPCRAlg:      tpm2.HashAlgorithmSHA256,
-				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
-				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
-				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][2]},
-				policyRevokeCount:    policyRevokeCount,
+				secureBootPCRAlg:           tpm2.HashAlgorithmSHA256,
+				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
+				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
+				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
+				policyRevokeCount:          policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -388,12 +349,8 @@ func TestExecutePolicy(t *testing.T) {
 					data:  "foo",
 				},
 				{
-					index: grubPCR,
+					index: ubuntuBootParamsPCR,
 					data:  "bar",
-				},
-				{
-					index: snapModelPCR,
-					data:  "xyz",
 				},
 			},
 			pinDefine:   "1234",
@@ -404,13 +361,11 @@ func TestExecutePolicy(t *testing.T) {
 			desc: "WithIncorrectPIN",
 			alg:  tpm2.HashAlgorithmSHA256,
 			input: policyComputeInput{
-				secureBootPCRAlg:     tpm2.HashAlgorithmSHA256,
-				grubPCRAlg:           tpm2.HashAlgorithmSHA256,
-				snapModelPCRAlg:      tpm2.HashAlgorithmSHA256,
-				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
-				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
-				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][2]},
-				policyRevokeCount:    policyRevokeCount,
+				secureBootPCRAlg:           tpm2.HashAlgorithmSHA256,
+				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
+				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
+				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
+				policyRevokeCount:          policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -418,12 +373,8 @@ func TestExecutePolicy(t *testing.T) {
 					data:  "foo",
 				},
 				{
-					index: grubPCR,
+					index: ubuntuBootParamsPCR,
 					data:  "bar",
-				},
-				{
-					index: snapModelPCR,
-					data:  "xyz",
 				},
 			},
 			pinDefine:   "1234",
@@ -434,15 +385,13 @@ func TestExecutePolicy(t *testing.T) {
 			desc: "NoMatch",
 			alg:  tpm2.HashAlgorithmSHA256,
 			input: policyComputeInput{
-				secureBootPCRAlg: tpm2.HashAlgorithmSHA256,
-				grubPCRAlg:       tpm2.HashAlgorithmSHA256,
-				snapModelPCRAlg:  tpm2.HashAlgorithmSHA256,
+				secureBootPCRAlg:       tpm2.HashAlgorithmSHA256,
+				ubuntuBootParamsPCRAlg: tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests: tpm2.DigestList{
 					digestMatrix[tpm2.HashAlgorithmSHA256][0]},
-				grubPCRDigests: tpm2.DigestList{
+				ubuntuBootParamsPCRDigests: tpm2.DigestList{
 					digestMatrix[tpm2.HashAlgorithmSHA256][1]},
-				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][2]},
-				policyRevokeCount:   policyRevokeCount,
+				policyRevokeCount: policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -450,12 +399,8 @@ func TestExecutePolicy(t *testing.T) {
 					data:  "abc",
 				},
 				{
-					index: grubPCR,
+					index: ubuntuBootParamsPCR,
 					data:  "bar",
-				},
-				{
-					index: snapModelPCR,
-					data:  "xyz",
 				},
 			},
 			policyMatch: false,
@@ -464,17 +409,15 @@ func TestExecutePolicy(t *testing.T) {
 			desc: "MultiplePCRValues1",
 			alg:  tpm2.HashAlgorithmSHA256,
 			input: policyComputeInput{
-				secureBootPCRAlg: tpm2.HashAlgorithmSHA256,
-				grubPCRAlg:       tpm2.HashAlgorithmSHA256,
-				snapModelPCRAlg:  tpm2.HashAlgorithmSHA256,
+				secureBootPCRAlg:       tpm2.HashAlgorithmSHA256,
+				ubuntuBootParamsPCRAlg: tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests: tpm2.DigestList{
 					digestMatrix[tpm2.HashAlgorithmSHA256][0],
 					digestMatrix[tpm2.HashAlgorithmSHA256][4]},
-				grubPCRDigests: tpm2.DigestList{
+				ubuntuBootParamsPCRDigests: tpm2.DigestList{
 					digestMatrix[tpm2.HashAlgorithmSHA256][1],
 					digestMatrix[tpm2.HashAlgorithmSHA256][3]},
-				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][2]},
-				policyRevokeCount:   policyRevokeCount,
+				policyRevokeCount: policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -482,12 +425,8 @@ func TestExecutePolicy(t *testing.T) {
 					data:  "foo",
 				},
 				{
-					index: grubPCR,
+					index: ubuntuBootParamsPCR,
 					data:  "bar",
-				},
-				{
-					index: snapModelPCR,
-					data:  "xyz",
 				},
 			},
 			policyMatch: true,
@@ -496,17 +435,15 @@ func TestExecutePolicy(t *testing.T) {
 			desc: "MultiplePCRValues2",
 			alg:  tpm2.HashAlgorithmSHA256,
 			input: policyComputeInput{
-				secureBootPCRAlg: tpm2.HashAlgorithmSHA256,
-				grubPCRAlg:       tpm2.HashAlgorithmSHA256,
-				snapModelPCRAlg:  tpm2.HashAlgorithmSHA256,
+				secureBootPCRAlg:       tpm2.HashAlgorithmSHA256,
+				ubuntuBootParamsPCRAlg: tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests: tpm2.DigestList{
 					digestMatrix[tpm2.HashAlgorithmSHA256][0],
 					digestMatrix[tpm2.HashAlgorithmSHA256][4]},
-				grubPCRDigests: tpm2.DigestList{
+				ubuntuBootParamsPCRDigests: tpm2.DigestList{
 					digestMatrix[tpm2.HashAlgorithmSHA256][1],
 					digestMatrix[tpm2.HashAlgorithmSHA256][3]},
-				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][2]},
-				policyRevokeCount:   policyRevokeCount,
+				policyRevokeCount: policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -514,12 +451,8 @@ func TestExecutePolicy(t *testing.T) {
 					data:  "foo",
 				},
 				{
-					index: grubPCR,
+					index: ubuntuBootParamsPCR,
 					data:  "1234",
-				},
-				{
-					index: snapModelPCR,
-					data:  "xyz",
 				},
 			},
 			policyMatch: true,
@@ -528,17 +461,15 @@ func TestExecutePolicy(t *testing.T) {
 			desc: "MultiplePCRValuesNoMatch",
 			alg:  tpm2.HashAlgorithmSHA256,
 			input: policyComputeInput{
-				secureBootPCRAlg: tpm2.HashAlgorithmSHA256,
-				grubPCRAlg:       tpm2.HashAlgorithmSHA256,
-				snapModelPCRAlg:  tpm2.HashAlgorithmSHA256,
+				secureBootPCRAlg:       tpm2.HashAlgorithmSHA256,
+				ubuntuBootParamsPCRAlg: tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests: tpm2.DigestList{
 					digestMatrix[tpm2.HashAlgorithmSHA256][0],
 					digestMatrix[tpm2.HashAlgorithmSHA256][4]},
-				grubPCRDigests: tpm2.DigestList{
+				ubuntuBootParamsPCRDigests: tpm2.DigestList{
 					digestMatrix[tpm2.HashAlgorithmSHA256][1],
 					digestMatrix[tpm2.HashAlgorithmSHA256][3]},
-				snapModelPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][2]},
-				policyRevokeCount:   policyRevokeCount,
+				policyRevokeCount: policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -546,12 +477,8 @@ func TestExecutePolicy(t *testing.T) {
 					data:  "bar",
 				},
 				{
-					index: grubPCR,
+					index: ubuntuBootParamsPCR,
 					data:  "1234",
-				},
-				{
-					index: snapModelPCR,
-					data:  "xyz",
 				},
 			},
 			policyMatch: false,
@@ -560,13 +487,11 @@ func TestExecutePolicy(t *testing.T) {
 			desc: "RevokedPolicy",
 			alg:  tpm2.HashAlgorithmSHA256,
 			input: policyComputeInput{
-				secureBootPCRAlg:     tpm2.HashAlgorithmSHA256,
-				grubPCRAlg:           tpm2.HashAlgorithmSHA256,
-				snapModelPCRAlg:      tpm2.HashAlgorithmSHA256,
-				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
-				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
-				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][2]},
-				policyRevokeCount:    policyRevokeCount - 1,
+				secureBootPCRAlg:           tpm2.HashAlgorithmSHA256,
+				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
+				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
+				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
+				policyRevokeCount:          policyRevokeCount - 1,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -574,12 +499,8 @@ func TestExecutePolicy(t *testing.T) {
 					data:  "foo",
 				},
 				{
-					index: grubPCR,
+					index: ubuntuBootParamsPCR,
 					data:  "bar",
-				},
-				{
-					index: snapModelPCR,
-					data:  "xyz",
 				},
 			},
 			policyMatch: true,

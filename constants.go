@@ -31,9 +31,8 @@ const (
 	// FIXME: Dynamically select algorithms based on what's available on the device
 	defaultHashAlgorithm tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
 
-	secureBootPCR = 7
-	grubPCR       = 8
-	snapModelPCR  = 11
+	secureBootPCR       = 7
+	ubuntuBootParamsPCR = 12
 )
 
 var (

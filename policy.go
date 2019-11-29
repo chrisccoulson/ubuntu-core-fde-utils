@@ -31,29 +31,25 @@ import (
 )
 
 type policyComputeInput struct {
-	secureBootPCRAlg     tpm2.HashAlgorithmId
-	grubPCRAlg           tpm2.HashAlgorithmId
-	snapModelPCRAlg      tpm2.HashAlgorithmId
-	secureBootPCRDigests tpm2.DigestList
-	grubPCRDigests       tpm2.DigestList
-	snapModelPCRDigests  tpm2.DigestList
-	pinObjectName        tpm2.Name
-	pinIndex             tpm2.ResourceContext
-	policyRevokeIndex    tpm2.ResourceContext
-	policyRevokeCount    uint64
+	secureBootPCRAlg           tpm2.HashAlgorithmId
+	ubuntuBootParamsPCRAlg     tpm2.HashAlgorithmId
+	secureBootPCRDigests       tpm2.DigestList
+	ubuntuBootParamsPCRDigests tpm2.DigestList
+	pinObjectName              tpm2.Name
+	pinIndex                   tpm2.ResourceContext
+	policyRevokeIndex          tpm2.ResourceContext
+	policyRevokeCount          uint64
 }
 
 type policyData struct {
-	Algorithm               tpm2.HashAlgorithmId
-	SecureBootPCRAlg        tpm2.HashAlgorithmId
-	GrubPCRAlg              tpm2.HashAlgorithmId
-	SnapModelPCRAlg         tpm2.HashAlgorithmId
-	SecureBootORDigests     tpm2.DigestList
-	GrubORDigests           tpm2.DigestList
-	SnapModelORDigests      tpm2.DigestList
-	PinIndexHandle          tpm2.Handle
-	PolicyRevokeIndexHandle tpm2.Handle
-	PolicyRevokeCount       uint64
+	Algorithm                 tpm2.HashAlgorithmId
+	SecureBootPCRAlg          tpm2.HashAlgorithmId
+	UbuntuBootParamsPCRAlg    tpm2.HashAlgorithmId
+	SecureBootORDigests       tpm2.DigestList
+	UbuntuBootParamsORDigests tpm2.DigestList
+	PinIndexHandle            tpm2.Handle
+	PolicyRevokeIndexHandle   tpm2.Handle
+	PolicyRevokeCount         uint64
 }
 
 func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte, session *tpm2.Session) (tpm2.ResourceContext, error) {
@@ -142,32 +138,20 @@ func computePolicy(alg tpm2.HashAlgorithmId, input *policyComputeInput) (*policy
 		secureBootORDigests = append(secureBootORDigests, trial.GetDigest())
 	}
 
-	if len(input.grubPCRDigests) == 0 {
-		return nil, nil, fmt.Errorf("no grub digests provided")
+	if len(input.ubuntuBootParamsPCRDigests) == 0 {
+		return nil, nil, fmt.Errorf("no ubuntu boot params digests provided")
 	}
-	grubORDigests := make(tpm2.DigestList, 0)
-	for _, digest := range input.grubPCRDigests {
+	ubuntuBootParamsORDigests := make(tpm2.DigestList, 0)
+	for _, digest := range input.ubuntuBootParamsPCRDigests {
 		trial, _ := tpm2.ComputeAuthPolicy(alg)
 		trial.PolicyOR(ensureSufficientORDigests(secureBootORDigests))
-		pcrDigest, pcrs := computePolicyPCRParams(alg, input.grubPCRAlg, digest, grubPCR)
+		pcrDigest, pcrs := computePolicyPCRParams(alg, input.ubuntuBootParamsPCRAlg, digest, ubuntuBootParamsPCR)
 		trial.PolicyPCR(pcrDigest, pcrs)
-		grubORDigests = append(grubORDigests, trial.GetDigest())
-	}
-
-	if len(input.snapModelPCRDigests) == 0 {
-		return nil, nil, fmt.Errorf("no snap model digests provided")
-	}
-	snapModelORDigests := make(tpm2.DigestList, 0)
-	for _, digest := range input.snapModelPCRDigests {
-		trial, _ := tpm2.ComputeAuthPolicy(alg)
-		trial.PolicyOR(ensureSufficientORDigests(grubORDigests))
-		pcrDigest, pcrs := computePolicyPCRParams(alg, input.snapModelPCRAlg, digest, snapModelPCR)
-		trial.PolicyPCR(pcrDigest, pcrs)
-		snapModelORDigests = append(snapModelORDigests, trial.GetDigest())
+		ubuntuBootParamsORDigests = append(ubuntuBootParamsORDigests, trial.GetDigest())
 	}
 
 	trial, _ := tpm2.ComputeAuthPolicy(alg)
-	trial.PolicyOR(ensureSufficientORDigests(snapModelORDigests))
+	trial.PolicyOR(ensureSufficientORDigests(ubuntuBootParamsORDigests))
 
 	operandB := make([]byte, 8)
 	binary.BigEndian.PutUint64(operandB, input.policyRevokeCount)
@@ -176,15 +160,13 @@ func computePolicy(alg tpm2.HashAlgorithmId, input *policyComputeInput) (*policy
 	trial.PolicySecret(input.pinIndex.Name(), nil)
 
 	return &policyData{Algorithm: alg,
-		SecureBootPCRAlg:        input.secureBootPCRAlg,
-		GrubPCRAlg:              input.grubPCRAlg,
-		SnapModelPCRAlg:         input.snapModelPCRAlg,
-		SecureBootORDigests:     secureBootORDigests,
-		GrubORDigests:           grubORDigests,
-		SnapModelORDigests:      snapModelORDigests,
-		PinIndexHandle:          input.pinIndex.Handle(),
-		PolicyRevokeIndexHandle: input.policyRevokeIndex.Handle(),
-		PolicyRevokeCount:       input.policyRevokeCount}, trial.GetDigest(), nil
+		SecureBootPCRAlg:          input.secureBootPCRAlg,
+		UbuntuBootParamsPCRAlg:    input.ubuntuBootParamsPCRAlg,
+		SecureBootORDigests:       secureBootORDigests,
+		UbuntuBootParamsORDigests: ubuntuBootParamsORDigests,
+		PinIndexHandle:            input.pinIndex.Handle(),
+		PolicyRevokeIndexHandle:   input.policyRevokeIndex.Handle(),
+		PolicyRevokeCount:         input.policyRevokeCount}, trial.GetDigest(), nil
 }
 
 func swallowPolicyORValueError(err error) error {
@@ -213,17 +195,11 @@ func executePolicySessionPCRAssertions(tpm *tpm2.TPMContext, sessionContext tpm2
 	if err := tpm.PolicyOR(sessionContext, ensureSufficientORDigests(input.SecureBootORDigests)); swallowPolicyORValueError(err) != nil {
 		return wrapPolicyORError(err, secureBootPCR)
 	}
-	if err := tpm.PolicyPCR(sessionContext, nil, makePCRSelectionList(input.GrubPCRAlg, grubPCR)); err != nil {
-		return wrapPolicyPCRError(err, grubPCR)
+	if err := tpm.PolicyPCR(sessionContext, nil, makePCRSelectionList(input.UbuntuBootParamsPCRAlg, ubuntuBootParamsPCR)); err != nil {
+		return wrapPolicyPCRError(err, ubuntuBootParamsPCR)
 	}
-	if err := tpm.PolicyOR(sessionContext, ensureSufficientORDigests(input.GrubORDigests)); swallowPolicyORValueError(err) != nil {
-		return wrapPolicyORError(err, grubPCR)
-	}
-	if err := tpm.PolicyPCR(sessionContext, nil, makePCRSelectionList(input.SnapModelPCRAlg, snapModelPCR)); err != nil {
-		return wrapPolicyPCRError(err, snapModelPCR)
-	}
-	if err := tpm.PolicyOR(sessionContext, ensureSufficientORDigests(input.SnapModelORDigests)); swallowPolicyORValueError(err) != nil {
-		return wrapPolicyORError(err, snapModelPCR)
+	if err := tpm.PolicyOR(sessionContext, ensureSufficientORDigests(input.UbuntuBootParamsORDigests)); swallowPolicyORValueError(err) != nil {
+		return wrapPolicyORError(err, ubuntuBootParamsPCR)
 	}
 	return nil
 }
