@@ -510,13 +510,9 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 									&OSComponent{
 										LoadType: DirectLoadWithShimVerify,
 										Image:    FileOSComponent("testdata/mock.efi.signed.1")}}}}}}},
-			err: "cannot process events from event log: cannot process KEK measurement event: cannot process KEK measurement event 0: " +
-				"cannot process subsequent events from event log: cannot process db measurement event: cannot process db measurement event 0: " +
-				"cannot process subsequent events from event log: cannot process dbx measurement event: cannot process dbx measurement event " +
-				"0: cannot process subsequent events from event log: cannot compute OS load events: cannot compute events for component at " +
-				"index 0 (testdata/mockshim1.efi.signed.1): cannot process Shim executable: cannot compute events for subsequent components: " +
-				"cannot compute events for component at index 0 (testdata/mock.efi.signed.2): cannot process executable: cannot compute " +
-				"measurement for PE binary verification: no root certificate found",
+			err: "cannot process events from event log: cannot process KEK measurement event: cannot process KEK measurement event 0: cannot " +
+				"process subsequent events from event log: cannot process db measurement event: cannot process db measurement event 0: no " +
+				"bootable paths with initial db contents",
 		},
 		{
 			// Test with an unsigned kernel
@@ -828,6 +824,80 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 					0x8c, 0xba, 0xc3, 0xc6, 0x5e, 0x57, 0x64, 0x73, 0xb7, 0x27, 0x77, 0x61, 0x6e},
 				tpm2.Digest{0x3d, 0x61, 0x2a, 0x0e, 0xda, 0x6d, 0xeb, 0x41, 0x98, 0x2b, 0x81, 0xd4, 0xc2, 0x46, 0x95, 0xcf, 0x72, 0x1e, 0x00,
 					0x23, 0x3b, 0x40, 0x48, 0x9a, 0xf5, 0x91, 0x8d, 0xae, 0x86, 0x53, 0x20, 0xac}},
+		},
+		{
+			// Test with a UC20 style bootchain with normal and recovery systems, and the normal path booting via a chainloaded GRUB. Two
+			// kernels are supplied for both normal and recovery paths signed with alternate keys to simulate what would happen when upgrading
+			// to a kernel signed with a new key. The updated kernel depends on a new signature, also provided as a signature database update.
+			// Verify that we get 3 digests (the new kernels are only bootable after applying the signature database update)
+			desc:    "DbUpdateAndKeyRotation",
+			logPath: "testdata/eventlog1.bin",
+			efivars: "testdata/efivars1",
+			params: &SealParams{
+				LoadPaths: []*OSComponent{
+					&OSComponent{
+						LoadType: FirmwareLoad,
+						Image:    FileOSComponent("testdata/mockshim.efi.signed.1"),
+						Next: []*OSComponent{
+							&OSComponent{
+								LoadType: DirectLoadWithShimVerify,
+								Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+								Next: []*OSComponent{
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1")},
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.2")},
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+										Next: []*OSComponent{
+											&OSComponent{
+												LoadType: DirectLoadWithShimVerify,
+												Image:    FileOSComponent("testdata/mock.efi.signed.1")},
+											&OSComponent{
+												LoadType: DirectLoadWithShimVerify,
+												Image:    FileOSComponent("testdata/mock.efi.signed.2")}}}}}}}},
+				SecureBootDbKeystores: []string{"testdata/updates1"}},
+			digests: tpm2.DigestList{
+				tpm2.Digest{0xe8, 0x01, 0x30, 0xf2, 0xd8, 0x21, 0x2d, 0x69, 0x69, 0xf0, 0xcd, 0x20, 0xef, 0xfc, 0x3b, 0xbd, 0xed, 0x14, 0x58,
+					0x48, 0x61, 0xf8, 0xf5, 0x60, 0xfb, 0xc5, 0x20, 0x8a, 0x8b, 0xfc, 0x06, 0x81},
+				tpm2.Digest{0xbe, 0xd6, 0xe9, 0x6b, 0x83, 0x5c, 0x1e, 0x2b, 0xb3, 0xc7, 0xea, 0x93, 0x0f, 0x9e, 0xc7, 0x28, 0xf0, 0x5e, 0xee,
+					0xb5, 0x62, 0x2e, 0x99, 0xb8, 0xf1, 0x2f, 0xaf, 0xe6, 0xdf, 0x93, 0x03, 0x9f},
+				tpm2.Digest{0x46, 0x38, 0x7d, 0xc7, 0x04, 0x0c, 0x29, 0xec, 0x3a, 0xc5, 0x7b, 0x5e, 0x61, 0x6f, 0x5e, 0xde, 0x47, 0x8a, 0x9f,
+					0x73, 0x5f, 0xec, 0x08, 0x31, 0x1e, 0x6f, 0x0b, 0x78, 0xe5, 0x3d, 0xdb, 0x66}},
+		},
+		{
+			// Test that computation fails with an error even if there are some bootable paths, if there are no bootable paths with the
+			// initial (pre-update) signature database.
+			desc:    "DbUpdateWithNoInitialBootablePaths",
+			logPath: "testdata/eventlog1.bin",
+			efivars: "testdata/efivars1",
+			params: &SealParams{
+				LoadPaths: []*OSComponent{
+					&OSComponent{
+						LoadType: FirmwareLoad,
+						Image:    FileOSComponent("testdata/mockshim.efi.signed.1"),
+						Next: []*OSComponent{
+							&OSComponent{
+								LoadType: DirectLoadWithShimVerify,
+								Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+								Next: []*OSComponent{
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.2")},
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+										Next: []*OSComponent{
+											&OSComponent{
+												LoadType: DirectLoadWithShimVerify,
+												Image:    FileOSComponent("testdata/mock.efi.signed.2")}}}}}}}},
+				SecureBootDbKeystores: []string{"testdata/updates1"}},
+			err: "cannot process events from event log: cannot process KEK measurement event: cannot process KEK measurement event 0: cannot " +
+				"process subsequent events from event log: cannot process db measurement event: cannot process db measurement event 0: no " +
+				"bootable paths with initial db contents",
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {

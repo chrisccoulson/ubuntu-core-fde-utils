@@ -566,8 +566,7 @@ func (g *secureBootPolicyGen) extendVerificationMeasurement(digest tpm2.Digest, 
 	*digests = append(*digests, digest)
 }
 
-func (g *secureBootPolicyGen) computeAndExtendVariableMeasurement(varName *tcglog.EFIGUID, unicodeName string,
-	varData []byte) error {
+func (g *secureBootPolicyGen) computeAndExtendVariableMeasurement(varName *tcglog.EFIGUID, unicodeName string, varData []byte) error {
 	data := tcglog.EFIVariableEventData{
 		VariableName: *varName,
 		UnicodeName:  unicodeName,
@@ -621,17 +620,21 @@ func (g *secureBootPolicyGen) processSignatureDbMeasurement(name string, data []
 		return xerrors.Errorf("cannot process subsequent events from event log: %w", err)
 	}
 
+	if name == dbName && g.sigDbUpdatesApplied == 0 && len(g.outputDigests) == 0 {
+		return errors.New("no bootable paths with initial db contents")
+	}
+
 	return nil
 }
 
-func (g *secureBootPolicyGen) computeAndExtendVerificationMeasurement(r io.ReaderAt, mode OSComponentLoadType) error {
+func (g *secureBootPolicyGen) computeAndExtendVerificationMeasurement(r io.ReaderAt, mode OSComponentLoadType) (bool, error) {
 	if mode == DirectLoadWithShimVerify && !g.shimLoaded {
-		return errors.New("shim verification specified without being preceeded by a shim executable")
+		return false, errors.New("shim verification specified without being preceeded by a shim executable")
 	}
 
 	pefile, err := pe.NewFile(r)
 	if err != nil {
-		return xerrors.Errorf("cannot decode PE binary: %w", err)
+		return false, xerrors.Errorf("cannot decode PE binary: %w", err)
 	}
 
 	if pefile.OptionalHeader == nil {
@@ -640,7 +643,7 @@ func (g *secureBootPolicyGen) computeAndExtendVerificationMeasurement(r io.Reade
 		// We copy the required functionality from that commit in to this file for now.
 		h, err := tryHarderToGetOptionalPeHeader(pefile, r)
 		if err != nil {
-			return xerrors.Errorf("cannot decode optional header: %w", err)
+			return false, xerrors.Errorf("cannot decode optional header: %w", err)
 		}
 		pefile.OptionalHeader = h
 	}
@@ -650,16 +653,16 @@ func (g *secureBootPolicyGen) computeAndExtendVerificationMeasurement(r io.Reade
 	switch oh := pefile.OptionalHeader.(type) {
 	case *pe.OptionalHeader32:
 		if oh.NumberOfRvaAndSizes < 5 {
-			return errors.New("cannot obtain security directory entry: invalid number of data directories")
+			return false, errors.New("cannot obtain security directory entry: invalid number of data directories")
 		}
 		dd = &oh.DataDirectory[4]
 	case *pe.OptionalHeader64:
 		if oh.NumberOfRvaAndSizes < 5 {
-			return errors.New("cannot obtain security directory entry: invalid number of data directories")
+			return false, errors.New("cannot obtain security directory entry: invalid number of data directories")
 		}
 		dd = &oh.DataDirectory[4]
 	default:
-		return errors.New("cannot obtain security directory entry: no optional header")
+		return false, errors.New("cannot obtain security directory entry: no optional header")
 	}
 
 	// Create a reader for the security directory entry, which points to a WIN_CERTIFICATE struct
@@ -668,36 +671,36 @@ func (g *secureBootPolicyGen) computeAndExtendVerificationMeasurement(r io.Reade
 	// Obtain the length of the certificate, including the size of WIN_CERTIFICATE
 	var dwLength uint32
 	if err := binary.Read(secReader, binary.LittleEndian, &dwLength); err != nil {
-		return xerrors.Errorf("cannot read signature length: %w", err)
+		return false, xerrors.Errorf("cannot read signature length: %w", err)
 	}
 	// Skip over WIN_CERTIFICATE.wRevision
 	if _, err := secReader.Seek(2, io.SeekCurrent); err != nil {
-		return xerrors.Errorf("cannot advance beyond signature revision level: %w", err)
+		return false, xerrors.Errorf("cannot advance beyond signature revision level: %w", err)
 	}
 	// Obtain WIN_CERTIFICATE.wCertificateType
 	var wCertificateType uint16
 	if err := binary.Read(secReader, binary.LittleEndian, &wCertificateType); err != nil {
-		return xerrors.Errorf("cannot read signature type: %w", err)
+		return false, xerrors.Errorf("cannot read signature type: %w", err)
 	}
 	if wCertificateType != winCertTypePKCSSignedData {
-		return fmt.Errorf("unexpected value %d for wCertificateType: not an Authenticode signature", wCertificateType)
+		return false, fmt.Errorf("unexpected value %d for wCertificateType: not an Authenticode signature", wCertificateType)
 	}
 	// Allocate a byte slice and fill it with the entire signature
 	data := make([]byte, dwLength-8)
 	if _, err := io.ReadFull(secReader, data); err != nil {
-		return xerrors.Errorf("cannot read signature: %w", err)
+		return false, xerrors.Errorf("cannot read signature: %w", err)
 	}
 
 	// Decode the signature
 	p7, err := pkcs7.Parse(data)
 	if err != nil {
-		return xerrors.Errorf("cannot decode signature: %w", err)
+		return false, xerrors.Errorf("cannot decode signature: %w", err)
 	}
 
 	// Grab the certificate for the signing key
 	signer := p7.GetOnlySigner()
 	if signer == nil {
-		return errors.New("cannot obtain signer certificate from signature")
+		return false, errors.New("cannot obtain signer certificate from signature")
 	}
 
 	// Look for the issuing authority in the UEFI db, and if the verifier is shim, also look in MOK db and
@@ -739,8 +742,7 @@ Outer:
 	}
 
 	if root == nil {
-		// XXX: Should this be an error, or should we just abort this branch?
-		return errors.New("no root certificate found")
+		return false, nil
 	}
 
 	// Serialize authority certificate for measurement
@@ -750,7 +752,7 @@ Outer:
 		// Firmware measures the entire EFI_SIGNATURE_DATA, including the SignatureOwner
 		varData = new(bytes.Buffer)
 		if err := root.encode(varData); err != nil {
-			return xerrors.Errorf("cannot encode EFI_SIGNATURE_DATA for authority: %w", err)
+			return false, xerrors.Errorf("cannot encode EFI_SIGNATURE_DATA for authority: %w", err)
 		}
 	case DirectLoadWithShimVerify:
 		// Shim measures the certificate data, rather than the entire EFI_SIGNATURE_DATA
@@ -764,7 +766,7 @@ Outer:
 		VariableData: varData.Bytes()}
 	hash := g.alg.NewHash()
 	if err := eventData.Encode(hash); err != nil {
-		return xerrors.Errorf("cannot encode EFI_VARIABLE_DATA: %w", err)
+		return false, xerrors.Errorf("cannot encode EFI_VARIABLE_DATA: %w", err)
 	}
 	digest := hash.Sum(nil)
 
@@ -778,12 +780,12 @@ Outer:
 	}
 	for _, d := range *digests {
 		if bytes.Equal(d, digest) {
-			return nil
+			return true, nil
 		}
 	}
 	g.extendVerificationMeasurement(digest, mode)
 
-	return nil
+	return true, nil
 }
 
 func readShimVendorCert(r io.ReaderAt) ([]byte, error) {
@@ -828,11 +830,12 @@ func readShimVendorCert(r io.ReaderAt) ([]byte, error) {
 	return certData, nil
 }
 
-func (g *secureBootPolicyGen) processShimExecutable(r io.ReaderAt, mode OSComponentLoadType,
-	next []*OSComponent) error {
+func (g *secureBootPolicyGen) processShimExecutable(r io.ReaderAt, mode OSComponentLoadType, next []*OSComponent) error {
 	// Compute and extend a measurement for verification of this shim executable
-	if err := g.computeAndExtendVerificationMeasurement(r, mode); err != nil {
+	if wouldBoot, err := g.computeAndExtendVerificationMeasurement(r, mode); err != nil {
 		return xerrors.Errorf("cannot compute measurement for PE binary verification: %w", err)
+	} else if !wouldBoot {
+		return nil
 	}
 
 	// Ensure we start with an empty list of shim measurements and an empty vendor cert
@@ -866,11 +869,12 @@ func (g *secureBootPolicyGen) processShimExecutable(r io.ReaderAt, mode OSCompon
 	return nil
 }
 
-func (g *secureBootPolicyGen) processExecutable(r io.ReaderAt, mode OSComponentLoadType,
-	next []*OSComponent) error {
+func (g *secureBootPolicyGen) processExecutable(r io.ReaderAt, mode OSComponentLoadType, next []*OSComponent) error {
 	// Compute and extend a measurement for verification of this executable
-	if err := g.computeAndExtendVerificationMeasurement(r, mode); err != nil {
+	if wouldBoot, err := g.computeAndExtendVerificationMeasurement(r, mode); err != nil {
 		return xerrors.Errorf("cannot compute measurement for PE binary verification: %w", err)
+	} else if !wouldBoot {
+		return nil
 	}
 
 	// Continue computing events
