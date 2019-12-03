@@ -50,9 +50,10 @@ func (l *pathList) Set(value string) error {
 	return nil
 }
 
-var update bool
+var create bool
 var masterKeyFile string
 var keyFile string
+var privFile string
 var pinIndex string
 var policyRevocationIndex string
 var ownerAuth string
@@ -61,9 +62,10 @@ var grubs pathList
 var shims pathList
 
 func init() {
-	flag.BoolVar(&update, "update", false, "")
+	flag.BoolVar(&create, "new", false, "")
 	flag.StringVar(&masterKeyFile, "master-key-file", "", "")
 	flag.StringVar(&keyFile, "key-file", "", "")
+	flag.StringVar(&privFile, "priv-file", "", "")
 	flag.StringVar(&pinIndex, "pin-index", "", "")
 	flag.StringVar(&policyRevocationIndex, "policy-revocation-index", "", "")
 	flag.StringVar(&ownerAuth, "auth", "", "")
@@ -73,56 +75,9 @@ func init() {
 }
 
 func run() int {
-	if masterKeyFile == "" {
-		fmt.Fprintf(os.Stderr, "Missing -master-key-file\n")
-		return 1
-	}
 	if keyFile == "" {
 		fmt.Fprintf(os.Stderr, "Missing -key-file\n")
 		return 1
-	}
-
-	var in *os.File
-	if masterKeyFile == "-" {
-		in = os.Stdin
-	} else {
-		f, err := os.Open(masterKeyFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Cannot open key file: %v\n", err)
-			return 1
-		}
-		in = f
-		defer in.Close()
-	}
-
-	var pinHandle tpm2.Handle
-	if pinIndex != "" {
-		if h, err := hex.DecodeString(pinIndex); err != nil {
-			fmt.Fprintf(os.Stderr, "Invalid -pin-index: %v\n", err)
-			return 1
-		} else {
-			pinHandle = tpm2.Handle(binary.BigEndian.Uint32(h))
-		}
-	}
-	var policyRevokeHandle tpm2.Handle
-	if policyRevocationIndex != "" {
-		if h, err := hex.DecodeString(policyRevocationIndex); err != nil {
-			fmt.Fprintf(os.Stderr, "Invalid -policy-revocation-index: %v\n", err)
-			return 1
-		} else {
-			policyRevokeHandle = tpm2.Handle(binary.BigEndian.Uint32(h))
-		}
-	}
-
-	key, err := ioutil.ReadAll(in)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot read key: %v\n", err)
-		return 1
-	}
-
-	var create *fdeutil.CreationParams
-	if !update {
-		create = &fdeutil.CreationParams{PolicyRevocationHandle: policyRevokeHandle, PinHandle: pinHandle, OwnerAuth: []byte(ownerAuth)}
 	}
 
 	tpm, err := fdeutil.ConnectToDefaultTPM()
@@ -132,9 +87,9 @@ func run() int {
 	}
 	defer tpm.Close()
 
-	var params *fdeutil.SealParams
+	var policyParams *fdeutil.PolicyParams
 	if len(shims) > 0 || len(grubs) > 0 || len(kernels) > 0 {
-		params = &fdeutil.SealParams{}
+		policyParams = &fdeutil.PolicyParams{}
 	}
 
 	for _, shim := range shims {
@@ -149,12 +104,73 @@ func run() int {
 			}
 			s.Next = append(s.Next, g)
 		}
-		params.LoadPaths = append(params.LoadPaths, s)
+		policyParams.LoadPaths = append(policyParams.LoadPaths, s)
 	}
 
-	if err := fdeutil.SealKeyToTPM(tpm, keyFile, create, params, key); err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot seal key to TPM: %v\n", err)
-		return 1
+	if create {
+		if masterKeyFile == "" {
+			fmt.Fprintf(os.Stderr, "Missing -master-key-file\n")
+			return 1
+		}
+		if pinIndex == "" {
+			fmt.Fprintf(os.Stderr, "Missing -pin-index\n")
+			return 1
+		}
+		if policyRevocationIndex == "" {
+			fmt.Fprintf(os.Stderr, "Missing -policy-revocation-index\n")
+			return 1
+		}
+
+		var in *os.File
+		if masterKeyFile == "-" {
+			in = os.Stdin
+		} else {
+			f, err := os.Open(masterKeyFile)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Cannot open key file: %v\n", err)
+				return 1
+			}
+			in = f
+			defer in.Close()
+		}
+
+		var pinHandle tpm2.Handle
+		var policyRevokeHandle tpm2.Handle
+		if h, err := hex.DecodeString(pinIndex); err != nil {
+			fmt.Fprintf(os.Stderr, "Invalid -pin-index: %v\n", err)
+			return 1
+		} else {
+			pinHandle = tpm2.Handle(binary.BigEndian.Uint32(h))
+		}
+		if h, err := hex.DecodeString(policyRevocationIndex); err != nil {
+			fmt.Fprintf(os.Stderr, "Invalid -policy-revocation-index: %v\n", err)
+			return 1
+		} else {
+			policyRevokeHandle = tpm2.Handle(binary.BigEndian.Uint32(h))
+		}
+
+		key, err := ioutil.ReadAll(in)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Cannot read key: %v\n", err)
+			return 1
+		}
+
+		createParams := fdeutil.CreationParams{PolicyRevocationHandle: policyRevokeHandle, PinHandle: pinHandle, OwnerAuth: []byte(ownerAuth)}
+
+		if err := fdeutil.SealKeyToTPM(tpm, keyFile, privFile, &createParams, policyParams, key); err != nil {
+			fmt.Fprintf(os.Stderr, "Cannot seal key to TPM: %v\n", err)
+			return 1
+		}
+	} else {
+		if privFile == "" {
+			fmt.Fprintf(os.Stderr, "Missing -priv-file\n")
+			return 1
+		}
+
+		if err := fdeutil.UpdateKeyAuthPolicy(tpm, keyFile, privFile, policyParams); err != nil {
+			fmt.Fprintf(os.Stderr, "Cannot update key authorization policy: %v\n", err)
+			return 1
+		}
 	}
 
 	return 0
