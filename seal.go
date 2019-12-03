@@ -252,10 +252,10 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 			return xerrors.Errorf("cannot load existing key data file: %w", err)
 		}
 
-		pinIndex, err = tpm.WrapHandle(existing.PolicyData.PinIndexHandle)
+		pinIndex, err = tpm.WrapHandle(existing.PolicyData.Static.PinIndexHandle)
 		if err != nil {
 			if _, unavail := err.(tpm2.ResourceUnavailableError); unavail {
-				return InvalidKeyFileError{fmt.Sprintf("no PIN NV index at handle 0x%08x", existing.PolicyData.PinIndexHandle)}
+				return InvalidKeyFileError{fmt.Sprintf("no PIN NV index at handle 0x%08x", existing.PolicyData.Static.PinIndexHandle)}
 			}
 			return xerrors.Errorf("cannot obtain context for PIN NV index: %w", err)
 		}
@@ -264,11 +264,11 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 		}
 		askForPinHint = existing.AskForPinHint
 
-		policyRevokeIndex, err = tpm.WrapHandle(existing.PolicyData.PolicyRevokeIndexHandle)
+		policyRevokeIndex, err = tpm.WrapHandle(existing.PolicyData.Dynamic.PolicyRevokeIndexHandle)
 		if err != nil {
 			if _, unavail := err.(tpm2.ResourceUnavailableError); unavail {
 				return InvalidKeyFileError{fmt.Sprintf("no policy revocation NV counter at handle 0x%08x",
-					existing.PolicyData.PolicyRevokeIndexHandle)}
+					existing.PolicyData.Dynamic.PolicyRevokeIndexHandle)}
 			}
 			return xerrors.Errorf("cannot obtain context for policy revocation NV counter: %w", err)
 		}
@@ -407,7 +407,7 @@ func DeleteKey(tpm *TPMConnection, path string, ownerAuth []byte) error {
 	}
 	tpm.FlushContext(keyContext)
 
-	if policyRevokeContext, err := tpm.WrapHandle(data.PolicyData.PolicyRevokeIndexHandle); err == nil {
+	if policyRevokeContext, err := tpm.WrapHandle(data.PolicyData.Dynamic.PolicyRevokeIndexHandle); err == nil {
 		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, policyRevokeContext, session.WithAuthValue(ownerAuth)); err != nil {
 			if isAuthFailError(err) {
 				return AuthFailError{tpm2.HandleOwner}
@@ -416,7 +416,7 @@ func DeleteKey(tpm *TPMConnection, path string, ownerAuth []byte) error {
 		}
 	}
 
-	if pinContext, err := tpm.WrapHandle(data.PolicyData.PinIndexHandle); err == nil {
+	if pinContext, err := tpm.WrapHandle(data.PolicyData.Static.PinIndexHandle); err == nil {
 		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, pinContext, session.WithAuthValue(ownerAuth)); err != nil {
 			if isAuthFailError(err) {
 				return AuthFailError{tpm2.HandleOwner}

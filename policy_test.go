@@ -21,6 +21,9 @@ package fdeutil
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
+	"math/big"
 	"testing"
 
 	"github.com/chrisccoulson/go-tpm2"
@@ -41,15 +44,85 @@ func (c *mockResourceContext) Handle() tpm2.Handle {
 	return c.handle
 }
 
-func TestComputePolicy(t *testing.T) {
-	hasher := tpm2.HashAlgorithmSHA256.NewHash()
-	hasher.Write([]byte("PIN"))
-	pinName, _ := tpm2.MarshalToBytes(tpm2.HashAlgorithmSHA256, tpm2.RawBytes(hasher.Sum(nil)))
+func TestComputeStaticPolicy(t *testing.T) {
+	h := pinNvIndexNameAlgorithm.NewHash()
+	h.Write([]byte("PIN"))
+	pinName, _ := tpm2.MarshalToBytes(tpm2.HashAlgorithmSHA256, tpm2.RawBytes(h.Sum(nil)))
 	pinIndex := &mockResourceContext{pinName, testCreationParams.PinHandle}
 
-	hasher = tpm2.HashAlgorithmSHA256.NewHash()
-	hasher.Write([]byte("REVOKE"))
-	revokeIndexName, _ := tpm2.MarshalToBytes(tpm2.HashAlgorithmSHA256, tpm2.RawBytes(hasher.Sum(nil)))
+	for _, data := range []struct {
+		desc string
+		alg  tpm2.HashAlgorithmId
+	}{
+		{
+			desc: "SHA256",
+			alg:  tpm2.HashAlgorithmSHA256,
+		},
+		{
+			desc: "SHA1",
+			alg:  tpm2.HashAlgorithmSHA1,
+		},
+	} {
+		t.Run(data.desc, func(t *testing.T) {
+			dataout, key, policy, err := computeStaticPolicy(data.alg, &staticPolicyComputeInput{pinIndex: pinIndex})
+			if err != nil {
+				t.Fatalf("computeStaticPolicy failed: %v", err)
+			}
+			if dataout.Algorithm != data.alg {
+				t.Errorf("Unexpected session algorithm: %v", err)
+			}
+			if dataout.AuthorizeKeyPublic.Params.RSADetail().Exponent != uint32(key.PublicKey.E) {
+				t.Errorf("Auth key public area has wrong exponent")
+			}
+			if dataout.AuthorizeKeyPublic.Params.RSADetail().KeyBits != uint16(key.PublicKey.N.BitLen()) {
+				t.Errorf("Auth key public area has wrong bit length")
+			}
+			if !bytes.Equal(dataout.AuthorizeKeyPublic.Unique.RSA(), key.PublicKey.N.Bytes()) {
+				t.Errorf("Auth key public area has wrong modulus")
+			}
+
+			h := signingKeyNameAlgorithm.NewHash()
+			h.Write(make(tpm2.Digest, data.alg.Size()))
+
+			sig, err := rsa.SignPSS(rand.Reader, key, signingKeyNameAlgorithm.GetHash(), h.Sum(nil),
+				&rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash})
+			if err != nil {
+				t.Errorf("SignPSS failed: %v", err)
+			}
+
+			pubKey := rsa.PublicKey{
+				N: new(big.Int).SetBytes(dataout.AuthorizeKeyPublic.Unique.RSA()),
+				E: int(dataout.AuthorizeKeyPublic.Params.RSADetail().Exponent)}
+			if err := rsa.VerifyPSS(&pubKey, signingKeyNameAlgorithm.GetHash(), h.Sum(nil), sig,
+				&rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash}); err != nil {
+				t.Errorf("Invalid auth key")
+			}
+
+			keyName, err := dataout.AuthorizeKeyPublic.Name()
+			if err != nil {
+				t.Errorf("Failed to compute name from auth key public area: %v", err)
+			}
+
+			trial, _ := tpm2.ComputeAuthPolicy(data.alg)
+			trial.PolicyAuthorize(nil, keyName)
+			trial.PolicySecret(pinName, nil)
+
+			if !bytes.Equal(trial.GetDigest(), policy) {
+				t.Errorf("Unexpected policy digest")
+			}
+		})
+	}
+}
+
+func TestComputeDynamicPolicy(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+
+	h := tpm2.HashAlgorithmSHA256.NewHash()
+	h.Write([]byte("REVOKE"))
+	revokeIndexName, _ := tpm2.MarshalToBytes(tpm2.HashAlgorithmSHA256, tpm2.RawBytes(h.Sum(nil)))
 	revokeIndex := &mockResourceContext{revokeIndexName, testCreationParams.PolicyRevocationHandle}
 
 	digestMatrix := make(map[tpm2.HashAlgorithmId]tpm2.DigestList)
@@ -65,59 +138,59 @@ func TestComputePolicy(t *testing.T) {
 	for _, data := range []struct {
 		desc   string
 		alg    tpm2.HashAlgorithmId
-		input  policyComputeInput
-		output tpm2.Digest
+		input  dynamicPolicyComputeInput
+		policy tpm2.Digest
 	}{
 		{
 			desc: "Single",
 			alg:  tpm2.HashAlgorithmSHA256,
-			input: policyComputeInput{
+			input: dynamicPolicyComputeInput{
+				key:                        key,
 				secureBootPCRAlg:           tpm2.HashAlgorithmSHA256,
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
 				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
-				pinIndex:                   pinIndex,
 				policyRevokeIndex:          revokeIndex,
 				policyRevokeCount:          10,
 			},
-			output: tpm2.Digest{0x02, 0xc6, 0xa7, 0x61, 0xeb, 0x2e, 0xce, 0x14, 0xc5, 0xe1, 0xc5, 0x24, 0x83, 0x0c, 0xa8, 0xc1, 0x70, 0xdc,
-				0x30, 0x92, 0xd6, 0x2c, 0x49, 0x48, 0x8e, 0x91, 0x69, 0x4d, 0x6a, 0x79, 0x70, 0xef},
+			policy: tpm2.Digest{0xd0, 0xe4, 0xba, 0x2f, 0xbc, 0xc6, 0xf0, 0xd5, 0x84, 0xc2, 0xeb, 0xdf, 0xa6, 0x8d, 0x6b, 0xa3, 0x6a, 0x3b,
+				0xf4, 0xbf, 0x51, 0x4a, 0x16, 0x5a, 0xef, 0xfd, 0x62, 0x77, 0x7d, 0x53, 0xb3, 0xff},
 		},
 		{
 			desc: "SHA1Session",
 			alg:  tpm2.HashAlgorithmSHA1,
-			input: policyComputeInput{
+			input: dynamicPolicyComputeInput{
+				key:                        key,
 				secureBootPCRAlg:           tpm2.HashAlgorithmSHA256,
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
-				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
-				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
-				pinObjectName:              pinName,
-				pinIndex:                   pinIndex,
+				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][3]},
+				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][2]},
 				policyRevokeIndex:          revokeIndex,
 				policyRevokeCount:          4551,
 			},
-			output: tpm2.Digest{0x7b, 0x0d, 0x31, 0x62, 0xda, 0x67, 0x50, 0x08, 0x02, 0xea, 0x1e, 0x70, 0x22, 0x3b, 0x1c, 0x73, 0xf4, 0xd2,
-				0x80, 0x07},
+			policy: tpm2.Digest{0xd6, 0xe3, 0xfa, 0xd2, 0xc2, 0xfa, 0x72, 0x4f, 0x22, 0x67, 0xf6, 0x1d, 0x96, 0xea, 0x53, 0x6b, 0xf5, 0xe1,
+				0xc7, 0x50},
 		},
 		{
 			desc: "SHA256SessionWithSHA512PCRs",
 			alg:  tpm2.HashAlgorithmSHA256,
-			input: policyComputeInput{
+			input: dynamicPolicyComputeInput{
+				key:                        key,
 				secureBootPCRAlg:           tpm2.HashAlgorithmSHA512,
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA512,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA512][0]},
 				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA512][1]},
-				pinIndex:                   pinIndex,
 				policyRevokeIndex:          revokeIndex,
 				policyRevokeCount:          403,
 			},
-			output: tpm2.Digest{0x1e, 0x97, 0xd2, 0x1c, 0xc8, 0xbd, 0x31, 0xc2, 0x63, 0x58, 0xb3, 0x65, 0xc9, 0x2a, 0xae, 0x56, 0x11, 0x36,
-				0x91, 0x3c, 0x14, 0x5c, 0x5a, 0x2d, 0xa4, 0x44, 0x0c, 0xc5, 0xd4, 0x70, 0x89, 0xff},
+			policy: tpm2.Digest{0x3e, 0x43, 0x91, 0x11, 0xfd, 0x5c, 0xb6, 0xbb, 0x00, 0x41, 0x93, 0xec, 0xd4, 0xc1, 0xc6, 0x5e, 0x5b, 0x09,
+				0x0b, 0x22, 0xeb, 0xe5, 0x71, 0x67, 0x86, 0x6d, 0xf5, 0xe5, 0x1f, 0x1c, 0x6d, 0x62},
 		},
 		{
 			desc: "MultiplePCRValues",
 			alg:  tpm2.HashAlgorithmSHA256,
-			input: policyComputeInput{
+			input: dynamicPolicyComputeInput{
+				key:                    key,
 				secureBootPCRAlg:       tpm2.HashAlgorithmSHA256,
 				ubuntuBootParamsPCRAlg: tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests: tpm2.DigestList{
@@ -126,21 +199,17 @@ func TestComputePolicy(t *testing.T) {
 				ubuntuBootParamsPCRDigests: tpm2.DigestList{
 					digestMatrix[tpm2.HashAlgorithmSHA256][3],
 					digestMatrix[tpm2.HashAlgorithmSHA256][2]},
-				pinIndex:          pinIndex,
 				policyRevokeIndex: revokeIndex,
 				policyRevokeCount: 5,
 			},
-			output: tpm2.Digest{0x99, 0x66, 0x62, 0x60, 0x64, 0x25, 0xe0, 0x89, 0x98, 0xae, 0xcf, 0x07, 0x4c, 0xc0, 0x48, 0x46, 0x5a, 0x25,
-				0x33, 0x95, 0x1d, 0xd5, 0x28, 0x89, 0xb2, 0xd6, 0x30, 0xd4, 0xb5, 0x32, 0xe4, 0x87},
+			policy: tpm2.Digest{0xd3, 0x65, 0x88, 0x91, 0xd4, 0x93, 0x8a, 0x49, 0x3c, 0xbb, 0xe0, 0x7f, 0xc7, 0x5e, 0x94, 0x16, 0x65, 0x04,
+				0x74, 0xff, 0xd9, 0xfa, 0xab, 0xab, 0xa9, 0xcf, 0x5f, 0xcf, 0xa6, 0x45, 0x6e, 0xbb},
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {
-			dataout, policy, err := computePolicy(data.alg, &data.input)
+			dataout, err := computeDynamicPolicy(data.alg, &data.input)
 			if err != nil {
-				t.Fatalf("computePolicy failed: %v", err)
-			}
-			if dataout.Algorithm != data.alg {
-				t.Errorf("Unexpected session algorithm %v", dataout.Algorithm)
+				t.Fatalf("computeDynamicPolicy failed; %v", err)
 			}
 			if dataout.SecureBootPCRAlg != data.input.secureBootPCRAlg {
 				t.Errorf("Unexpected secure boot PCR algorithm %v", dataout.SecureBootPCRAlg)
@@ -170,8 +239,24 @@ func TestComputePolicy(t *testing.T) {
 				}
 			}
 
-			if !bytes.Equal(data.output, policy) {
-				t.Errorf("Unexpected policy digest returned (got %x, expected %x)", policy, data.output)
+			if !bytes.Equal(data.policy, dataout.AuthorizedPolicy) {
+				t.Errorf("Unexpected policy digest returned (got %x, expected %x)", dataout.AuthorizedPolicy, data.policy)
+			}
+
+			if dataout.AuthorizedPolicySignature.SigAlg != tpm2.SigSchemeAlgRSAPSS {
+				t.Errorf("Unexpected authorized policy signature algorithm")
+			}
+			if dataout.AuthorizedPolicySignature.Signature.RSAPSS().Hash != signingKeyNameAlgorithm {
+				t.Errorf("Unexpected authorized policy signature digest algorithm")
+			}
+
+			h := signingKeyNameAlgorithm.NewHash()
+			h.Write(dataout.AuthorizedPolicy)
+
+			if err := rsa.VerifyPSS(&key.PublicKey, signingKeyNameAlgorithm.GetHash(), h.Sum(nil),
+				[]byte(dataout.AuthorizedPolicySignature.Signature.RSAPSS().Sig),
+				&rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash}); err != nil {
+				t.Errorf("Invalid authorized policy signature: %v", err)
 			}
 		})
 	}
@@ -556,6 +641,14 @@ func TestExecutePolicy(t *testing.T) {
 				}
 				var e *tpm2.TPMError
 				if !xerrors.As(err, &e) || e.Code != tpm2.ErrorPolicy || e.Command != tpm2.CommandPolicyNV {
+					t.Errorf("Unexpected error: %v", err)
+				}
+			} else if !data.policyMatch {
+				if err == nil {
+					t.Fatalf("Expected an error")
+				}
+				var e *tpm2.TPMParameterError
+				if !xerrors.As(err, &e) || e.Code() != tpm2.ErrorValue || e.Command() != tpm2.CommandPolicyOR || e.Index != 1 {
 					t.Errorf("Unexpected error: %v", err)
 				}
 			} else if data.pinInput != data.pinDefine {

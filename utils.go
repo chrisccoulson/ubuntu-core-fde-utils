@@ -20,6 +20,8 @@
 package fdeutil
 
 import (
+	"crypto/rsa"
+
 	"github.com/chrisccoulson/go-tpm2"
 
 	"golang.org/x/xerrors"
@@ -42,4 +44,18 @@ func isAuthFailError(err error) bool {
 func isLockoutError(err error) bool {
 	var warning *tpm2.TPMWarning
 	return xerrors.As(err, &warning) && warning.Code == tpm2.WarningLockout
+}
+
+func createPublicAreaForRSASigningKey(key *rsa.PublicKey) *tpm2.Public {
+	return &tpm2.Public{
+		Type:    tpm2.ObjectTypeRSA,
+		NameAlg: signingKeyNameAlgorithm,
+		Attrs:   tpm2.AttrSensitiveDataOrigin | tpm2.AttrUserWithAuth | tpm2.AttrSign,
+		Params: tpm2.PublicParamsU{
+			Data: &tpm2.RSAParams{
+				Symmetric: tpm2.SymDefObject{Algorithm: tpm2.SymObjectAlgorithmNull},
+				Scheme:    tpm2.RSAScheme{Scheme: tpm2.RSASchemeNull},
+				KeyBits:   uint16(key.N.BitLen()),
+				Exponent:  uint32(key.E)}},
+		Unique: tpm2.PublicIDU{Data: tpm2.PublicKeyRSA(key.N.Bytes())}}
 }

@@ -21,6 +21,8 @@ package fdeutil
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -29,6 +31,37 @@ import (
 
 	"golang.org/x/xerrors"
 )
+
+type dynamicPolicyComputeInput struct {
+	key                        *rsa.PrivateKey
+	secureBootPCRAlg           tpm2.HashAlgorithmId
+	ubuntuBootParamsPCRAlg     tpm2.HashAlgorithmId
+	secureBootPCRDigests       tpm2.DigestList
+	ubuntuBootParamsPCRDigests tpm2.DigestList
+	policyRevokeIndex          tpm2.ResourceContext
+	policyRevokeCount          uint64
+}
+
+type dynamicPolicyData struct {
+	SecureBootPCRAlg          tpm2.HashAlgorithmId
+	UbuntuBootParamsPCRAlg    tpm2.HashAlgorithmId
+	SecureBootORDigests       tpm2.DigestList
+	UbuntuBootParamsORDigests tpm2.DigestList
+	PolicyRevokeIndexHandle   tpm2.Handle
+	PolicyRevokeCount         uint64
+	AuthorizedPolicy          tpm2.Digest
+	AuthorizedPolicySignature *tpm2.Signature
+}
+
+type staticPolicyComputeInput struct {
+	pinIndex tpm2.ResourceContext
+}
+
+type staticPolicyData struct {
+	Algorithm          tpm2.HashAlgorithmId
+	AuthorizeKeyPublic *tpm2.Public
+	PinIndexHandle     tpm2.Handle
+}
 
 type policyComputeInput struct {
 	secureBootPCRAlg           tpm2.HashAlgorithmId
@@ -42,14 +75,8 @@ type policyComputeInput struct {
 }
 
 type policyData struct {
-	Algorithm                 tpm2.HashAlgorithmId
-	SecureBootPCRAlg          tpm2.HashAlgorithmId
-	UbuntuBootParamsPCRAlg    tpm2.HashAlgorithmId
-	SecureBootORDigests       tpm2.DigestList
-	UbuntuBootParamsORDigests tpm2.DigestList
-	PinIndexHandle            tpm2.Handle
-	PolicyRevokeIndexHandle   tpm2.Handle
-	PolicyRevokeCount         uint64
+	Static  *staticPolicyData
+	Dynamic *dynamicPolicyData
 }
 
 func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte, session *tpm2.Session) (tpm2.ResourceContext, error) {
@@ -126,9 +153,32 @@ func computePolicyPCRParams(policyAlg, pcrAlg tpm2.HashAlgorithmId, digest tpm2.
 	return pcrDigest, pcrs
 }
 
-func computePolicy(alg tpm2.HashAlgorithmId, input *policyComputeInput) (*policyData, tpm2.Digest, error) {
+func computeStaticPolicy(alg tpm2.HashAlgorithmId, input *staticPolicyComputeInput) (*staticPolicyData, *rsa.PrivateKey, tpm2.Digest, error) {
+	trial, _ := tpm2.ComputeAuthPolicy(alg)
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, nil, nil, xerrors.Errorf("cannot generate RSA key pair for policy authorization: %w", err)
+	}
+
+	keyPublic := createPublicAreaForRSASigningKey(&key.PublicKey)
+	keyName, err := keyPublic.Name()
+	if err != nil {
+		return nil, nil, nil, xerrors.Errorf("cannot compute name of signing key for policy authorization: %w", err)
+	}
+
+	trial.PolicyAuthorize(nil, keyName)
+	trial.PolicySecret(input.pinIndex.Name(), nil)
+
+	return &staticPolicyData{
+		Algorithm:          alg,
+		AuthorizeKeyPublic: keyPublic,
+		PinIndexHandle:     input.pinIndex.Handle()}, key, trial.GetDigest(), nil
+}
+
+func computeDynamicPolicy(alg tpm2.HashAlgorithmId, input *dynamicPolicyComputeInput) (*dynamicPolicyData, error) {
 	if len(input.secureBootPCRDigests) == 0 {
-		return nil, nil, errors.New("no secure-boot digests provided")
+		return nil, errors.New("no secure-boot digests provided")
 	}
 	secureBootORDigests := make(tpm2.DigestList, 0)
 	for _, digest := range input.secureBootPCRDigests {
@@ -139,7 +189,7 @@ func computePolicy(alg tpm2.HashAlgorithmId, input *policyComputeInput) (*policy
 	}
 
 	if len(input.ubuntuBootParamsPCRDigests) == 0 {
-		return nil, nil, fmt.Errorf("no ubuntu boot params digests provided")
+		return nil, errors.New("no ubuntu boot params digests provided")
 	}
 	ubuntuBootParamsORDigests := make(tpm2.DigestList, 0)
 	for _, digest := range input.ubuntuBootParamsPCRDigests {
@@ -157,26 +207,58 @@ func computePolicy(alg tpm2.HashAlgorithmId, input *policyComputeInput) (*policy
 	binary.BigEndian.PutUint64(operandB, input.policyRevokeCount)
 	trial.PolicyNV(input.policyRevokeIndex.Name(), operandB, 0, tpm2.OpUnsignedLE)
 
-	trial.PolicySecret(input.pinIndex.Name(), nil)
+	authorizedPolicy := trial.GetDigest()
 
-	return &policyData{Algorithm: alg,
+	// Create a digest to sign
+	h := signingKeyNameAlgorithm.NewHash()
+	h.Write(authorizedPolicy)
+
+	// Sign the digest
+	sig, err := rsa.SignPSS(rand.Reader, input.key, signingKeyNameAlgorithm.GetHash(), h.Sum(nil),
+		&rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash})
+	if err != nil {
+		return nil, xerrors.Errorf("cannot provide signature for initializing NV index: %w", err)
+	}
+
+	signature := tpm2.Signature{
+		SigAlg: tpm2.SigSchemeAlgRSAPSS,
+		Signature: tpm2.SignatureU{
+			Data: &tpm2.SignatureRSAPSS{
+				Hash: signingKeyNameAlgorithm,
+				Sig:  tpm2.PublicKeyRSA(sig)}}}
+
+	return &dynamicPolicyData{
 		SecureBootPCRAlg:          input.secureBootPCRAlg,
 		UbuntuBootParamsPCRAlg:    input.ubuntuBootParamsPCRAlg,
 		SecureBootORDigests:       secureBootORDigests,
 		UbuntuBootParamsORDigests: ubuntuBootParamsORDigests,
-		PinIndexHandle:            input.pinIndex.Handle(),
 		PolicyRevokeIndexHandle:   input.policyRevokeIndex.Handle(),
-		PolicyRevokeCount:         input.policyRevokeCount}, trial.GetDigest(), nil
+		PolicyRevokeCount:         input.policyRevokeCount,
+		AuthorizedPolicy:          authorizedPolicy,
+		AuthorizedPolicySignature: &signature}, nil
 }
 
-func swallowPolicyORValueError(err error) error {
-	switch e := err.(type) {
-	case *tpm2.TPMParameterError:
-		if e.Code() == tpm2.ErrorValue && e.Command() == tpm2.CommandPolicyOR {
-			return nil
-		}
+func computePolicy(alg tpm2.HashAlgorithmId, input *policyComputeInput) (*policyData, tpm2.Digest, error) {
+	staticData, key, policy, err := computeStaticPolicy(alg, &staticPolicyComputeInput{pinIndex: input.pinIndex})
+	if err != nil {
+		return nil, nil, xerrors.Errorf("cannot compute static policy: %w", err)
 	}
-	return err
+
+	dynamicPolicyComputeIn := dynamicPolicyComputeInput{
+		key:                        key,
+		secureBootPCRAlg:           input.secureBootPCRAlg,
+		ubuntuBootParamsPCRAlg:     input.ubuntuBootParamsPCRAlg,
+		secureBootPCRDigests:       input.secureBootPCRDigests,
+		ubuntuBootParamsPCRDigests: input.ubuntuBootParamsPCRDigests,
+		policyRevokeIndex:          input.policyRevokeIndex,
+		policyRevokeCount:          input.policyRevokeCount}
+
+	dynamicData, err := computeDynamicPolicy(alg, &dynamicPolicyComputeIn)
+	if err != nil {
+		return nil, nil, xerrors.Errorf("cannot compute dynamic policy: %w", err)
+	}
+
+	return &policyData{Static: staticData, Dynamic: dynamicData}, policy, nil
 }
 
 func wrapPolicyORError(err error, index int) error {
@@ -187,40 +269,57 @@ func wrapPolicyPCRError(err error, index int) error {
 	return xerrors.Errorf("cannot execute PolicyPCR assertion against PCR%d: %w", index, err)
 }
 
-func executePolicySessionPCRAssertions(tpm *tpm2.TPMContext, sessionContext tpm2.ResourceContext,
-	input *policyData) error {
+func executePolicySessionPCRAssertions(tpm *tpm2.TPMContext, sessionContext tpm2.ResourceContext, input *dynamicPolicyData) error {
 	if err := tpm.PolicyPCR(sessionContext, nil, makePCRSelectionList(input.SecureBootPCRAlg, secureBootPCR)); err != nil {
 		return wrapPolicyPCRError(err, secureBootPCR)
 	}
-	if err := tpm.PolicyOR(sessionContext, ensureSufficientORDigests(input.SecureBootORDigests)); swallowPolicyORValueError(err) != nil {
+	if err := tpm.PolicyOR(sessionContext, ensureSufficientORDigests(input.SecureBootORDigests)); err != nil {
 		return wrapPolicyORError(err, secureBootPCR)
 	}
 	if err := tpm.PolicyPCR(sessionContext, nil, makePCRSelectionList(input.UbuntuBootParamsPCRAlg, ubuntuBootParamsPCR)); err != nil {
 		return wrapPolicyPCRError(err, ubuntuBootParamsPCR)
 	}
-	if err := tpm.PolicyOR(sessionContext, ensureSufficientORDigests(input.UbuntuBootParamsORDigests)); swallowPolicyORValueError(err) != nil {
+	if err := tpm.PolicyOR(sessionContext, ensureSufficientORDigests(input.UbuntuBootParamsORDigests)); err != nil {
 		return wrapPolicyORError(err, ubuntuBootParamsPCR)
 	}
 	return nil
 }
 
 func executePolicySession(tpm *TPMConnection, sessionContext tpm2.ResourceContext, input *policyData, pin string) error {
-	if err := executePolicySessionPCRAssertions(tpm.TPMContext, sessionContext, input); err != nil {
+	if err := executePolicySessionPCRAssertions(tpm.TPMContext, sessionContext, input.Dynamic); err != nil {
 		return xerrors.Errorf("cannot execute PCR assertions: %w", err)
 	}
 
-	policyRevokeContext, err := tpm.WrapHandle(input.PolicyRevokeIndexHandle)
+	policyRevokeContext, err := tpm.WrapHandle(input.Dynamic.PolicyRevokeIndexHandle)
 	if err != nil {
-		return xerrors.Errorf("cannot create context for policy revocation NV index: %w", err)
+		return xerrors.Errorf("cannot create context for dynamic authorization policy revocation NV index: %w", err)
 	}
 
 	operandB := make([]byte, 8)
-	binary.BigEndian.PutUint64(operandB, input.PolicyRevokeCount)
+	binary.BigEndian.PutUint64(operandB, input.Dynamic.PolicyRevokeCount)
 	if err := tpm.PolicyNV(policyRevokeContext, policyRevokeContext, sessionContext, operandB, 0, tpm2.OpUnsignedLE, nil); err != nil {
-		return xerrors.Errorf("cannot execute PolicyNV assertion: %w", err)
+		return xerrors.Errorf("dynamic authorization policy revocation check failed: %w", err)
 	}
 
-	pinIndexContext, err := tpm.WrapHandle(input.PinIndexHandle)
+	authorizeKeyContext, authorizeKeyName, err := tpm.LoadExternal(nil, input.Static.AuthorizeKeyPublic, tpm2.HandleOwner)
+	if err != nil {
+		return xerrors.Errorf("cannot load public area for dynamic authorization policy signature verification: %w", err)
+	}
+	defer tpm.FlushContext(authorizeKeyContext)
+
+	h := signingKeyNameAlgorithm.NewHash()
+	h.Write(input.Dynamic.AuthorizedPolicy)
+
+	authorizeTicket, err := tpm.VerifySignature(authorizeKeyContext, h.Sum(nil), input.Dynamic.AuthorizedPolicySignature)
+	if err != nil {
+		return xerrors.Errorf("dynamic authorization policy signature verification failed: %w", err)
+	}
+
+	if err := tpm.PolicyAuthorize(sessionContext, input.Dynamic.AuthorizedPolicy, nil, authorizeKeyName, authorizeTicket); err != nil {
+		return xerrors.Errorf("dynamic authorization policy check failed: %w", err)
+	}
+
+	pinIndexContext, err := tpm.WrapHandle(input.Static.PinIndexHandle)
 	if err != nil {
 		return xerrors.Errorf("cannot obtain context for PIN NV index: %w", err)
 	}

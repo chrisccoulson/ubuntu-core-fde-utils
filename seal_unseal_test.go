@@ -271,8 +271,8 @@ func TestUnsealRevoked(t *testing.T) {
 		t.Fatalf("UnsealKeyFromTPM should have failed")
 	}
 	if _, ok := err.(InvalidKeyFileError); !ok || err.Error() != "invalid key data file: encountered an error whilst executing the "+
-		"authorization policy assertions: cannot execute PolicyNV assertion: TPM returned an error whilst executing command "+
-		"TPM_CC_PolicyNV: TPM_RC_POLICY (policy failure in math operation or an invalid authPolicy value)" {
+		"authorization policy assertions: dynamic authorization policy revocation check failed: TPM returned an error whilst executing "+
+		"command TPM_CC_PolicyNV: TPM_RC_POLICY (policy failure in math operation or an invalid authPolicy value)" {
 		t.Errorf("Unexpected error: %v", err)
 	}
 }
@@ -391,7 +391,10 @@ func TestUnsealPolicyFail(t *testing.T) {
 	if err == nil {
 		t.Fatalf("UnsealKeyFromTPM should have failed")
 	}
-	if _, ok := err.(InvalidKeyFileError); !ok || err.Error() != "invalid key data file: the authorization policy check failed during unsealing" {
+	if _, ok := err.(InvalidKeyFileError); !ok || err.Error() != "invalid key data file: encountered an error whilst executing the "+
+		"authorization policy assertions: cannot execute PCR assertions: cannot execute PolicyOR assertion after PolicyPCR assertion "+
+		"against PCR7: TPM returned an error for parameter 1 whilst executing command TPM_CC_PolicyOR: TPM_RC_VALUE (value is out of "+
+		"range or is not correct for the context)" {
 		t.Errorf("Unexpected error: %v", err)
 	}
 }
@@ -819,7 +822,9 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 											&OSComponent{
 												LoadType: DirectLoadWithShimVerify,
 												Image:    FileOSComponent("testdata/mock.efi.signed.2")}}}}}}}}},
-			err:     "invalid key data file: the authorization policy check failed during unsealing",
+			err: "invalid key data file: encountered an error whilst executing the authorization policy assertions: cannot execute PCR " +
+				"assertions: cannot execute PolicyOR assertion after PolicyPCR assertion against PCR7: TPM returned an error for parameter 1 " +
+				"whilst executing command TPM_CC_PolicyOR: TPM_RC_VALUE (value is out of range or is not correct for the context)",
 			errType: reflect.TypeOf(InvalidKeyFileError{}),
 		},
 	} {
