@@ -235,7 +235,7 @@ func ChangePIN(tpm *TPMConnection, path string, oldAuth, newAuth string) error {
 		return fmt.Errorf("cannot load key data file: %v", err)
 	}
 
-	if err := performPINChange(tpm, data.PolicyData.Static.PinIndexHandle, oldAuth, newAuth); err != nil {
+	if err := performPINChange(tpm, data.StaticPolicyData.PinIndexHandle, oldAuth, newAuth); err != nil {
 		return err
 	}
 
@@ -245,7 +245,7 @@ func ChangePIN(tpm *TPMConnection, path string, oldAuth, newAuth string) error {
 		data.AskForPinHint = true
 	}
 
-	if err := data.writeToFile(path); err != nil {
+	if err := data.writeToFileAtomic(path); err != nil {
 		return fmt.Errorf("cannot write key data file: %v", err)
 	}
 

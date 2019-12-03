@@ -1127,7 +1127,7 @@ func (g *secureBootPolicyGen) buildDbUpdates(keyStores []string) error {
 	return nil
 }
 
-func (g *secureBootPolicyGen) run(params *SealParams, secureBootEvents []classifiedEvent) (tpm2.DigestList, error) {
+func (g *secureBootPolicyGen) run(params *PolicyParams, secureBootEvents []classifiedEvent) (tpm2.DigestList, error) {
 	defer func() {
 		g.loadPaths = nil
 		g.sigDbUpdates = nil
@@ -1210,7 +1210,7 @@ func (g *secureBootPolicyGen) run(params *SealParams, secureBootEvents []classif
 // a new key (and this function is called with both the old and new components present in params) - in
 // which case this can compute multiple digests that can be used in an OR policy to allow updates to be
 // applied atomically.
-func computeSecureBootPolicyDigests(tpm *tpm2.TPMContext, alg tpm2.HashAlgorithmId, params *SealParams) (
+func computeSecureBootPolicyDigests(tpm *tpm2.TPMContext, alg tpm2.HashAlgorithmId, params *PolicyParams) (
 	tpm2.DigestList, error) {
 	logPath := eventLogPath
 	if eventLogPathForTesting != "" {

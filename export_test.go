@@ -31,6 +31,6 @@ func NewKeydata() *keyData {
 	}
 }
 
-func (k *keyData) WriteToFile(dest string) error {
-	return k.writeToFile(dest)
-}
+//func (k *keyData) WriteToFile(dest string) error {
+//	return k.writeToFile(dest)
+//}

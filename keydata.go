@@ -20,8 +20,6 @@
 package fdeutil
 
 import (
-	"bytes"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -38,19 +36,40 @@ const (
 	currentVersion uint32 = 0
 )
 
-type boundKeyData struct {
-	PinIndexName          tpm2.Name
-	PolicyRevokeIndexName tpm2.Name
+type privateKeyData struct {
+	AuthorizeKeyPrivate     []byte
+	PolicyRevokeIndexHandle tpm2.Handle
+	PolicyRevokeIndexName   tpm2.Name
 }
 
 type keyData struct {
 	KeyPrivate        tpm2.Private
 	KeyPublic         *tpm2.Public
-	KeyCreationData   *tpm2.CreationData
-	KeyCreationTicket *tpm2.TkCreation
 	AskForPinHint     bool
-	PolicyData        *policyData
-	BoundData         *boundKeyData
+	StaticPolicyData  *staticPolicyData
+	DynamicPolicyData *dynamicPolicyData
+}
+
+func readPrivateData(buf io.Reader) (*privateKeyData, error) {
+	var version uint32
+	if err := tpm2.UnmarshalFromReader(buf, &version); err != nil {
+		return nil, xerrors.Errorf("cannot unmarshal version number: %w", err)
+	}
+
+	if version != currentVersion {
+		return nil, fmt.Errorf("unexpected version number (%d)", version)
+	}
+
+	var d privateKeyData
+	if err := tpm2.UnmarshalFromReader(buf, &d); err != nil {
+		return nil, xerrors.Errorf("cannot unmarshal key data: %w", err)
+	}
+
+	return &d, nil
+}
+
+func (d *privateKeyData) write(buf io.Writer) error {
+	return tpm2.MarshalToWriter(buf, currentVersion, d)
 }
 
 type keyFileError struct {
@@ -111,55 +130,11 @@ func loadKeyData(tpm *tpm2.TPMContext, buf io.Reader, session *tpm2.Session) (tp
 	return keyContext, data, nil
 }
 
-func readAndIntegrityCheckKeyData(tpm *tpm2.TPMContext, buf io.Reader, session *tpm2.Session) (*keyData, error) {
-	context, data, err := loadKeyData(tpm, buf, session)
-	if err != nil {
-		return nil, err
-	}
-	defer tpm.FlushContext(context)
-
-	// The TPM performs integrity checking when loading objects to ensure that the public and private parts are cryptographically
-	// bound. Perform some additional integrity checking here to ensure that parts of keyData that are used to compute
-	// authorization policies are cryptographically bound to the sealed key object and haven't been modified offline.
-
-	// Verify that the creation data is cryptographically bound to the sealed key object
-	h := tpm2.HashAlgorithmSHA256.NewHash()
-	if err := tpm2.MarshalToWriter(h, data.KeyCreationData); err != nil {
-		// We've just unmarshalled this - it shouldn't fail
-		panic(fmt.Sprintf("cannot hash creation data for sealed key object: %v", err))
-	}
-
-	_, _, err = tpm.CertifyCreation(nil, context, nil, h.Sum(nil), nil, data.KeyCreationTicket, nil, session.AddAttrs(tpm2.AttrAudit))
-	if err != nil {
-		var e *tpm2.TPMError
-		if xerrors.As(err, &e) && e.Code == tpm2.ErrorTicket {
-			return nil, keyFileError{errors.New("integrity check of key data failed because the creation data or creation ticket aren't " +
-				"cryptographically bound to the sealed key object")}
-		}
-		return nil, xerrors.Errorf("cannot complete integrity checks as CertifyCreation failed: %w", err)
-	}
-
-	// The creation data is cryptographically bound to the sealed key object (ie, it is the one that the TPM returned when the
-	// sealed key object was created with the TPM2_Create command. Now verify that the digest of the bound auxiliary data matches
-	// that contained in the verified creation data.
-	h = sha256.New()
-	if err := tpm2.MarshalToWriter(h, data.BoundData); err != nil {
-		// We've just unmarshalled this - it shouldn't fail
-		panic(fmt.Sprintf("cannot hash auxiliary data for sealed key object: %v", err))
-	}
-
-	if !bytes.Equal(h.Sum(nil), data.KeyCreationData.OutsideInfo) {
-		return nil, keyFileError{errors.New("integrity check of key data failed because the auxiliary data is not cryptographically " +
-			"bound to the sealed key object")}
-	}
-
-	// At this point, the bound auxiliary data is cryptographically bound to the sealed key object. The names of the NV indices
-	// contained within it are the ones used to create the initial authorization policy for the sealed key object.
-
-	return data, nil
+func (d *keyData) write(buf io.Writer) error {
+	return tpm2.MarshalToWriter(buf, currentVersion, d)
 }
 
-func (d *keyData) writeToFile(dest string) error {
+func (d *keyData) writeToFileAtomic(dest string) error {
 	f, err := osutil.NewAtomicFile(dest, 0600, 0, sys.UserID(osutil.NoChown), sys.GroupID(osutil.NoChown))
 	if err != nil {
 		return xerrors.Errorf("cannot create new atomic file: %w", err)

@@ -285,41 +285,42 @@ func executePolicySessionPCRAssertions(tpm *tpm2.TPMContext, sessionContext tpm2
 	return nil
 }
 
-func executePolicySession(tpm *TPMConnection, sessionContext tpm2.ResourceContext, input *policyData, pin string) error {
-	if err := executePolicySessionPCRAssertions(tpm.TPMContext, sessionContext, input.Dynamic); err != nil {
+func executePolicySession(tpm *TPMConnection, sessionContext tpm2.ResourceContext, staticInput *staticPolicyData,
+	dynamicInput *dynamicPolicyData, pin string) error {
+	if err := executePolicySessionPCRAssertions(tpm.TPMContext, sessionContext, dynamicInput); err != nil {
 		return xerrors.Errorf("cannot execute PCR assertions: %w", err)
 	}
 
-	policyRevokeContext, err := tpm.WrapHandle(input.Dynamic.PolicyRevokeIndexHandle)
+	policyRevokeContext, err := tpm.WrapHandle(dynamicInput.PolicyRevokeIndexHandle)
 	if err != nil {
 		return xerrors.Errorf("cannot create context for dynamic authorization policy revocation NV index: %w", err)
 	}
 
 	operandB := make([]byte, 8)
-	binary.BigEndian.PutUint64(operandB, input.Dynamic.PolicyRevokeCount)
+	binary.BigEndian.PutUint64(operandB, dynamicInput.PolicyRevokeCount)
 	if err := tpm.PolicyNV(policyRevokeContext, policyRevokeContext, sessionContext, operandB, 0, tpm2.OpUnsignedLE, nil); err != nil {
 		return xerrors.Errorf("dynamic authorization policy revocation check failed: %w", err)
 	}
 
-	authorizeKeyContext, authorizeKeyName, err := tpm.LoadExternal(nil, input.Static.AuthorizeKeyPublic, tpm2.HandleOwner)
+	authorizeKeyContext, authorizeKeyName, err := tpm.LoadExternal(nil, staticInput.AuthorizeKeyPublic, tpm2.HandleOwner)
 	if err != nil {
 		return xerrors.Errorf("cannot load public area for dynamic authorization policy signature verification: %w", err)
 	}
 	defer tpm.FlushContext(authorizeKeyContext)
 
 	h := signingKeyNameAlgorithm.NewHash()
-	h.Write(input.Dynamic.AuthorizedPolicy)
+	h.Write(dynamicInput.AuthorizedPolicy)
 
-	authorizeTicket, err := tpm.VerifySignature(authorizeKeyContext, h.Sum(nil), input.Dynamic.AuthorizedPolicySignature)
+	authorizeTicket, err := tpm.VerifySignature(authorizeKeyContext, h.Sum(nil), dynamicInput.AuthorizedPolicySignature)
 	if err != nil {
 		return xerrors.Errorf("dynamic authorization policy signature verification failed: %w", err)
 	}
 
-	if err := tpm.PolicyAuthorize(sessionContext, input.Dynamic.AuthorizedPolicy, nil, authorizeKeyName, authorizeTicket); err != nil {
+	if err := tpm.PolicyAuthorize(sessionContext, dynamicInput.AuthorizedPolicy, nil, authorizeKeyName, authorizeTicket); err != nil {
 		return xerrors.Errorf("dynamic authorization policy check failed: %w", err)
 	}
 
-	pinIndexContext, err := tpm.WrapHandle(input.Static.PinIndexHandle)
+	pinIndexContext, err := tpm.WrapHandle(staticInput.PinIndexHandle)
 	if err != nil {
 		return xerrors.Errorf("cannot obtain context for PIN NV index: %w", err)
 	}

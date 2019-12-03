@@ -413,7 +413,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 		desc    string
 		logPath string
 		efivars string
-		params  *SealParams
+		params  *PolicyParams
 		digests tpm2.DigestList
 		err     string
 	}{
@@ -422,7 +422,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			desc:    "VerifyFromDbClassic",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -445,7 +445,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			desc:    "VerifyDirectCASignature",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -468,7 +468,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			desc:    "VerifyFromDbUC20",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -497,7 +497,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			desc:    "InvalidGrubSignature",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -519,7 +519,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			desc:    "NoKernelSignature",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -546,7 +546,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			desc:    "ShimVerificationDisabled",
 			logPath: "testdata/eventlog2.bin",
 			efivars: "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -567,7 +567,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			desc:    "VerifyGrubAndKernelWithShimVendorCert",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -598,7 +598,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			desc:    "VerifyFromDbUC20_2",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -628,7 +628,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			desc:    "VerifyFromDbUC20_3",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -659,7 +659,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			desc:    "KernelKeyRotationUC20",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars2",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -696,7 +696,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			desc:    "MissingShimVendorCertSection",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -722,7 +722,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			desc:    "NoShimVendorCert",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -745,7 +745,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			desc:    "MismatchedNormalAndRecoverySystemsUC20",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -776,7 +776,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			desc:    "DbxUpdate",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -803,7 +803,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			desc:    "DbAndDbxUpdate",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -833,7 +833,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			desc:    "DbUpdateAndKeyRotation",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -874,7 +874,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 			desc:    "DbUpdateWithNoInitialBootablePaths",
 			logPath: "testdata/eventlog1.bin",
 			efivars: "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,

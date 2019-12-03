@@ -26,6 +26,7 @@ import (
 	"io/ioutil"
 	"os"
 	"reflect"
+	"syscall"
 	"testing"
 
 	"github.com/chrisccoulson/go-tpm2"
@@ -50,14 +51,14 @@ func TestCreateAndUnseal(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	dest := tmpDir + "/keydata"
+	keyFile := tmpDir + "/keydata"
 
-	if err := SealKeyToTPM(tpm, dest, &testCreationParams, nil, key); err != nil {
+	if err := SealKeyToTPM(tpm, keyFile, "", &testCreationParams, key); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
-	defer deleteKey(t, tpm, dest)
+	defer deleteKey(t, tpm, keyFile)
 
-	f, err := os.Open(dest)
+	f, err := os.Open(keyFile)
 	if err != nil {
 		t.Fatalf("Failed to open key data file: %v", err)
 	}
@@ -89,32 +90,57 @@ func TestCreateDoesntReplace(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	dest := tmpDir + "/keydata"
+	keyFile := tmpDir + "/keydata"
+	privFile := tmpDir + "/keypriv"
 
-	if err := SealKeyToTPM(tpm, dest, &testCreationParams, nil, key); err != nil {
+	if err := SealKeyToTPM(tpm, keyFile, privFile, &testCreationParams, key); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
-	defer deleteKey(t, tpm, dest)
+	defer deleteKey(t, tpm, keyFile)
 
-	fi1, err := os.Stat(dest)
+	kfi1, err := os.Stat(keyFile)
 	if err != nil {
 		t.Errorf("Cannot stat key data file: %v", err)
 	}
+	pfi1, err := os.Stat(privFile)
+	if err != nil {
+		t.Errorf("Cannot stat private data file: %v", err)
+	}
 
-	err = SealKeyToTPM(tpm, dest, &testCreationParams, nil, key)
+	err = SealKeyToTPM(tpm, keyFile, privFile, &testCreationParams, key)
 	if err == nil {
 		t.Fatalf("SealKeyToTPM Create should fail if there is already a file with the same path")
 	}
-	if err != ErrKeyFileExists {
+	var e *os.PathError
+	if !xerrors.As(err, &e) || e.Err != syscall.EEXIST || e.Path != keyFile {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
-	fi2, err := os.Stat(dest)
+	kfi2, err := os.Stat(keyFile)
 	if err != nil {
 		t.Errorf("Cannot stat key data file: %v", err)
 	}
 
-	if fi1.ModTime() != fi2.ModTime() {
+	if kfi1.ModTime() != kfi2.ModTime() {
+		t.Errorf("SealKeyToTPM Create modified the existing file")
+	}
+
+	keyFile2 := tmpDir + "/keydata2"
+
+	err = SealKeyToTPM(tpm, keyFile2, privFile, &testCreationParams, key)
+	if err == nil {
+		t.Fatalf("SealKeyToTPM Create should fail if there is already a file with the same path")
+	}
+	if !xerrors.As(err, &e) || e.Err != syscall.EEXIST || e.Path != privFile {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	pfi2, err := os.Stat(privFile)
+	if err != nil {
+		t.Errorf("Cannot stat key data file: %v", err)
+	}
+
+	if pfi1.ModTime() != pfi2.ModTime() {
 		t.Errorf("SealKeyToTPM Create modified the existing file")
 	}
 }
@@ -136,29 +162,30 @@ func TestUpdateAndUnseal(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	dest := tmpDir + "/keydata"
+	keyFile := tmpDir + "/keydata"
+	privFile := tmpDir + "/keypriv"
 
-	if err := SealKeyToTPM(tpm, dest, &testCreationParams, nil, key); err != nil {
+	if err := SealKeyToTPM(tpm, keyFile, privFile, &testCreationParams, key); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
-	defer deleteKey(t, tpm, dest)
+	defer deleteKey(t, tpm, keyFile)
 
 	testPIN := "1234"
 
-	if err := ChangePIN(tpm, dest, "", testPIN); err != nil {
+	if err := ChangePIN(tpm, keyFile, "", testPIN); err != nil {
 		t.Fatalf("ChangePIN failed: %v", err)
 	}
 
-	fi1, err := os.Stat(dest)
+	fi1, err := os.Stat(keyFile)
 	if err != nil {
 		t.Errorf("Cannot stat key data file: %v", err)
 	}
 
-	if err := SealKeyToTPM(tpm, dest, nil, nil, key); err != nil {
-		t.Fatalf("SealKeyToTPM failed: %v", err)
+	if err := UpdateKeyAuthPolicy(tpm, keyFile, privFile, nil); err != nil {
+		t.Fatalf("UpdateKeyAuthPolicy failed: %v", err)
 	}
 
-	fi2, err := os.Stat(dest)
+	fi2, err := os.Stat(keyFile)
 	if err != nil {
 		t.Errorf("Cannot stat key data file: %v", err)
 	}
@@ -167,7 +194,7 @@ func TestUpdateAndUnseal(t *testing.T) {
 		t.Errorf("File wasn't updated")
 	}
 
-	f, err := os.Open(dest)
+	f, err := os.Open(keyFile)
 	if err != nil {
 		t.Fatalf("Failed to open key data file: %v", err)
 	}
@@ -199,20 +226,20 @@ func TestUnsealWithPin(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	dest := tmpDir + "/keydata"
+	keyFile := tmpDir + "/keyfile"
 
-	if err := SealKeyToTPM(tpm, dest, &testCreationParams, nil, key); err != nil {
+	if err := SealKeyToTPM(tpm, keyFile, "", &testCreationParams, key); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
-	defer deleteKey(t, tpm, dest)
+	defer deleteKey(t, tpm, keyFile)
 
 	testPIN := "1234"
 
-	if err := ChangePIN(tpm, dest, "", testPIN); err != nil {
+	if err := ChangePIN(tpm, keyFile, "", testPIN); err != nil {
 		t.Fatalf("ChangePIN failed: %v", err)
 	}
 
-	f, err := os.Open(dest)
+	f, err := os.Open(keyFile)
 	if err != nil {
 		t.Fatalf("Failed to open key data file: %v", err)
 	}
@@ -244,14 +271,15 @@ func TestUnsealRevoked(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	dest := tmpDir + "/keydata"
+	keyFile := tmpDir + "/keydata"
+	privFile := tmpDir + "/keypriv"
 
-	if err := SealKeyToTPM(tpm, dest, &testCreationParams, nil, key); err != nil {
+	if err := SealKeyToTPM(tpm, keyFile, privFile, &testCreationParams, key); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
-	defer deleteKey(t, tpm, dest)
+	defer deleteKey(t, tpm, keyFile)
 
-	f, err := os.Open(dest)
+	f, err := os.Open(keyFile)
 	if err != nil {
 		t.Fatalf("Cannot open file: %v", err)
 	}
@@ -262,8 +290,8 @@ func TestUnsealRevoked(t *testing.T) {
 		t.Fatalf("Cannot copy key data file: %v", err)
 	}
 
-	if err := SealKeyToTPM(tpm, dest, nil, nil, key); err != nil {
-		t.Fatalf("SealKeyToTPM failed: %v", err)
+	if err := UpdateKeyAuthPolicy(tpm, keyFile, privFile, nil); err != nil {
+		t.Fatalf("UpdateKeyAuthPolicy failed: %v", err)
 	}
 
 	_, err = UnsealKeyFromTPM(tpm, &keydata, "")
@@ -274,39 +302,6 @@ func TestUnsealRevoked(t *testing.T) {
 		"authorization policy assertions: dynamic authorization policy revocation check failed: TPM returned an error whilst executing "+
 		"command TPM_CC_PolicyNV: TPM_RC_POLICY (policy failure in math operation or an invalid authPolicy value)" {
 		t.Errorf("Unexpected error: %v", err)
-	}
-}
-
-func TestUpdateWithoutExisting(t *testing.T) {
-	tpm := openTPMForTesting(t)
-	defer closeTPM(t, tpm)
-
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
-		t.Fatalf("Failed to provision TPM for test: %v", err)
-	}
-
-	key := make([]byte, 64)
-	rand.Read(key)
-
-	tmpDir, err := ioutil.TempDir("", "_TestUpdateWithoutExisting_")
-	if err != nil {
-		t.Fatalf("Creating temporary directory failed: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	dest := tmpDir + "/keydata"
-
-	err = SealKeyToTPM(tpm, dest, nil, nil, key)
-	if err == nil {
-		t.Fatalf("SealKeyToTPM Update should fail if there isn't a valid key data file")
-	}
-	var e *os.PathError
-	if !xerrors.As(err, &e) || !os.IsNotExist(e) {
-		t.Errorf("Unexpected error: %v", err)
-	}
-
-	if _, err := os.Stat(dest); err == nil || !os.IsNotExist(err) {
-		t.Errorf("SealKeyToTPM Update should not create a file where there isn't one")
 	}
 }
 
@@ -327,20 +322,20 @@ func TestUnsealWithWrongPin(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	dest := tmpDir + "/keydata"
+	keyFile := tmpDir + "/keydata"
 
-	if err := SealKeyToTPM(tpm, dest, &testCreationParams, nil, key); err != nil {
+	if err := SealKeyToTPM(tpm, keyFile, "", &testCreationParams, key); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
-	defer deleteKey(t, tpm, dest)
+	defer deleteKey(t, tpm, keyFile)
 
 	testPIN := "1234"
 
-	if err := ChangePIN(tpm, dest, "", testPIN); err != nil {
+	if err := ChangePIN(tpm, keyFile, "", testPIN); err != nil {
 		t.Fatalf("ChangePIN failed: %v", err)
 	}
 
-	f, err := os.Open(dest)
+	f, err := os.Open(keyFile)
 	if err != nil {
 		t.Fatalf("Failed to open key data file: %v", err)
 	}
@@ -371,18 +366,18 @@ func TestUnsealPolicyFail(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	dest := tmpDir + "/keydata"
+	keyFile := tmpDir + "/keydata"
 
-	if err := SealKeyToTPM(tpm, dest, &testCreationParams, nil, key); err != nil {
+	if err := SealKeyToTPM(tpm, keyFile, "", &testCreationParams, key); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
-	defer deleteKey(t, tpm, dest)
+	defer deleteKey(t, tpm, keyFile)
 
 	if _, err := tpm.PCREvent(7, tpm2.Event("foo"), nil); err != nil {
 		t.Errorf("PCREvent failed: %v", err)
 	}
 
-	f, err := os.Open(dest)
+	f, err := os.Open(keyFile)
 	if err != nil {
 		t.Fatalf("Failed to open key data file: %v", err)
 	}
@@ -416,12 +411,12 @@ func TestUnsealLockout(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	dest := tmpDir + "/keydata"
+	keyFile := tmpDir + "/keydata"
 
-	if err := SealKeyToTPM(tpm, dest, &testCreationParams, nil, key); err != nil {
+	if err := SealKeyToTPM(tpm, keyFile, "", &testCreationParams, key); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
-	defer deleteKey(t, tpm, dest)
+	defer deleteKey(t, tpm, keyFile)
 
 	// Put the TPM in DA lockout mode
 	if err := tpm.DictionaryAttackParameters(tpm2.HandleLockout, 0, 7200, 86400, nil); err != nil {
@@ -436,7 +431,7 @@ func TestUnsealLockout(t *testing.T) {
 		}
 	}()
 
-	f, err := os.Open(dest)
+	f, err := os.Open(keyFile)
 	if err != nil {
 		t.Fatalf("Failed to open key data file: %v", err)
 	}
@@ -463,7 +458,7 @@ func TestSealWithProvisioningError(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	dest := tmpDir + "/keydata"
+	keyFile := tmpDir + "/keydata"
 
 	prepare := func(t *testing.T) {
 		if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
@@ -472,7 +467,7 @@ func TestSealWithProvisioningError(t *testing.T) {
 	}
 
 	run := func(t *testing.T) {
-		err = SealKeyToTPM(tpm, dest, &testCreationParams, nil, key)
+		err = SealKeyToTPM(tpm, keyFile, "", &testCreationParams, key)
 		if err == nil {
 			t.Fatalf("SealKeyToTPM should have failed")
 		}
@@ -538,13 +533,13 @@ func TestUnsealProvisioningError(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	dest := tmpDir + "/keydata"
+	keyFile := tmpDir + "/keydata"
 
-	if err := SealKeyToTPM(tpm, dest, &testCreationParams, nil, key); err != nil {
+	if err := SealKeyToTPM(tpm, keyFile, "", &testCreationParams, key); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
 	defer func() {
-		if err := os.Remove(dest); err != nil {
+		if err := os.Remove(keyFile); err != nil {
 			t.Errorf("Remove failed: %v", err)
 		}
 		pinContext, _ := tpm.WrapHandle(testCreationParams.PinHandle)
@@ -558,7 +553,7 @@ func TestUnsealProvisioningError(t *testing.T) {
 	}()
 
 	run := func(t *testing.T) {
-		f, err := os.Open(dest)
+		f, err := os.Open(keyFile)
 		if err != nil {
 			t.Fatalf("Failed to open key data file: %v", err)
 		}
@@ -624,7 +619,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 		creationLogPath string
 		trustedLogPath  string
 		efivars         string
-		params          *SealParams
+		params          *PolicyParams
 		err             string
 		errType         reflect.Type
 	}{
@@ -634,7 +629,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 			creationLogPath: "testdata/eventlog1.bin",
 			trustedLogPath:  "testdata/eventlog3.bin",
 			efivars:         "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -654,7 +649,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 			creationLogPath: "testdata/eventlog1.bin",
 			trustedLogPath:  "testdata/eventlog4.bin",
 			efivars:         "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -681,7 +676,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 			creationLogPath: "testdata/eventlog1.bin",
 			trustedLogPath:  "testdata/eventlog5.bin",
 			efivars:         "testdata/efivars2",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -714,7 +709,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 			creationLogPath: "testdata/eventlog1.bin",
 			trustedLogPath:  "testdata/eventlog6.bin",
 			efivars:         "testdata/efivars2",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -747,7 +742,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 			creationLogPath: "testdata/eventlog1.bin",
 			trustedLogPath:  "testdata/eventlog4.bin",
 			efivars:         "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -775,7 +770,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 			creationLogPath: "testdata/eventlog1.bin",
 			trustedLogPath:  "testdata/eventlog5.bin",
 			efivars:         "testdata/efivars1",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -802,7 +797,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 			creationLogPath: "testdata/eventlog1.bin",
 			trustedLogPath:  "testdata/eventlog5.bin",
 			efivars:         "testdata/efivars2",
-			params: &SealParams{
+			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
 						LoadType: FirmwareLoad,
@@ -844,17 +839,22 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 			}
 			defer os.RemoveAll(tmpDir)
 
-			dest := tmpDir + "/keydata"
+			keyFile := tmpDir + "/keydata"
+			privFile := tmpDir + "/keypriv"
 
-			if err := SealKeyToTPM(tpm, dest, &testCreationParams, data.params, key); err != nil {
+			if err := SealKeyToTPM(tpm, keyFile, privFile, &testCreationParams, key); err != nil {
 				t.Fatalf("SealKeyToTPM failed: %v", err)
 			}
-			defer deleteKey(t, tpm, dest)
+			defer deleteKey(t, tpm, keyFile)
+
+			if err := UpdateKeyAuthPolicy(tpm, keyFile, privFile, data.params); err != nil {
+				t.Fatalf("UpdateKeyAuthPolicy failed: %v", err)
+			}
 
 			resetTPMSimulator(t, tpm, tcti)
 			replayLogToTPM(t, tpm, tcti, data.trustedLogPath)
 
-			f, err := os.Open(dest)
+			f, err := os.Open(keyFile)
 			if err != nil {
 				t.Fatalf("Failed to open key data file: %v", err)
 			}

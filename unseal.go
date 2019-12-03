@@ -70,7 +70,7 @@ func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string) ([]byte, er
 	}
 	defer tpm.FlushContext(sessionContext)
 
-	if err := executePolicySession(tpm, sessionContext, data.PolicyData, pin); err != nil {
+	if err := executePolicySession(tpm, sessionContext, data.StaticPolicyData, data.DynamicPolicyData, pin); err != nil {
 		var tpmsErr *tpm2.TPMSessionError
 		if xerrors.As(err, &tpmsErr) && tpmsErr.Code() == tpm2.ErrorAuthFail && tpmsErr.Command() == tpm2.CommandPolicySecret {
 			return nil, ErrPinFail
