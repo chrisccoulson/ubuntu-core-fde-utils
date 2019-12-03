@@ -32,7 +32,7 @@ import (
 	"golang.org/x/xerrors"
 )
 
-type dynamicPolicyComputeInput struct {
+type dynamicPolicyComputeParams struct {
 	key                        *rsa.PrivateKey
 	secureBootPCRAlg           tpm2.HashAlgorithmId
 	ubuntuBootParamsPCRAlg     tpm2.HashAlgorithmId
@@ -53,7 +53,7 @@ type dynamicPolicyData struct {
 	AuthorizedPolicySignature *tpm2.Signature
 }
 
-type staticPolicyComputeInput struct {
+type staticPolicyComputeParams struct {
 	pinIndex tpm2.ResourceContext
 }
 
@@ -153,7 +153,7 @@ func computePolicyPCRParams(policyAlg, pcrAlg tpm2.HashAlgorithmId, digest tpm2.
 	return pcrDigest, pcrs
 }
 
-func computeStaticPolicy(alg tpm2.HashAlgorithmId, input *staticPolicyComputeInput) (*staticPolicyData, *rsa.PrivateKey, tpm2.Digest, error) {
+func computeStaticPolicy(alg tpm2.HashAlgorithmId, input *staticPolicyComputeParams) (*staticPolicyData, *rsa.PrivateKey, tpm2.Digest, error) {
 	trial, _ := tpm2.ComputeAuthPolicy(alg)
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -176,7 +176,7 @@ func computeStaticPolicy(alg tpm2.HashAlgorithmId, input *staticPolicyComputeInp
 		PinIndexHandle:     input.pinIndex.Handle()}, key, trial.GetDigest(), nil
 }
 
-func computeDynamicPolicy(alg tpm2.HashAlgorithmId, input *dynamicPolicyComputeInput) (*dynamicPolicyData, error) {
+func computeDynamicPolicy(alg tpm2.HashAlgorithmId, input *dynamicPolicyComputeParams) (*dynamicPolicyData, error) {
 	if len(input.secureBootPCRDigests) == 0 {
 		return nil, errors.New("no secure-boot digests provided")
 	}
@@ -239,12 +239,12 @@ func computeDynamicPolicy(alg tpm2.HashAlgorithmId, input *dynamicPolicyComputeI
 }
 
 func computePolicy(alg tpm2.HashAlgorithmId, input *policyComputeInput) (*policyData, tpm2.Digest, error) {
-	staticData, key, policy, err := computeStaticPolicy(alg, &staticPolicyComputeInput{pinIndex: input.pinIndex})
+	staticData, key, policy, err := computeStaticPolicy(alg, &staticPolicyComputeParams{pinIndex: input.pinIndex})
 	if err != nil {
 		return nil, nil, xerrors.Errorf("cannot compute static policy: %w", err)
 	}
 
-	dynamicPolicyComputeIn := dynamicPolicyComputeInput{
+	dynamicParams := dynamicPolicyComputeParams{
 		key:                        key,
 		secureBootPCRAlg:           input.secureBootPCRAlg,
 		ubuntuBootParamsPCRAlg:     input.ubuntuBootParamsPCRAlg,
@@ -253,7 +253,7 @@ func computePolicy(alg tpm2.HashAlgorithmId, input *policyComputeInput) (*policy
 		policyRevokeIndex:          input.policyRevokeIndex,
 		policyRevokeCount:          input.policyRevokeCount}
 
-	dynamicData, err := computeDynamicPolicy(alg, &dynamicPolicyComputeIn)
+	dynamicData, err := computeDynamicPolicy(alg, &dynamicParams)
 	if err != nil {
 		return nil, nil, xerrors.Errorf("cannot compute dynamic policy: %w", err)
 	}

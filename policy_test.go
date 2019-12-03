@@ -64,7 +64,7 @@ func TestComputeStaticPolicy(t *testing.T) {
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {
-			dataout, key, policy, err := computeStaticPolicy(data.alg, &staticPolicyComputeInput{pinIndex: pinIndex})
+			dataout, key, policy, err := computeStaticPolicy(data.alg, &staticPolicyComputeParams{pinIndex: pinIndex})
 			if err != nil {
 				t.Fatalf("computeStaticPolicy failed: %v", err)
 			}
@@ -138,13 +138,13 @@ func TestComputeDynamicPolicy(t *testing.T) {
 	for _, data := range []struct {
 		desc   string
 		alg    tpm2.HashAlgorithmId
-		input  dynamicPolicyComputeInput
+		input  dynamicPolicyComputeParams
 		policy tpm2.Digest
 	}{
 		{
 			desc: "Single",
 			alg:  tpm2.HashAlgorithmSHA256,
-			input: dynamicPolicyComputeInput{
+			input: dynamicPolicyComputeParams{
 				key:                        key,
 				secureBootPCRAlg:           tpm2.HashAlgorithmSHA256,
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
@@ -159,7 +159,7 @@ func TestComputeDynamicPolicy(t *testing.T) {
 		{
 			desc: "SHA1Session",
 			alg:  tpm2.HashAlgorithmSHA1,
-			input: dynamicPolicyComputeInput{
+			input: dynamicPolicyComputeParams{
 				key:                        key,
 				secureBootPCRAlg:           tpm2.HashAlgorithmSHA256,
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
@@ -174,7 +174,7 @@ func TestComputeDynamicPolicy(t *testing.T) {
 		{
 			desc: "SHA256SessionWithSHA512PCRs",
 			alg:  tpm2.HashAlgorithmSHA256,
-			input: dynamicPolicyComputeInput{
+			input: dynamicPolicyComputeParams{
 				key:                        key,
 				secureBootPCRAlg:           tpm2.HashAlgorithmSHA512,
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA512,
@@ -189,7 +189,7 @@ func TestComputeDynamicPolicy(t *testing.T) {
 		{
 			desc: "MultiplePCRValues",
 			alg:  tpm2.HashAlgorithmSHA256,
-			input: dynamicPolicyComputeInput{
+			input: dynamicPolicyComputeParams{
 				key:                    key,
 				secureBootPCRAlg:       tpm2.HashAlgorithmSHA256,
 				ubuntuBootParamsPCRAlg: tpm2.HashAlgorithmSHA256,

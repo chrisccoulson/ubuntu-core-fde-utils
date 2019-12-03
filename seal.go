@@ -173,7 +173,7 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, params *Creat
 
 	// Compute the static policy - this never changes for the lifetime of this key file
 	staticPolicyData, authKey, authPolicy, err :=
-		computeStaticPolicy(sealedKeyNameAlgorithm, &staticPolicyComputeInput{pinIndex: pinIndex})
+		computeStaticPolicy(sealedKeyNameAlgorithm, &staticPolicyComputeParams{pinIndex: pinIndex})
 	if err != nil {
 		return xerrors.Errorf("cannot compute static authorization policy: %w", err)
 	}
@@ -209,7 +209,7 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, params *Creat
 		return xerrors.Errorf("cannot read revocation counter: %w", err)
 	}
 
-	dynamicPolicyComputeIn := dynamicPolicyComputeInput{
+	dynamicPolicyParams := dynamicPolicyComputeParams{
 		key:                        authKey,
 		secureBootPCRAlg:           pcrAlgorithm,
 		ubuntuBootParamsPCRAlg:     pcrAlgorithm,
@@ -218,7 +218,7 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, params *Creat
 		policyRevokeIndex:          policyRevokeIndex,
 		policyRevokeCount:          policyRevokeCount}
 
-	dynamicPolicyData, err := computeDynamicPolicy(sealedKeyNameAlgorithm, &dynamicPolicyComputeIn)
+	dynamicPolicyData, err := computeDynamicPolicy(sealedKeyNameAlgorithm, &dynamicPolicyParams)
 	if err != nil {
 		return xerrors.Errorf("cannot compute dynamic authorization policy: %w", err)
 	}
@@ -418,7 +418,7 @@ func UpdateKeyAuthPolicy(tpm *TPMConnection, keyPath, privatePath string, params
 	}
 
 	// Use the PCR digests and NV index names to generate a single signed dynamic authorization policy digest
-	policyComputeIn := dynamicPolicyComputeInput{
+	policyParams := dynamicPolicyComputeParams{
 		key:                        authKey,
 		secureBootPCRAlg:           pcrAlgorithm,
 		ubuntuBootParamsPCRAlg:     pcrAlgorithm,
@@ -427,7 +427,7 @@ func UpdateKeyAuthPolicy(tpm *TPMConnection, keyPath, privatePath string, params
 		policyRevokeIndex:          policyRevokeIndex,
 		policyRevokeCount:          nextPolicyRevokeCount}
 
-	policyData, err := computeDynamicPolicy(sealedKeyNameAlgorithm, &policyComputeIn)
+	policyData, err := computeDynamicPolicy(sealedKeyNameAlgorithm, &policyParams)
 	if err != nil {
 		return xerrors.Errorf("cannot compute dynamic authorization policy: %w", err)
 	}
