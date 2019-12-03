@@ -33,7 +33,9 @@ import (
 )
 
 const (
-	currentVersion uint32 = 0
+	currentVersion      uint32 = 0
+	keyDataMagic        uint32 = 0x55534b24
+	privateKeyDataMagic uint32 = 0x55534b50
 )
 
 type privateKeyData struct {
@@ -51,11 +53,15 @@ type keyData struct {
 }
 
 func readPrivateData(buf io.Reader) (*privateKeyData, error) {
+	var magic uint32
 	var version uint32
-	if err := tpm2.UnmarshalFromReader(buf, &version); err != nil {
+	if err := tpm2.UnmarshalFromReader(buf, &magic, &version); err != nil {
 		return nil, xerrors.Errorf("cannot unmarshal version number: %w", err)
 	}
 
+	if magic != privateKeyDataMagic {
+		return nil, errors.New("unexpected file signature")
+	}
 	if version != currentVersion {
 		return nil, fmt.Errorf("unexpected version number (%d)", version)
 	}
@@ -69,7 +75,7 @@ func readPrivateData(buf io.Reader) (*privateKeyData, error) {
 }
 
 func (d *privateKeyData) write(buf io.Writer) error {
-	return tpm2.MarshalToWriter(buf, currentVersion, d)
+	return tpm2.MarshalToWriter(buf, privateKeyDataMagic, currentVersion, d)
 }
 
 type keyFileError struct {
@@ -81,11 +87,15 @@ func (e keyFileError) Error() string {
 }
 
 func readKeyData(buf io.Reader) (*keyData, error) {
+	var magic uint32
 	var version uint32
-	if err := tpm2.UnmarshalFromReader(buf, &version); err != nil {
+	if err := tpm2.UnmarshalFromReader(buf, &magic, &version); err != nil {
 		return nil, keyFileError{xerrors.Errorf("cannot unmarshal version number: %w", err)}
 	}
 
+	if magic != keyDataMagic {
+		return nil, keyFileError{errors.New("unexpected file signature")}
+	}
 	if version != currentVersion {
 		return nil, keyFileError{fmt.Errorf("unexpected version number (%d)", version)}
 	}
@@ -131,7 +141,7 @@ func loadKeyData(tpm *tpm2.TPMContext, buf io.Reader, session *tpm2.Session) (tp
 }
 
 func (d *keyData) write(buf io.Writer) error {
-	return tpm2.MarshalToWriter(buf, currentVersion, d)
+	return tpm2.MarshalToWriter(buf, keyDataMagic, currentVersion, d)
 }
 
 func (d *keyData) writeToFileAtomic(dest string) error {
@@ -141,7 +151,7 @@ func (d *keyData) writeToFileAtomic(dest string) error {
 	}
 	defer f.Cancel()
 
-	if err := tpm2.MarshalToWriter(f, currentVersion, d); err != nil {
+	if err := tpm2.MarshalToWriter(f, keyDataMagic, currentVersion, d); err != nil {
 		return xerrors.Errorf("cannot marshal key data to temporary file: %w", err)
 	}
 
