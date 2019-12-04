@@ -346,7 +346,7 @@ func TestExecutePolicy(t *testing.T) {
 	for _, data := range []struct {
 		desc        string
 		alg         tpm2.HashAlgorithmId
-		input       policyComputeInput
+		input       dynamicPolicyComputeParams
 		pcrEvents   []pcrEvent
 		pinDefine   string
 		pinInput    string
@@ -355,7 +355,7 @@ func TestExecutePolicy(t *testing.T) {
 		{
 			desc: "Single",
 			alg:  tpm2.HashAlgorithmSHA256,
-			input: policyComputeInput{
+			input: dynamicPolicyComputeParams{
 				secureBootPCRAlg:           tpm2.HashAlgorithmSHA256,
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
@@ -377,7 +377,7 @@ func TestExecutePolicy(t *testing.T) {
 		{
 			desc: "SHA1SessionWithSHA256PCRs",
 			alg:  tpm2.HashAlgorithmSHA1,
-			input: policyComputeInput{
+			input: dynamicPolicyComputeParams{
 				secureBootPCRAlg:           tpm2.HashAlgorithmSHA256,
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
@@ -399,7 +399,7 @@ func TestExecutePolicy(t *testing.T) {
 		{
 			desc: "SHA1Session",
 			alg:  tpm2.HashAlgorithmSHA1,
-			input: policyComputeInput{
+			input: dynamicPolicyComputeParams{
 				secureBootPCRAlg:           tpm2.HashAlgorithmSHA1,
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA1,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA1][0]},
@@ -421,7 +421,7 @@ func TestExecutePolicy(t *testing.T) {
 		{
 			desc: "WithPIN",
 			alg:  tpm2.HashAlgorithmSHA256,
-			input: policyComputeInput{
+			input: dynamicPolicyComputeParams{
 				secureBootPCRAlg:           tpm2.HashAlgorithmSHA256,
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
@@ -445,7 +445,7 @@ func TestExecutePolicy(t *testing.T) {
 		{
 			desc: "WithIncorrectPIN",
 			alg:  tpm2.HashAlgorithmSHA256,
-			input: policyComputeInput{
+			input: dynamicPolicyComputeParams{
 				secureBootPCRAlg:           tpm2.HashAlgorithmSHA256,
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
@@ -469,7 +469,7 @@ func TestExecutePolicy(t *testing.T) {
 		{
 			desc: "NoMatch",
 			alg:  tpm2.HashAlgorithmSHA256,
-			input: policyComputeInput{
+			input: dynamicPolicyComputeParams{
 				secureBootPCRAlg:       tpm2.HashAlgorithmSHA256,
 				ubuntuBootParamsPCRAlg: tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests: tpm2.DigestList{
@@ -493,7 +493,7 @@ func TestExecutePolicy(t *testing.T) {
 		{
 			desc: "MultiplePCRValues1",
 			alg:  tpm2.HashAlgorithmSHA256,
-			input: policyComputeInput{
+			input: dynamicPolicyComputeParams{
 				secureBootPCRAlg:       tpm2.HashAlgorithmSHA256,
 				ubuntuBootParamsPCRAlg: tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests: tpm2.DigestList{
@@ -519,7 +519,7 @@ func TestExecutePolicy(t *testing.T) {
 		{
 			desc: "MultiplePCRValues2",
 			alg:  tpm2.HashAlgorithmSHA256,
-			input: policyComputeInput{
+			input: dynamicPolicyComputeParams{
 				secureBootPCRAlg:       tpm2.HashAlgorithmSHA256,
 				ubuntuBootParamsPCRAlg: tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests: tpm2.DigestList{
@@ -545,7 +545,7 @@ func TestExecutePolicy(t *testing.T) {
 		{
 			desc: "MultiplePCRValuesNoMatch",
 			alg:  tpm2.HashAlgorithmSHA256,
-			input: policyComputeInput{
+			input: dynamicPolicyComputeParams{
 				secureBootPCRAlg:       tpm2.HashAlgorithmSHA256,
 				ubuntuBootParamsPCRAlg: tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests: tpm2.DigestList{
@@ -571,7 +571,7 @@ func TestExecutePolicy(t *testing.T) {
 		{
 			desc: "RevokedPolicy",
 			alg:  tpm2.HashAlgorithmSHA256,
-			input: policyComputeInput{
+			input: dynamicPolicyComputeParams{
 				secureBootPCRAlg:           tpm2.HashAlgorithmSHA256,
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
@@ -601,12 +601,16 @@ func TestExecutePolicy(t *testing.T) {
 			if err != nil {
 				t.Fatalf("WrapHandle failed: %v", err)
 			}
-			data.input.pinIndex = pinIndex
 			data.input.policyRevokeIndex = policyRevokeIndex
 
-			policyData, policy, err := computePolicy(data.alg, &data.input)
+			staticPolicyData, key, policy, err := computeStaticPolicy(data.alg, &staticPolicyComputeParams{pinIndex: pinIndex})
 			if err != nil {
-				t.Fatalf("computePolicy failed: %v", err)
+				t.Fatalf("computeStaticPolicy failed: %v", err)
+			}
+			data.input.key = key
+			dynamicPolicyData, err := computeDynamicPolicy(data.alg, &data.input)
+			if err != nil {
+				t.Fatalf("computeDynamicPolicy failed: %v", err)
 			}
 
 			for _, event := range data.pcrEvents {
@@ -634,7 +638,7 @@ func TestExecutePolicy(t *testing.T) {
 			}
 			defer flushContext(t, tpm, sessionContext)
 
-			err = executePolicySession(tpm, sessionContext, policyData.Static, policyData.Dynamic, data.pinInput)
+			err = executePolicySession(tpm, sessionContext, staticPolicyData, dynamicPolicyData, data.pinInput)
 			if data.input.policyRevokeCount < policyRevokeCount {
 				if err == nil {
 					t.Fatalf("Expected an error")

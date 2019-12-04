@@ -63,22 +63,6 @@ type staticPolicyData struct {
 	PinIndexHandle     tpm2.Handle
 }
 
-type policyComputeInput struct {
-	secureBootPCRAlg           tpm2.HashAlgorithmId
-	ubuntuBootParamsPCRAlg     tpm2.HashAlgorithmId
-	secureBootPCRDigests       tpm2.DigestList
-	ubuntuBootParamsPCRDigests tpm2.DigestList
-	pinObjectName              tpm2.Name
-	pinIndex                   tpm2.ResourceContext
-	policyRevokeIndex          tpm2.ResourceContext
-	policyRevokeCount          uint64
-}
-
-type policyData struct {
-	Static  *staticPolicyData
-	Dynamic *dynamicPolicyData
-}
-
 func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte, session *tpm2.Session) (tpm2.ResourceContext, error) {
 	public := tpm2.NVPublic{
 		Index:   handle,
@@ -236,29 +220,6 @@ func computeDynamicPolicy(alg tpm2.HashAlgorithmId, input *dynamicPolicyComputeP
 		PolicyRevokeCount:         input.policyRevokeCount,
 		AuthorizedPolicy:          authorizedPolicy,
 		AuthorizedPolicySignature: &signature}, nil
-}
-
-func computePolicy(alg tpm2.HashAlgorithmId, input *policyComputeInput) (*policyData, tpm2.Digest, error) {
-	staticData, key, policy, err := computeStaticPolicy(alg, &staticPolicyComputeParams{pinIndex: input.pinIndex})
-	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot compute static policy: %w", err)
-	}
-
-	dynamicParams := dynamicPolicyComputeParams{
-		key:                        key,
-		secureBootPCRAlg:           input.secureBootPCRAlg,
-		ubuntuBootParamsPCRAlg:     input.ubuntuBootParamsPCRAlg,
-		secureBootPCRDigests:       input.secureBootPCRDigests,
-		ubuntuBootParamsPCRDigests: input.ubuntuBootParamsPCRDigests,
-		policyRevokeIndex:          input.policyRevokeIndex,
-		policyRevokeCount:          input.policyRevokeCount}
-
-	dynamicData, err := computeDynamicPolicy(alg, &dynamicParams)
-	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot compute dynamic policy: %w", err)
-	}
-
-	return &policyData{Static: staticData, Dynamic: dynamicData}, policy, nil
 }
 
 func wrapPolicyORError(err error, index int) error {
