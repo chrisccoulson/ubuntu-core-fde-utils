@@ -20,7 +20,6 @@
 package fdeutil
 
 import (
-	"bytes"
 	"crypto/x509"
 	"fmt"
 	"io/ioutil"
@@ -132,24 +131,13 @@ type PolicyParams struct {
 }
 
 func computeKeyDynamicAuthPolicy(tpm *tpm2.TPMContext, privateData *privateKeyData, params *PolicyParams, session *tpm2.Session) (*dynamicPolicyData, func(*tpm2.Session) error, error) {
-	// Obtain a ResourceContext for the dynamic policy revocation NV index
-	policyRevokeIndex, err := tpm.WrapHandle(privateData.PolicyRevokeIndexHandle)
-	if err != nil {
-		if _, unavail := err.(tpm2.ResourceUnavailableError); unavail {
-			return nil, nil, InvalidKeyFileError{fmt.Sprintf("no policy revocation NV counter at handle 0x%08x",
-				privateData.PolicyRevokeIndexHandle)}
-		}
-		return nil, nil, xerrors.Errorf("cannot obtain context for policy revocation NV counter: %w", err)
-	}
-	if !bytes.Equal(privateData.PolicyRevokeIndexName, policyRevokeIndex.Name()) {
-		return nil, nil, InvalidKeyFileError{"the NV index used for policy revocation on the TPM doesn't match the original key data file"}
-	}
+	// Obtain a ResourceContext for the dynamic policy revocation NV index. Expect the
+	// caller to have already done this, so it can't fail
+	policyRevokeIndex, _ := tpm.WrapHandle(privateData.PolicyRevokeIndexHandle)
 
-	// Parse the key for signing the dynamic authorization policy
-	authKey, err := x509.ParsePKCS1PrivateKey(privateData.AuthorizeKeyPrivate)
-	if err != nil {
-		return nil, nil, InvalidKeyFileError{fmt.Sprintf("cannot parse dynamic policy authorization key: %v", err)}
-	}
+	// Parse the key for signing the dynamic authorization policy. Expect the caller
+	// to have already made sure this parses correctly, so it can't fail
+	authKey, _ := x509.ParsePKCS1PrivateKey(privateData.AuthorizeKeyPrivate)
 
 	// Obtain the revoke count for the new dynamic authorization policy
 	var nextPolicyRevokeCount uint64
@@ -158,6 +146,8 @@ func computeKeyDynamicAuthPolicy(tpm *tpm2.TPMContext, privateData *privateKeyDa
 	} else {
 		nextPolicyRevokeCount = c + 1
 	}
+
+	var err error
 
 	// Compute PCR digests
 	var secureBootDigests tpm2.DigestList
