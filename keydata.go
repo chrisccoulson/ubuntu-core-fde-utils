@@ -210,7 +210,7 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 		return xerrors.Errorf("cannot read public area for PIN NV index: %w", err)
 	}
 	if !bytes.Equal(pinIndexName, pinIndex.Name()) {
-		return keyFileError{errors.New("PIN NV index does not match key data file")}
+		return errors.New("invalid context for PIN NV index")
 	}
 
 	authKeyName, err := d.StaticPolicyData.AuthorizeKeyPublic.Name()
@@ -257,7 +257,7 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 		return xerrors.Errorf("cannot read public area for dynamic authorization policy revocation NV index: %w", err)
 	}
 	if !bytes.Equal(policyRevokeIndexName, policyRevokeIndex.Name()) {
-		return keyFileError{errors.New("dynamic authorization policy revocation NV index does not match key data file")}
+		return errors.New("invalid context for dynamic authorization policy revocation NV index")
 	}
 
 	// Make sure that the dynamic authorization policy data is consisent with the signed and verified authorized policy digest.
