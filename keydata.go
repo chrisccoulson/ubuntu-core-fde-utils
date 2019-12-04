@@ -58,6 +58,7 @@ type keyData struct {
 	KeyPrivate        tpm2.Private
 	KeyPublic         *tpm2.Public
 	AskForPinHint     bool
+	PinIndexKeyName   tpm2.Name
 	StaticPolicyData  *staticPolicyData
 	DynamicPolicyData *dynamicPolicyData
 }
@@ -213,7 +214,7 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 	}
 	// Call TPM2_NV_ReadPublic with an audit session for integrity protection purposes and make sure that the returned name matches
 	// the name read back when initializing the ResourceContext.
-	_, pinIndexName, err := tpm.NVReadPublic(pinIndex, session.AddAttrs(tpm2.AttrAudit))
+	pinIndexPublic, pinIndexName, err := tpm.NVReadPublic(pinIndex, session.AddAttrs(tpm2.AttrAudit))
 	if err != nil {
 		return xerrors.Errorf("cannot read public area for PIN NV index: %w", err)
 	}
@@ -236,6 +237,15 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 
 	if !bytes.Equal(trial.GetDigest(), d.KeyPublic.AuthPolicy) {
 		return keyFileError{errors.New("static authorization policy data doesn't match sealed key object")}
+	}
+
+	// Make sure that the name of the key used to initialize the PIN NV index is consistent with the public area of the index.
+	// We've already verified that the NV index is correct in the previous step.
+	policies := pinNvIndexAuthPolicies(d.PinIndexKeyName)
+	trial, _ = tpm2.ComputeAuthPolicy(pinNvIndexNameAlgorithm)
+	trial.PolicyOR(policies)
+	if !bytes.Equal(trial.GetDigest(), pinIndexPublic.AuthPolicy) {
+		return keyFileError{errors.New("PIN NV index key name is inconsistent with public area")}
 	}
 
 	// At this point, we know that the public area of the dynamic authorization policy signing key and the PIN NV index are consistent
