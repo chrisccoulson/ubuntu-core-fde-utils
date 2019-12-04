@@ -423,6 +423,14 @@ func UpdateKeyAuthPolicy(tpm *TPMConnection, keyPath, privatePath string, params
 		return InvalidKeyFileError{err.Error()}
 	}
 
+	if err := data.validate(tpm.TPMContext, privateData, session); err != nil {
+		switch e := err.(type) {
+		case keyFileError:
+			return InvalidKeyFileError{"integrity check failed: " + e.err.Error()}
+		}
+		return xerrors.Errorf("cannot integrity check key data file: %w", err)
+	}
+
 	// Compute a new dynamic authorization policy
 	policyData, revoke, err := computeKeyDynamicAuthPolicy(tpm.TPMContext, privateData, params, session)
 	if err != nil {
