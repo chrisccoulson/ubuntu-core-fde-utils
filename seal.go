@@ -191,7 +191,7 @@ func computeKeyDynamicAuthPolicy(tpm *tpm2.TPMContext, privateData *privateKeyDa
 	}
 
 	return policyData, func(session *tpm2.Session) error {
-		return tpm.NVIncrement(policyRevokeIndex, policyRevokeIndex, session)
+		return incrementPolicyRevocationNvIndex(tpm, policyRevokeIndex, authKey, session)
 	}, nil
 }
 
@@ -282,7 +282,7 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 		}()
 	}
 
-	// Create NV indices
+	// Create pin NV index
 	pinIndex, pinIndexKeyName, err := createPinNvIndex(tpm.TPMContext, create.PinHandle, create.OwnerAuth, session)
 	if err != nil {
 		switch {
@@ -300,7 +300,15 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 		tpm.NVUndefineSpace(tpm2.HandleOwner, pinIndex, session.WithAuthValue(create.OwnerAuth))
 	}()
 
-	policyRevokeIndex, err := createPolicyRevocationNvIndex(tpm.TPMContext, create.PolicyRevocationHandle, create.OwnerAuth, session)
+	// Compute the static policy - this never changes for the lifetime of this key file
+	staticPolicyData, authKey, authPolicy, err :=
+		computeStaticPolicy(sealedKeyNameAlgorithm, &staticPolicyComputeParams{pinIndex: pinIndex})
+	if err != nil {
+		return xerrors.Errorf("cannot compute static authorization policy: %w", err)
+	}
+
+	// Create dynamic authorization policy revocation index
+	policyRevokeIndex, err := createPolicyRevocationNvIndex(tpm.TPMContext, create.PolicyRevocationHandle, authKey, create.OwnerAuth, session)
 	if err != nil {
 		switch {
 		case isNVIndexDefinedError(err):
@@ -316,13 +324,6 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 		}
 		tpm.NVUndefineSpace(tpm2.HandleOwner, policyRevokeIndex, session.WithAuthValue(create.OwnerAuth))
 	}()
-
-	// Compute the static policy - this never changes for the lifetime of this key file
-	staticPolicyData, authKey, authPolicy, err :=
-		computeStaticPolicy(sealedKeyNameAlgorithm, &staticPolicyComputeParams{pinIndex: pinIndex})
-	if err != nil {
-		return xerrors.Errorf("cannot compute static authorization policy: %w", err)
-	}
 
 	// Define the template for the sealed key object, using the computed policy digest
 	template := tpm2.Public{
