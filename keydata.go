@@ -196,6 +196,9 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 
 	// Obtain a ResourceContext for the PIN NV index. Go-tpm2 uses TPM2_NV_ReadPublic without any integrity protection here to
 	// initialize the ResourceContext.
+	if d.StaticPolicyData.PinIndexHandle.Type() != tpm2.HandleTypeNVIndex {
+		return keyFileError{errors.New("PIN NV index handle is invalid")}
+	}
 	pinIndex, err := tpm.WrapHandle(d.StaticPolicyData.PinIndexHandle)
 	if err != nil {
 		if _, unavail := err.(tpm2.ResourceUnavailableError); unavail {
@@ -227,10 +230,17 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 		return keyFileError{errors.New("static authorization policy data doesn't match sealed key object")}
 	}
 
+	// At this point, we know that the public area of the dynamic authorization policy signing key and the PIN NV index are consistent
+	// with the sealed data object.
+
 	// Make sure that the dynamic authorization policy signature is valid. We've already verified that the public key is correct
 	// in the previous step.
 	h := signingKeyNameAlgorithm.NewHash()
 	h.Write(d.DynamicPolicyData.AuthorizedPolicy)
+
+	if d.DynamicPolicyData.AuthorizedPolicySignature.SigAlg != tpm2.SigSchemeAlgRSAPSS {
+		return keyFileError{errors.New("dynamic authorization policy signature has invalid scheme")}
+	}
 
 	authKey := rsa.PublicKey{
 		N: new(big.Int).SetBytes(d.StaticPolicyData.AuthorizeKeyPublic.Unique.RSA()),
@@ -241,8 +251,13 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 		return keyFileError{xerrors.Errorf("dynamic authorization policy signature verification failed: %w", err)}
 	}
 
+	// The dynamic authorization policy digest is correct and was signed by the key associated with the sealed data object.
+
 	// Obtain a ResourceContext for the dynamic authorization policy revocation NV index. Go-tpm2 uses TPM2_NV_ReadPublic
 	// without any integrity protection here to initialize the ResourceContext.
+	if d.DynamicPolicyData.PolicyRevokeIndexHandle.Type() != tpm2.HandleTypeNVIndex {
+		return keyFileError{errors.New("dynamic authorization policy revocation NV index handle is invalid")}
+	}
 	policyRevokeIndex, err := tpm.WrapHandle(d.DynamicPolicyData.PolicyRevokeIndexHandle)
 	if err != nil {
 		if _, unavail := err.(tpm2.ResourceUnavailableError); unavail {
