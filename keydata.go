@@ -231,7 +231,10 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 	}
 
 	// Make sure that the static authorization policy data is consistent with the sealed key object's policy.
-	trial, _ := tpm2.ComputeAuthPolicy(d.KeyPublic.NameAlg)
+	trial, err := tpm2.ComputeAuthPolicy(d.KeyPublic.NameAlg)
+	if err != nil {
+		return keyFileError{xerrors.Errorf("cannot determine if static authorization policy matches sealed key object: %w", err)}
+	}
 	trial.PolicyAuthorize(nil, authKeyName)
 	trial.PolicySecret(pinIndex.Name(), nil)
 
@@ -241,6 +244,9 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 
 	// Make sure that the name of the key used to initialize the PIN NV index is consistent with the public area of the index.
 	// We've already verified that the NV index is correct in the previous step.
+	if !pinIndexPublic.NameAlg.Supported() {
+		return keyFileError{errors.New("cannot determine if PIN NV index key name is consistent with public area: invalid algorithm")}
+	}
 	policies := pinNvIndexAuthPolicies(pinIndexPublic.NameAlg, d.PinIndexKeyName)
 	trial, _ = tpm2.ComputeAuthPolicy(pinIndexPublic.NameAlg)
 	trial.PolicyOR(policies)
