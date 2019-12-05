@@ -49,7 +49,7 @@ func isLockoutError(err error) bool {
 func createPublicAreaForRSASigningKey(key *rsa.PublicKey) *tpm2.Public {
 	return &tpm2.Public{
 		Type:    tpm2.ObjectTypeRSA,
-		NameAlg: signingKeyNameAlgorithm,
+		NameAlg: tpm2.HashAlgorithmSHA256,
 		Attrs:   tpm2.AttrSensitiveDataOrigin | tpm2.AttrUserWithAuth | tpm2.AttrSign,
 		Params: tpm2.PublicParamsU{
 			Data: &tpm2.RSAParams{

@@ -231,7 +231,7 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 	}
 
 	// Make sure that the static authorization policy data is consistent with the sealed key object's policy.
-	trial, _ := tpm2.ComputeAuthPolicy(sealedKeyNameAlgorithm)
+	trial, _ := tpm2.ComputeAuthPolicy(d.KeyPublic.NameAlg)
 	trial.PolicyAuthorize(nil, authKeyName)
 	trial.PolicySecret(pinIndex.Name(), nil)
 
@@ -241,8 +241,8 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 
 	// Make sure that the name of the key used to initialize the PIN NV index is consistent with the public area of the index.
 	// We've already verified that the NV index is correct in the previous step.
-	policies := pinNvIndexAuthPolicies(d.PinIndexKeyName)
-	trial, _ = tpm2.ComputeAuthPolicy(pinNvIndexNameAlgorithm)
+	policies := pinNvIndexAuthPolicies(pinIndexPublic.NameAlg, d.PinIndexKeyName)
+	trial, _ = tpm2.ComputeAuthPolicy(pinIndexPublic.NameAlg)
 	trial.PolicyOR(policies)
 	if !bytes.Equal(trial.GetDigest(), pinIndexPublic.AuthPolicy) {
 		return keyFileError{errors.New("PIN NV index key name is inconsistent with public area")}

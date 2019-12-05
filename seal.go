@@ -132,7 +132,8 @@ type PolicyParams struct {
 	SecureBootDbKeystores []string
 }
 
-func computeKeyDynamicAuthPolicy(tpm *tpm2.TPMContext, privateData *privateKeyData, params *PolicyParams, session *tpm2.Session) (*dynamicPolicyData, func(*tpm2.Session) error, error) {
+func computeKeyDynamicAuthPolicy(tpm *tpm2.TPMContext, alg, signAlg tpm2.HashAlgorithmId, privateData *privateKeyData,
+	params *PolicyParams, session *tpm2.Session) (*dynamicPolicyData, error) {
 	// Obtain a ResourceContext for the dynamic policy revocation NV index. Expect the
 	// caller to have already done this, so it can't fail
 	policyRevokeIndex, _ := tpm.WrapHandle(privateData.Data.PolicyRevokeIndexHandle)
@@ -144,7 +145,7 @@ func computeKeyDynamicAuthPolicy(tpm *tpm2.TPMContext, privateData *privateKeyDa
 	// Obtain the revoke count for the new dynamic authorization policy
 	var nextPolicyRevokeCount uint64
 	if c, err := tpm.NVReadCounter(policyRevokeIndex, policyRevokeIndex, session); err != nil {
-		return nil, nil, xerrors.Errorf("cannot read revocation counter: %w", err)
+		return nil, xerrors.Errorf("cannot read revocation counter: %w", err)
 	} else {
 		nextPolicyRevokeCount = c + 1
 	}
@@ -157,19 +158,19 @@ func computeKeyDynamicAuthPolicy(tpm *tpm2.TPMContext, privateData *privateKeyDa
 	if params != nil {
 		secureBootDigests, err = computeSecureBootPolicyDigests(tpm, pcrAlgorithm, params)
 		if err != nil {
-			return nil, nil, xerrors.Errorf("cannot compute secure boot policy digests: %w", err)
+			return nil, xerrors.Errorf("cannot compute secure boot policy digests: %w", err)
 		}
 		_, pcrValues, err := tpm.PCRRead(tpm2.PCRSelectionList{
 			tpm2.PCRSelection{Hash: pcrAlgorithm, Select: tpm2.PCRSelectionData{ubuntuBootParamsPCR}}})
 		if err != nil {
-			return nil, nil, xerrors.Errorf("cannot read current PCR values: %w", err)
+			return nil, xerrors.Errorf("cannot read current PCR values: %w", err)
 		}
 		ubuntuBootParamsDigests = append(ubuntuBootParamsDigests, pcrValues[pcrAlgorithm][ubuntuBootParamsPCR])
 	} else {
 		_, pcrValues, err := tpm.PCRRead(tpm2.PCRSelectionList{
 			tpm2.PCRSelection{Hash: pcrAlgorithm, Select: tpm2.PCRSelectionData{secureBootPCR, ubuntuBootParamsPCR}}})
 		if err != nil {
-			return nil, nil, xerrors.Errorf("cannot read current PCR values: %w", err)
+			return nil, xerrors.Errorf("cannot read current PCR values: %w", err)
 		}
 		secureBootDigests = append(secureBootDigests, pcrValues[pcrAlgorithm][secureBootPCR])
 		ubuntuBootParamsDigests = append(ubuntuBootParamsDigests, pcrValues[pcrAlgorithm][ubuntuBootParamsPCR])
@@ -178,6 +179,7 @@ func computeKeyDynamicAuthPolicy(tpm *tpm2.TPMContext, privateData *privateKeyDa
 	// Use the PCR digests and NV index names to generate a single signed dynamic authorization policy digest
 	policyParams := dynamicPolicyComputeParams{
 		key:                        authKey,
+		signAlg:                    signAlg,
 		secureBootPCRAlg:           pcrAlgorithm,
 		ubuntuBootParamsPCRAlg:     pcrAlgorithm,
 		secureBootPCRDigests:       secureBootDigests,
@@ -185,14 +187,12 @@ func computeKeyDynamicAuthPolicy(tpm *tpm2.TPMContext, privateData *privateKeyDa
 		policyRevokeIndex:          policyRevokeIndex,
 		policyRevokeCount:          nextPolicyRevokeCount}
 
-	policyData, err := computeDynamicPolicy(sealedKeyNameAlgorithm, &policyParams)
+	policyData, err := computeDynamicPolicy(alg, &policyParams)
 	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot compute dynamic authorization policy: %w", err)
+		return nil, xerrors.Errorf("cannot compute dynamic authorization policy: %w", err)
 	}
 
-	return policyData, func(session *tpm2.Session) error {
-		return incrementPolicyRevocationNvIndex(tpm, policyRevokeIndex, authKey, session)
-	}, nil
+	return policyData, nil
 }
 
 type CreationParams struct {
@@ -300,9 +300,11 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 		tpm.NVUndefineSpace(tpm2.HandleOwner, pinIndex, session.WithAuthValue(create.OwnerAuth))
 	}()
 
+	sealedKeyNameAlg := tpm2.HashAlgorithmSHA256
+
 	// Compute the static policy - this never changes for the lifetime of this key file
 	staticPolicyData, authKey, authPolicy, err :=
-		computeStaticPolicy(sealedKeyNameAlgorithm, &staticPolicyComputeParams{pinIndex: pinIndex})
+		computeStaticPolicy(sealedKeyNameAlg, &staticPolicyComputeParams{pinIndex: pinIndex})
 	if err != nil {
 		return xerrors.Errorf("cannot compute static authorization policy: %w", err)
 	}
@@ -328,7 +330,7 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 	// Define the template for the sealed key object, using the computed policy digest
 	template := tpm2.Public{
 		Type:       tpm2.ObjectTypeKeyedHash,
-		NameAlg:    sealedKeyNameAlgorithm,
+		NameAlg:    sealedKeyNameAlg,
 		Attrs:      tpm2.AttrFixedTPM | tpm2.AttrFixedParent,
 		AuthPolicy: authPolicy,
 		Params: tpm2.PublicParamsU{
@@ -359,7 +361,9 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 	privateData.CreationTicket = creationTicket
 
 	// Create a dynamic authorization policy
-	dynamicPolicyData, revoke, err := computeKeyDynamicAuthPolicy(tpm.TPMContext, &privateData, policy, session)
+	dynamicPolicyData, err :=
+		computeKeyDynamicAuthPolicy(tpm.TPMContext, sealedKeyNameAlg, staticPolicyData.AuthorizeKeyPublic.NameAlg, &privateData, policy,
+			session)
 	if err != nil {
 		return err
 	}
@@ -384,7 +388,8 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 		}
 	}
 
-	if err := revoke(session); err != nil {
+	if err := incrementPolicyRevocationNvIndex(tpm.TPMContext, policyRevokeIndex, authKey, data.StaticPolicyData.AuthorizeKeyPublic,
+		session); err != nil {
 		return xerrors.Errorf("cannot increment dynamic policy revocation NV counter: %w", err)
 	}
 
@@ -436,7 +441,9 @@ func UpdateKeyAuthPolicy(tpm *TPMConnection, keyPath, privatePath string, params
 	}
 
 	// Compute a new dynamic authorization policy
-	policyData, revoke, err := computeKeyDynamicAuthPolicy(tpm.TPMContext, privateData, params, session)
+	policyData, err :=
+		computeKeyDynamicAuthPolicy(tpm.TPMContext, data.KeyPublic.NameAlg, data.StaticPolicyData.AuthorizeKeyPublic.NameAlg, privateData,
+			params, session)
 	if err != nil {
 		return err
 	}
@@ -448,7 +455,10 @@ func UpdateKeyAuthPolicy(tpm *TPMConnection, keyPath, privatePath string, params
 		return xerrors.Errorf("cannot write key data file: %v", err)
 	}
 
-	if err := revoke(session); err != nil {
+	policyRevokeIndex, _ := tpm.WrapHandle(privateData.Data.PolicyRevokeIndexHandle)
+	authKey, _ := x509.ParsePKCS1PrivateKey(privateData.Data.AuthorizeKeyPrivate)
+	if err := incrementPolicyRevocationNvIndex(tpm.TPMContext, policyRevokeIndex, authKey, data.StaticPolicyData.AuthorizeKeyPublic,
+		session); err != nil {
 		return xerrors.Errorf("cannot revoke old authorization policies: %w", err)
 	}
 

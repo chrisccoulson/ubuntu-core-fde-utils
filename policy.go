@@ -32,12 +32,9 @@ import (
 	"golang.org/x/xerrors"
 )
 
-const (
-	policyRevocationNvIndexNameAlgorithm tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
-)
-
 type dynamicPolicyComputeParams struct {
 	key                        *rsa.PrivateKey
+	signAlg                    tpm2.HashAlgorithmId
 	secureBootPCRAlg           tpm2.HashAlgorithmId
 	ubuntuBootParamsPCRAlg     tpm2.HashAlgorithmId
 	secureBootPCRDigests       tpm2.DigestList
@@ -67,9 +64,14 @@ type staticPolicyData struct {
 	PinIndexHandle     tpm2.Handle
 }
 
-func incrementPolicyRevocationNvIndex(tpm *tpm2.TPMContext, index tpm2.ResourceContext, key *rsa.PrivateKey, session *tpm2.Session) error {
+func incrementPolicyRevocationNvIndex(tpm *tpm2.TPMContext, index tpm2.ResourceContext, key *rsa.PrivateKey, keyPublic *tpm2.Public, session *tpm2.Session) error {
+	nvPub, _, err := tpm.NVReadPublic(index, session.AddAttrs(tpm2.AttrAudit))
+	if err != nil {
+		return xerrors.Errorf("cannot read public area of NV index: %w", err)
+	}
+
 	// Begin a policy session to increment the index.
-	policySessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, policyRevocationNvIndexNameAlgorithm, nil)
+	policySessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, nvPub.NameAlg, nil)
 	if err != nil {
 		return xerrors.Errorf("cannot begin policy session: %w", err)
 	}
@@ -90,7 +92,6 @@ func incrementPolicyRevocationNvIndex(tpm *tpm2.TPMContext, index tpm2.ResourceC
 	// Load the public part of the key in to the TPM. There's no integrity protection for this command as if it's altered in
 	// transit then either the signature verification fails or the policy digest will not match the one associated with the NV
 	// index.
-	keyPublic := createPublicAreaForRSASigningKey(&key.PublicKey)
 	keyLoaded, _, err := tpm.LoadExternal(nil, keyPublic, tpm2.HandleEndorsement)
 	if err != nil {
 		return xerrors.Errorf("cannot load public part of key used to verify authorization signature: %w", err)
@@ -127,13 +128,15 @@ func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, key
 		return nil, xerrors.Errorf("cannot compute name of signing key for incrementing NV index: %w", err)
 	}
 
-	trial, _ := tpm2.ComputeAuthPolicy(tpm2.HashAlgorithmSHA256)
+	nameAlg := tpm2.HashAlgorithmSHA256
+
+	trial, _ := tpm2.ComputeAuthPolicy(nameAlg)
 	trial.PolicyCommandCode(tpm2.CommandNVIncrement)
 	trial.PolicySigned(keyName, nil)
 
 	public := tpm2.NVPublic{
 		Index:      handle,
-		NameAlg:    policyRevocationNvIndexNameAlgorithm,
+		NameAlg:    nameAlg,
 		Attrs:      tpm2.MakeNVAttributes(tpm2.AttrNVPolicyWrite|tpm2.AttrNVAuthRead, tpm2.NVTypeCounter),
 		AuthPolicy: trial.GetDigest(),
 		Size:       8}
@@ -170,7 +173,7 @@ func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, key
 	}
 
 	// The name associated with context is the one associated with the index we created. Initialize the index
-	if err := incrementPolicyRevocationNvIndex(tpm, context, key, session); err != nil {
+	if err := incrementPolicyRevocationNvIndex(tpm, context, key, keyPublic, session); err != nil {
 		return nil, xerrors.Errorf("cannot initialize new NV index: %w", err)
 	}
 
@@ -262,11 +265,11 @@ func computeDynamicPolicy(alg tpm2.HashAlgorithmId, input *dynamicPolicyComputeP
 	authorizedPolicy := trial.GetDigest()
 
 	// Create a digest to sign
-	h := signingKeyNameAlgorithm.NewHash()
+	h := input.signAlg.NewHash()
 	h.Write(authorizedPolicy)
 
 	// Sign the digest
-	sig, err := rsa.SignPSS(rand.Reader, input.key, signingKeyNameAlgorithm.GetHash(), h.Sum(nil),
+	sig, err := rsa.SignPSS(rand.Reader, input.key, input.signAlg.GetHash(), h.Sum(nil),
 		&rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash})
 	if err != nil {
 		return nil, xerrors.Errorf("cannot provide signature for initializing NV index: %w", err)
@@ -276,7 +279,7 @@ func computeDynamicPolicy(alg tpm2.HashAlgorithmId, input *dynamicPolicyComputeP
 		SigAlg: tpm2.SigSchemeAlgRSAPSS,
 		Signature: tpm2.SignatureU{
 			Data: &tpm2.SignatureRSAPSS{
-				Hash: signingKeyNameAlgorithm,
+				Hash: input.signAlg,
 				Sig:  tpm2.PublicKeyRSA(sig)}}}
 
 	return &dynamicPolicyData{
@@ -337,7 +340,7 @@ func executePolicySession(tpm *TPMConnection, sessionContext tpm2.ResourceContex
 	}
 	defer tpm.FlushContext(authorizeKeyContext)
 
-	h := signingKeyNameAlgorithm.NewHash()
+	h := staticInput.AuthorizeKeyPublic.NameAlg.NewHash()
 	h.Write(dynamicInput.AuthorizedPolicy)
 
 	authorizeTicket, err := tpm.VerifySignature(authorizeKeyContext, h.Sum(nil), dynamicInput.AuthorizedPolicySignature)
