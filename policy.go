@@ -336,10 +336,13 @@ func executePolicySession(tpm *TPMConnection, sessionContext tpm2.ResourceContex
 
 	authorizeKeyContext, authorizeKeyName, err := tpm.LoadExternal(nil, staticInput.AuthorizeKeyPublic, tpm2.HandleOwner)
 	if err != nil {
-		return xerrors.Errorf("cannot load public area for dynamic authorization policy signature verification: %w", err)
+		return xerrors.Errorf("cannot load public area for dynamic authorization policy signature verification key: %w", err)
 	}
 	defer tpm.FlushContext(authorizeKeyContext)
 
+	if !staticInput.AuthorizeKeyPublic.NameAlg.Supported() {
+		return errors.New("public area of dynamic authorization policy signature verification key has an unsupported name algorithm")
+	}
 	h := staticInput.AuthorizeKeyPublic.NameAlg.NewHash()
 	h.Write(dynamicInput.AuthorizedPolicy)
 
