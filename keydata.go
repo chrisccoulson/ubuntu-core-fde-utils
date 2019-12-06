@@ -23,7 +23,6 @@ import (
 	"bytes"
 	"crypto/rsa"
 	"crypto/x509"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -233,60 +232,6 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 	// At this point, we know that the public area of the dynamic authorization policy signing key and the PIN NV index are consistent
 	// with the sealed data object.
 
-	// Make sure that the dynamic authorization policy signature is valid. We've already verified that the public key is correct
-	// in the previous step.
-	h := signingKeyNameAlgorithm.NewHash()
-	h.Write(d.DynamicPolicyData.AuthorizedPolicy)
-
-	if d.DynamicPolicyData.AuthorizedPolicySignature.SigAlg != tpm2.SigSchemeAlgRSAPSS {
-		return keyFileError{errors.New("dynamic authorization policy signature has invalid scheme")}
-	}
-
-	authKey := rsa.PublicKey{
-		N: new(big.Int).SetBytes(d.StaticPolicyData.AuthorizeKeyPublic.Unique.RSA()),
-		E: int(d.StaticPolicyData.AuthorizeKeyPublic.Params.RSADetail().Exponent)}
-	if err := rsa.VerifyPSS(&authKey, signingKeyNameAlgorithm.GetHash(), h.Sum(nil),
-		d.DynamicPolicyData.AuthorizedPolicySignature.Signature.RSAPSS().Sig,
-		&rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash}); err != nil {
-		return keyFileError{xerrors.Errorf("dynamic authorization policy signature verification failed: %w", err)}
-	}
-
-	// The dynamic authorization policy digest is correct and was signed by the key associated with the sealed data object.
-
-	// Obtain a ResourceContext for the dynamic authorization policy revocation NV index. Go-tpm2 uses TPM2_NV_ReadPublic
-	// without any integrity protection here to initialize the ResourceContext.
-	if d.DynamicPolicyData.PolicyRevokeIndexHandle.Type() != tpm2.HandleTypeNVIndex {
-		return keyFileError{errors.New("dynamic authorization policy revocation NV index handle is invalid")}
-	}
-	policyRevokeIndex, err := tpm.WrapHandle(d.DynamicPolicyData.PolicyRevokeIndexHandle)
-	if err != nil {
-		if _, unavail := err.(tpm2.ResourceUnavailableError); unavail {
-			return keyFileError{errors.New("dynamic authorization policy revocation NV index is unavailable")}
-		}
-		return xerrors.Errorf("cannot create context for dynamic authorization policy revocation NV index: %w", err)
-	}
-	// Call TPM2_NV_ReadPublic with an audit session for integrity protection purposes and make sure that the returned name matches
-	// the name read back when initializing the ResourceContext.
-	_, policyRevokeIndexName, err := tpm.NVReadPublic(policyRevokeIndex, session.AddAttrs(tpm2.AttrAudit))
-	if err != nil {
-		return xerrors.Errorf("cannot read public area for dynamic authorization policy revocation NV index: %w", err)
-	}
-	if !bytes.Equal(policyRevokeIndexName, policyRevokeIndex.Name()) {
-		return errors.New("invalid context for dynamic authorization policy revocation NV index")
-	}
-
-	// Make sure that the dynamic authorization policy data is consisent with the signed and verified authorized policy digest.
-	trial, _ = tpm2.ComputeAuthPolicy(sealedKeyNameAlgorithm)
-	trial.PolicyOR(ensureSufficientORDigests(d.DynamicPolicyData.UbuntuBootParamsORDigests))
-
-	operandB := make([]byte, 8)
-	binary.BigEndian.PutUint64(operandB, d.DynamicPolicyData.PolicyRevokeCount)
-	trial.PolicyNV(policyRevokeIndex.Name(), operandB, 0, tpm2.OpUnsignedLE)
-
-	if !bytes.Equal(trial.GetDigest(), d.DynamicPolicyData.AuthorizedPolicy) {
-		return keyFileError{errors.New("dynamic authorization policy data doesn't match authorized policy")}
-	}
-
 	if privateData == nil {
 		// If we weren't passed a private data structure, we're done.
 		return nil
@@ -297,9 +242,10 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 		return keyFileError{xerrors.Errorf("cannot parse dynamic policy authorization key: %w", err)}
 	}
 	// Verify that the private data structure is bound to the key data structure.
-	if authKeyPrivate.PublicKey.E != authKey.E || authKeyPrivate.PublicKey.N.Cmp(authKey.N) != 0 ||
-		privateData.PolicyRevokeIndexHandle != d.DynamicPolicyData.PolicyRevokeIndexHandle ||
-		!bytes.Equal(privateData.PolicyRevokeIndexName, policyRevokeIndex.Name()) {
+	authKey := rsa.PublicKey{
+		N: new(big.Int).SetBytes(d.StaticPolicyData.AuthorizeKeyPublic.Unique.RSA()),
+		E: int(d.StaticPolicyData.AuthorizeKeyPublic.Params.RSADetail().Exponent)}
+	if authKeyPrivate.PublicKey.E != authKey.E || authKeyPrivate.PublicKey.N.Cmp(authKey.N) != 0 {
 		return keyFileError{errors.New("key data file and private data file mismatch")}
 	}
 
