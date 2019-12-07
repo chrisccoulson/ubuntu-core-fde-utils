@@ -219,6 +219,9 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 	if err != nil {
 		return keyFileError{xerrors.Errorf("cannot compute name of dynamic authorization policy key: %w", err)}
 	}
+	if d.StaticPolicyData.AuthorizeKeyPublic.Type != tpm2.ObjectTypeRSA {
+		return keyFileError{errors.New("public area of dynamic authorization policy signing key has the wrong type")}
+	}
 
 	// Make sure that the static authorization policy data is consistent with the sealed key object's policy.
 	trial, _ := tpm2.ComputeAuthPolicy(sealedKeyNameAlgorithm)
