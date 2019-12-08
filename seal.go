@@ -20,6 +20,8 @@
 package fdeutil
 
 import (
+	"crypto"
+	_ "crypto/sha256"
 	"crypto/x509"
 	"fmt"
 	"io/ioutil"
@@ -133,11 +135,11 @@ type PolicyParams struct {
 func computeKeyDynamicAuthPolicy(tpm *tpm2.TPMContext, privateData *privateKeyData, params *PolicyParams, session *tpm2.Session) (*dynamicPolicyData, func(*tpm2.Session) error, error) {
 	// Obtain a ResourceContext for the dynamic policy revocation NV index. Expect the
 	// caller to have already done this, so it can't fail
-	policyRevokeIndex, _ := tpm.WrapHandle(privateData.PolicyRevokeIndexHandle)
+	policyRevokeIndex, _ := tpm.WrapHandle(privateData.Data.PolicyRevokeIndexHandle)
 
 	// Parse the key for signing the dynamic authorization policy. Expect the caller
 	// to have already made sure this parses correctly, so it can't fail
-	authKey, _ := x509.ParsePKCS1PrivateKey(privateData.AuthorizeKeyPrivate)
+	authKey, _ := x509.ParsePKCS1PrivateKey(privateData.Data.AuthorizeKeyPrivate)
 
 	// Obtain the revoke count for the new dynamic authorization policy
 	var nextPolicyRevokeCount uint64
@@ -332,18 +334,28 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 			Data: &tpm2.KeyedHashParams{Scheme: tpm2.KeyedHashScheme{Scheme: tpm2.KeyedHashSchemeNull}}}}
 	sensitive := tpm2.SensitiveCreate{Data: key}
 
+	// Have the digest of the private data recorded in the creation data for the sealed data object.
+	var privateData privateKeyData
+	privateData.Data.AuthorizeKeyPrivate = x509.MarshalPKCS1PrivateKey(authKey)
+	privateData.Data.PolicyRevokeIndexHandle = policyRevokeIndex.Handle()
+	privateData.Data.PolicyRevokeIndexName = policyRevokeIndex.Name()
+
+	h := crypto.SHA256.New()
+	if err := tpm2.MarshalToWriter(h, &privateData.Data); err != nil {
+		panic(fmt.Sprintf("cannot marshal private data: %v", err))
+	}
+
 	// Now create the sealed key object. The command is integrity protected so if the object at the handle we expect the SRK to reside
 	// at has a different name (ie, if we're connected via a resource manager and somebody swapped the object with another one), this
 	// command will fail. We take advantage of parameter encryption here too.
-	priv, pub, _, _, _, err := tpm.Create(srkContext, &sensitive, &template, nil, nil, nil, session.AddAttrs(tpm2.AttrCommandEncrypt))
+	priv, pub, creationData, _, creationTicket, err :=
+		tpm.Create(srkContext, &sensitive, &template, h.Sum(nil), nil, nil, session.AddAttrs(tpm2.AttrCommandEncrypt))
 	if err != nil {
 		return xerrors.Errorf("cannot create sealed data object for key: %w", err)
 	}
 
-	privateData := privateKeyData{
-		AuthorizeKeyPrivate:     x509.MarshalPKCS1PrivateKey(authKey),
-		PolicyRevokeIndexHandle: policyRevokeIndex.Handle(),
-		PolicyRevokeIndexName:   policyRevokeIndex.Name()}
+	privateData.CreationData = creationData
+	privateData.CreationTicket = creationTicket
 
 	// Create a dynamic authorization policy
 	dynamicPolicyData, revoke, err := computeKeyDynamicAuthPolicy(tpm.TPMContext, &privateData, policy, session)
