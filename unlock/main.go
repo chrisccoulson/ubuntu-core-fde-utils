@@ -129,7 +129,7 @@ func run() int {
 	reprovisionAttempted := false
 
 RetryUnseal:
-	key, err := fdeutil.UnsealKeyFromTPM(tpm, in, pin)
+	key, err := fdeutil.UnsealKeyFromTPM(tpm, in, pin, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: error unsealing key: %v\n", devicePath, err)
 		ret := unspecifiedErrorExitCode

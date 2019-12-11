@@ -368,7 +368,7 @@ func executePolicySession(tpm *TPMConnection, sessionContext tpm2.ResourceContex
 	return nil
 }
 
-func lockAccess(tpm *tpm2.TPMContext, input *staticPolicyData) error {
+func lockAccessUntilTPMReset(tpm *tpm2.TPMContext, input *staticPolicyData) error {
 	pinIndexContext, err := tpm.WrapHandle(input.PinIndexHandle)
 	if err != nil {
 		return xerrors.Errorf("cannot obtain context for pin NV index: %w", err)

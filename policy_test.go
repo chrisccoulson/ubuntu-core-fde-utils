@@ -270,18 +270,23 @@ func TestComputeDynamicPolicy(t *testing.T) {
 
 func TestLockAccess(t *testing.T) {
 	tpm, tcti := openTPMSimulatorForTesting(t)
-	resetTPMSimulator(t, tpm, tcti)
 	defer closeTPM(t, tpm)
 
 	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultSessionHashAlgorithm, nil)
+	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultHashAlgorithm, nil)
 	if err != nil {
 		t.Fatalf("StartAuthSession failed: %v", err)
 	}
-	defer flushContext(t, tpm, sessionContext)
+	sessionFlushed := false
+	defer func() {
+		if sessionFlushed {
+			return
+		}
+		flushContext(t, tpm, sessionContext)
+	}()
 
 	session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrContinueSession}
 
@@ -290,7 +295,11 @@ func TestLockAccess(t *testing.T) {
 		t.Fatalf("createPinNvIndex failed: %v", err)
 	}
 	defer func() {
-		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, pinIndex, nil); err != nil {
+		context, err := tpm.WrapHandle(testCreationParams.PinHandle)
+		if err != nil {
+			t.Fatalf("WrapHandle failed: %v", err)
+		}
+		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, context, nil); err != nil {
 			t.Errorf("NVUndefineSpace failed: %v", err)
 		}
 	}()
@@ -306,7 +315,11 @@ func TestLockAccess(t *testing.T) {
 		t.Fatalf("createPolicyRevocationNvIndex failed: %v", err)
 	}
 	defer func() {
-		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, policyRevokeIndex, nil); err != nil {
+		context, err := tpm.WrapHandle(testCreationParams.PolicyRevocationHandle)
+		if err != nil {
+			t.Fatalf("WrapHandle failed: %v", err)
+		}
+		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, context, nil); err != nil {
 			t.Errorf("NVUndefineSpace failed: %v", err)
 		}
 	}()
@@ -343,52 +356,61 @@ func TestLockAccess(t *testing.T) {
 		t.Fatalf("computeDynamicPolicy failed: %v", err)
 	}
 
-	for _, p := range []tpm2.Handle{secureBootPCR, ubuntuBootParamsPCR} {
-		if _, err := tpm.PCREvent(p, event, nil); err != nil {
-			t.Fatalf("PCREvent failed: %v", err)
-		}
-	}
+	flushContext(t, tpm, sessionContext)
+	sessionFlushed = true
 
-	policySessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, tpm2.HashAlgorithmSHA256, nil)
-	if err != nil {
-		t.Fatalf("StartAuthSession failed: %v", err)
-	}
-	defer flushContext(t, tpm, policySessionContext)
+	for i := 0; i < 2; i++ {
+		func() {
+			resetTPMSimulator(t, tpm, tcti)
 
-	err = executePolicySession(tpm, policySessionContext, staticPolicyData, dynamicPolicyData, "")
-	if err != nil {
-		t.Errorf("executePolicySession failed: %v", err)
-	}
+			for _, p := range []tpm2.Handle{secureBootPCR, ubuntuBootParamsPCR} {
+				if _, err := tpm.PCREvent(p, event, nil); err != nil {
+					t.Fatalf("PCREvent failed: %v", err)
+				}
+			}
 
-	digest, err := tpm.PolicyGetDigest(policySessionContext)
-	if err != nil {
-		t.Errorf("PolicyGetDigest failed: %v", err)
-	}
+			policySessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, tpm2.HashAlgorithmSHA256, nil)
+			if err != nil {
+				t.Fatalf("StartAuthSession failed: %v", err)
+			}
+			defer flushContext(t, tpm, policySessionContext)
 
-	if !bytes.Equal(digest, policy) {
-		t.Errorf("Unexpected digests")
-	}
+			err = executePolicySession(tpm, policySessionContext, staticPolicyData, dynamicPolicyData, "")
+			if err != nil {
+				t.Errorf("executePolicySession failed: %v", err)
+			}
 
-	if err := lockAccess(tpm.TPMContext, staticPolicyData); err != nil {
-		t.Errorf("lockAccess failed: %v", err)
-	}
+			digest, err := tpm.PolicyGetDigest(policySessionContext)
+			if err != nil {
+				t.Errorf("PolicyGetDigest failed: %v", err)
+			}
 
-	if err := tpm.PolicyRestart(policySessionContext); err != nil {
-		t.Errorf("PolicyRestart failed: %v", err)
-	}
+			if !bytes.Equal(digest, policy) {
+				t.Errorf("Unexpected digests")
+			}
 
-	err = executePolicySession(tpm, policySessionContext, staticPolicyData, dynamicPolicyData, "")
-	if err != nil {
-		t.Errorf("executePolicySession failed: %v", err)
-	}
+			if err := lockAccessUntilTPMReset(tpm.TPMContext, staticPolicyData); err != nil {
+				t.Errorf("lockAccessUntilTPMReset failed: %v", err)
+			}
 
-	digest, err = tpm.PolicyGetDigest(policySessionContext)
-	if err != nil {
-		t.Errorf("PolicyGetDigest failed: %v", err)
-	}
+			if err := tpm.PolicyRestart(policySessionContext); err != nil {
+				t.Errorf("PolicyRestart failed: %v", err)
+			}
 
-	if bytes.Equal(digest, policy) {
-		t.Errorf("Unexpected digests")
+			err = executePolicySession(tpm, policySessionContext, staticPolicyData, dynamicPolicyData, "")
+			if err != nil {
+				t.Errorf("executePolicySession failed: %v", err)
+			}
+
+			digest, err = tpm.PolicyGetDigest(policySessionContext)
+			if err != nil {
+				t.Errorf("PolicyGetDigest failed: %v", err)
+			}
+
+			if bytes.Equal(digest, policy) {
+				t.Errorf("Unexpected digests")
+			}
+		}()
 	}
 }
 

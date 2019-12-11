@@ -62,7 +62,7 @@ func TestChangePIN(t *testing.T) {
 		t.Fatalf("Failed to open key data file: %v", err)
 	}
 
-	keyUnsealed, err := UnsealKeyFromTPM(tpm, f, testPIN)
+	keyUnsealed, err := UnsealKeyFromTPM(tpm, f, testPIN, false)
 	if err != nil {
 		t.Fatalf("UnsealKeyFromTPM failed: %v", err)
 	}
