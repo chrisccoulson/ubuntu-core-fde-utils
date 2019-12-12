@@ -20,6 +20,7 @@
 package fdeutil
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -108,10 +109,15 @@ func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, own
 	// The name associated with context is read back from the TPM with no integrity protection, so we don't know if it's correct yet.
 	// We need to check that it's consistent with the NV index we created before adding it to an authorization policy.
 
-	// Initialize the index. This command is integrity protected so it will fail if the name associated with context doesn't
-	// correspond to the NV index. Success here confirms that the name associated with context corresponds to the actual NV index
-	// that we created. Calling the ResourceContext.Name() method on it will return a value that can be safely used to compute an
-	// authorization policy.
+	expectedName, err := public.Name()
+	if err != nil {
+		panic(fmt.Sprintf("cannot compute name of NV index: %v", err))
+	}
+	if !bytes.Equal(expectedName, context.Name()) {
+		return nil, errors.New("context for new NV index has unexpected name")
+	}
+
+	// The name associated with context is the one associated with the index we created. Initialize the index
 	if err := tpm.NVIncrement(context, context, session); err != nil {
 		return nil, xerrors.Errorf("cannot increment new NV index: %w", err)
 	}

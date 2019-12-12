@@ -20,6 +20,7 @@
 package fdeutil
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -113,7 +114,15 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 	// The name associated with context is read back from the TPM with no integrity protection, so we don't know if it's correct yet.
 	// We need to check that it's consistent with the NV index we created before adding it to an authorization policy.
 
-	// Begin a session to initialize the index.
+	expectedName, err := nvPublic.Name()
+	if err != nil {
+		panic(fmt.Sprintf("cannot compute name of NV index: %v", err))
+	}
+	if !bytes.Equal(expectedName, context.Name()) {
+		return nil, nil, errors.New("context for new NV index has unexpected name")
+	}
+
+	// The name associated with context is the one associated with the index we created. Begin a session to initialize the index.
 	policySessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, pinNvIndexNameAlgorithm, nil)
 	if err != nil {
 		return nil, nil, xerrors.Errorf("cannot begin policy session to initialize NV index: %w", err)
@@ -155,10 +164,7 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 		return nil, nil, xerrors.Errorf("cannot execute PolicyOR assertion to initialize NV index: %w", err)
 	}
 
-	// Initialize the index. This command is integrity protected so it will fail if the name associated with context doesn't
-	// correspond to the NV index. Success here confirms that the name associated with context corresponds to the actual NV index
-	// that we created. Calling the ResourceContext.Name() method on it will return a value that can be safely used to compute an
-	// authorization policy.
+	// Initialize the index
 	if err := tpm.NVWrite(context, context, nil, 0, &tpm2.Session{Context: policySessionContext}); err != nil {
 		return nil, nil, xerrors.Errorf("cannot initialize NV index: %w", err)
 	}
