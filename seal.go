@@ -91,6 +91,16 @@ type SealParams struct {
 	// generated authorization policy. Alternate boot sequences resulting in the same authorization policy
 	// are automatically de-duplicated.
 	LoadPaths []*OSComponent
+
+	// SecureBootDbKeystores are the source directories for UEFI signature database updates and corresponds to
+	// the "--keystore" options passed to sbkeysync when applying updates. To support atomic updates of
+	// UEFI signature databases, SealKeyToTPM should be called before the updates contained in these
+	// directories are applied by sbkeysync. After applying updates, it should be called again. The ordering
+	// of directories here is important - it must match the ordering of directories passed to sbkeysync via
+	// the --keystore command by whatever agent is responsible for applying updates. This functionality
+	// depends on sbkeysync being available in one of the shell search paths, and assumes that updates are
+	// applied with the "--no-default-keystores" option.
+	SecureBootDbKeystores []string
 }
 
 type CreationParams struct {
