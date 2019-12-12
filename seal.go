@@ -32,6 +32,10 @@ import (
 	"golang.org/x/xerrors"
 )
 
+const (
+	pcrAlgorithm tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
+)
+
 type OSComponentImage interface {
 	fmt.Stringer
 	ReadAll() ([]byte, error)
@@ -286,19 +290,19 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 	var secureBootDigests tpm2.DigestList
 	var ubuntuBootParamsDigests tpm2.DigestList
 	if params != nil {
-		secureBootDigests, err = computeSecureBootPolicyDigests(tpm.TPMContext, defaultHashAlgorithm, params)
+		secureBootDigests, err = computeSecureBootPolicyDigests(tpm.TPMContext, pcrAlgorithm, params)
 		if err != nil {
 			return fmt.Errorf("cannot compute secure boot policy digests: %v", err)
 		}
 		_, pcrValues, err := tpm.PCRRead(tpm2.PCRSelectionList{
-			tpm2.PCRSelection{Hash: defaultHashAlgorithm, Select: tpm2.PCRSelectionData{ubuntuBootParamsPCR}}})
+			tpm2.PCRSelection{Hash: pcrAlgorithm, Select: tpm2.PCRSelectionData{ubuntuBootParamsPCR}}})
 		if err != nil {
 			return xerrors.Errorf("cannot read current PCR values: %w", err)
 		}
 		ubuntuBootParamsDigests = append(ubuntuBootParamsDigests, pcrValues[defaultHashAlgorithm][ubuntuBootParamsPCR])
 	} else {
 		_, pcrValues, err := tpm.PCRRead(tpm2.PCRSelectionList{
-			tpm2.PCRSelection{Hash: defaultHashAlgorithm, Select: tpm2.PCRSelectionData{secureBootPCR, ubuntuBootParamsPCR}}})
+			tpm2.PCRSelection{Hash: pcrAlgorithm, Select: tpm2.PCRSelectionData{secureBootPCR, ubuntuBootParamsPCR}}})
 		if err != nil {
 			return xerrors.Errorf("cannot read current PCR values: %w", err)
 		}
@@ -308,8 +312,8 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 
 	// Use the PCR digests and NV index names to generate a single policy digest
 	policyComputeIn := policyComputeInput{
-		secureBootPCRAlg:           defaultHashAlgorithm,
-		ubuntuBootParamsPCRAlg:     defaultHashAlgorithm,
+		secureBootPCRAlg:           pcrAlgorithm,
+		ubuntuBootParamsPCRAlg:     pcrAlgorithm,
 		secureBootPCRDigests:       secureBootDigests,
 		ubuntuBootParamsPCRDigests: ubuntuBootParamsDigests,
 		pinIndex:                   pinIndex,
@@ -324,7 +328,7 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 	// Define the template for the sealed key object, using the computed policy digest
 	template := tpm2.Public{
 		Type:       tpm2.ObjectTypeKeyedHash,
-		NameAlg:    tpm2.HashAlgorithmSHA256,
+		NameAlg:    sealedKeyNameAlgorithm,
 		Attrs:      tpm2.AttrFixedTPM | tpm2.AttrFixedParent,
 		AuthPolicy: authPolicy,
 		Params: tpm2.PublicParamsU{

@@ -361,7 +361,7 @@ func isObjectPrimaryKeyWithTemplate(tpm *tpm2.TPMContext, hierarchy tpm2.Handle,
 	h.Write(context.Name())
 
 	alg := make([]byte, 2)
-	binary.BigEndian.PutUint16(alg, uint16(tpm2.HashAlgorithmSHA256))
+	binary.BigEndian.PutUint16(alg, uint16(template.NameAlg))
 
 	expectedQualifiedName := h.Sum(alg)
 	if !bytes.Equal(expectedQualifiedName, qualifiedName) {
