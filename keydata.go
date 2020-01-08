@@ -27,6 +27,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"math/big"
 
@@ -36,12 +37,16 @@ import (
 	"github.com/snapcore/snapd/osutil/sys"
 
 	"golang.org/x/xerrors"
+
+	"maze.io/x/crypto/afis"
 )
 
 const (
 	currentVersion      uint32 = 0
 	keyDataMagic        uint32 = 0x55534b24
 	privateKeyDataMagic uint32 = 0x55534b50
+
+	afisStripes = 4000
 )
 
 type privateKeyData struct {
@@ -52,6 +57,16 @@ type privateKeyData struct {
 	}
 	CreationData   *tpm2.CreationData
 	CreationTicket *tpm2.TkCreation
+}
+
+type keyDataOnDisk struct {
+	KeyPrivateLength  uint32
+	KeyPrivateStripes uint16
+	KeyPublic         *tpm2.Public
+	AskForPinHint     bool
+	PinIndexKeyName   tpm2.Name
+	StaticPolicyData  *staticPolicyData
+	DynamicPolicyData *dynamicPolicyData
 }
 
 type keyData struct {
@@ -111,12 +126,33 @@ func readKeyData(buf io.Reader) (*keyData, error) {
 		return nil, keyFileError{fmt.Errorf("unexpected version number (%d)", version)}
 	}
 
-	var d keyData
+	var d keyDataOnDisk
 	if err := tpm2.UnmarshalFromReader(buf, &d); err != nil {
 		return nil, keyFileError{xerrors.Errorf("cannot unmarshal key data: %w", err)}
 	}
 
-	return &d, nil
+	if d.KeyPrivateStripes == 0 {
+		return nil, keyFileError{errors.New("number of stripes for split private part of sealed key object is zero")}
+	}
+
+	keyPrivate := make([]byte, d.KeyPrivateLength)
+	if _, err := io.ReadFull(buf, keyPrivate); err != nil {
+		return nil, keyFileError{xerrors.Errorf("cannot read split private part of sealed key object: %w", err)}
+	}
+
+	var err error
+	keyPrivate, err = afis.MergeHash(keyPrivate, int(d.KeyPrivateStripes), func() hash.Hash { return crypto.SHA256.New() })
+	if err != nil {
+		return nil, keyFileError{xerrors.Errorf("cannot merge private part of sealed key object: %w", err)}
+	}
+
+	return &keyData{
+		KeyPrivate:        keyPrivate,
+		KeyPublic:         d.KeyPublic,
+		AskForPinHint:     d.AskForPinHint,
+		PinIndexKeyName:   d.PinIndexKeyName,
+		StaticPolicyData:  d.StaticPolicyData,
+		DynamicPolicyData: d.DynamicPolicyData}, nil
 }
 
 func loadKeyData(tpm *tpm2.TPMContext, buf io.Reader, session *tpm2.Session) (tpm2.ResourceContext, *keyData, error) {
@@ -152,7 +188,27 @@ func loadKeyData(tpm *tpm2.TPMContext, buf io.Reader, session *tpm2.Session) (tp
 }
 
 func (d *keyData) write(buf io.Writer) error {
-	return tpm2.MarshalToWriter(buf, keyDataMagic, currentVersion, d)
+	splitKeyPrivate, err := afis.SplitHash(d.KeyPrivate, afisStripes, func() hash.Hash { return crypto.SHA256.New() })
+	if err != nil {
+		return xerrors.Errorf("cannot split private part of sealed key object: %w", err)
+	}
+	od := keyDataOnDisk{
+		KeyPrivateLength:  uint32(len(splitKeyPrivate)),
+		KeyPrivateStripes: afisStripes,
+		KeyPublic:         d.KeyPublic,
+		AskForPinHint:     d.AskForPinHint,
+		PinIndexKeyName:   d.PinIndexKeyName,
+		StaticPolicyData:  d.StaticPolicyData,
+		DynamicPolicyData: d.DynamicPolicyData}
+	if err := tpm2.MarshalToWriter(buf, keyDataMagic, currentVersion, od); err != nil {
+		return xerrors.Errorf("cannot marshal key data: %w", err)
+	}
+
+	if _, err := buf.Write(splitKeyPrivate); err != nil {
+		return xerrors.Errorf("cannot write split private part of sealed key object: ", err)
+	}
+
+	return nil
 }
 
 func (d *keyData) writeToFileAtomic(dest string) error {
@@ -162,7 +218,7 @@ func (d *keyData) writeToFileAtomic(dest string) error {
 	}
 	defer f.Cancel()
 
-	if err := tpm2.MarshalToWriter(f, keyDataMagic, currentVersion, d); err != nil {
+	if err := d.write(f); err != nil {
 		return xerrors.Errorf("cannot marshal key data to temporary file: %w", err)
 	}
 

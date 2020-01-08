@@ -29,7 +29,7 @@ const (
 
 	// SHA-256 is mandatory to exist on every PC-Client TPM
 	// FIXME: Dynamically select algorithms based on what's available on the device
-	defaultHashAlgorithm    tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
+	defaultHashAlgorithm tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
 
 	secureBootPCR       = 7
 	ubuntuBootParamsPCR = 12
