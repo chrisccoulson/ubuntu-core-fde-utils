@@ -20,7 +20,6 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
 	"os"
@@ -36,6 +35,10 @@ var insecure bool
 var ekCertFile string
 var keyFile string
 var pin string
+
+const (
+	keyFilePath string = "/run/unlock.tmp"
+)
 
 const (
 	unspecifiedErrorExitCode = iota + 1
@@ -160,9 +163,22 @@ RetryUnseal:
 		return ret
 	}
 
-	cmd := exec.Command("cryptsetup", "open", "--type", "luks2", "--key-file", "-", devicePath, name)
-	cmd.Env = append(os.Environ(), "LD_PRELOAD=/lib/no-udev.so")
-	cmd.Stdin = bytes.NewReader(key)
+	keyFile, err := os.OpenFile(keyFilePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: error creating temporary key file: %v", devicePath, err)
+		return unspecifiedErrorExitCode
+	}
+	defer func() {
+		defer os.Remove(keyFilePath)
+		defer keyFile.Close()
+	}()
+
+	if _, err := keyFile.Write(key); err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: error writing key to temporary file: %v", devicePath, err)
+		return unspecifiedErrorExitCode
+	}
+
+	cmd := exec.Command("/lib/systemd/systemd-cryptsetup", "attach", name, devicePath, keyFilePath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
