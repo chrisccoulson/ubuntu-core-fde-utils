@@ -49,6 +49,7 @@ const (
 	tpmProvisioningErrExitCode
 	tpmLockedOutExitCode
 	pinFailExitCode
+	activationFailExitCode
 )
 
 func init() {
@@ -178,12 +179,18 @@ RetryUnseal:
 		return unspecifiedErrorExitCode
 	}
 
-	cmd := exec.Command("/lib/systemd/systemd-cryptsetup", "attach", name, devicePath, keyFilePath)
+	cmd := exec.Command("/lib/systemd/systemd-cryptsetup", "attach", name, devicePath, keyFilePath, "tries=1")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: cryptsetup execution failed: %v\n", devicePath, err)
-		return unspecifiedErrorExitCode
+		ret := unspecifiedErrorExitCode
+		switch e := err.(type) {
+		case *exec.ExitError:
+			_ = e
+			ret = activationFailExitCode
+		}
+		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: activation failed: %v\n", devicePath, err)
+		return ret
 	}
 
 	return 0
