@@ -372,7 +372,7 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 	data := keyData{
 		KeyPrivate:        priv,
 		KeyPublic:         pub,
-		AuthModeHint:	   authModeNone,
+		AuthModeHint:      authModeNone,
 		PinIndexKeyName:   pinIndexKeyName,
 		StaticPolicyData:  staticPolicyData,
 		DynamicPolicyData: dynamicPolicyData}

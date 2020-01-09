@@ -64,7 +64,7 @@ type privateKeyData struct {
 type keyData struct {
 	KeyPrivate        tpm2.Private
 	KeyPublic         *tpm2.Public
-	AuthModeHint	  authMode
+	AuthModeHint      authMode
 	PinIndexKeyName   tpm2.Name
 	StaticPolicyData  *staticPolicyData
 	DynamicPolicyData *dynamicPolicyData
