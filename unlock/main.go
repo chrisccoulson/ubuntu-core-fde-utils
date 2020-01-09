@@ -41,7 +41,7 @@ const (
 )
 
 const (
-	unspecifiedErrorExitCode = iota + 1
+	unexpectedErrorExitCode = iota + 1
 	invalidArgsExitCode
 	invalidKeyFileExitCode
 	ekCertVerificationErrExitCode
@@ -105,7 +105,7 @@ func run() int {
 	}()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot open TPM connection: %v", err)
-		ret := unspecifiedErrorExitCode
+		ret := unexpectedErrorExitCode
 		switch err {
 		case fdeutil.ErrProvisioning:
 			// ErrProvisioning indicates that there isn't a valid persistent EK, and a transient one can't be created because the endorsement
@@ -133,7 +133,7 @@ RetryUnseal:
 	key, err := fdeutil.UnsealKeyFromTPM(tpm, in, pin, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: error unsealing key: %v\n", devicePath, err)
-		ret := unspecifiedErrorExitCode
+		ret := unexpectedErrorExitCode
 		switch err {
 		case fdeutil.ErrProvisioning:
 			// ErrProvisioning in this context indicates that there isn't a valid persistent SRK. Have a go at creating one now and then
@@ -167,7 +167,7 @@ RetryUnseal:
 	keyFile, err := os.OpenFile(keyFilePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: error creating temporary key file: %v", devicePath, err)
-		return unspecifiedErrorExitCode
+		return unexpectedErrorExitCode
 	}
 	defer func() {
 		defer os.Remove(keyFilePath)
@@ -176,14 +176,14 @@ RetryUnseal:
 
 	if _, err := keyFile.Write(key); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot unlock device %s: error writing key to temporary file: %v", devicePath, err)
-		return unspecifiedErrorExitCode
+		return unexpectedErrorExitCode
 	}
 
 	cmd := exec.Command("/lib/systemd/systemd-cryptsetup", "attach", name, devicePath, keyFilePath, "tries=1")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		ret := unspecifiedErrorExitCode
+		ret := unexpectedErrorExitCode
 		switch e := err.(type) {
 		case *exec.ExitError:
 			_ = e
