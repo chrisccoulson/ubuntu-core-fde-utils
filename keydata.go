@@ -44,6 +44,13 @@ const (
 	privateKeyDataMagic uint32 = 0x55534b50
 )
 
+type authMode uint8
+
+const (
+	authModeNone authMode = iota
+	authModePIN
+)
+
 type privateKeyData struct {
 	Data struct {
 		AuthorizeKeyPrivate     []byte
@@ -57,7 +64,7 @@ type privateKeyData struct {
 type keyData struct {
 	KeyPrivate        tpm2.Private
 	KeyPublic         *tpm2.Public
-	AskForPinHint     bool
+	AuthModeHint	  authMode
 	PinIndexKeyName   tpm2.Name
 	StaticPolicyData  *staticPolicyData
 	DynamicPolicyData *dynamicPolicyData
