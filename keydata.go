@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"os"
 
 	"github.com/chrisccoulson/go-tpm2"
 
@@ -44,11 +45,11 @@ const (
 	privateKeyDataMagic uint32 = 0x55534b50
 )
 
-type authMode uint8
+type AuthMode uint8
 
 const (
-	authModeNone authMode = iota
-	authModePIN
+	AuthModeNone AuthMode = iota
+	AuthModePIN
 )
 
 type privateKeyData struct {
@@ -64,10 +65,14 @@ type privateKeyData struct {
 type keyData struct {
 	KeyPrivate        tpm2.Private
 	KeyPublic         *tpm2.Public
-	AuthModeHint      authMode
+	AuthModeHint      AuthMode
 	PinIndexKeyName   tpm2.Name
 	StaticPolicyData  *staticPolicyData
 	DynamicPolicyData *dynamicPolicyData
+}
+
+type SealedKeyObject struct {
+	data *keyData
 }
 
 func readPrivateData(buf io.Reader) (*privateKeyData, error) {
@@ -126,18 +131,13 @@ func readKeyData(buf io.Reader) (*keyData, error) {
 	return &d, nil
 }
 
-func loadKeyData(tpm *tpm2.TPMContext, buf io.Reader, session *tpm2.Session) (tpm2.ResourceContext, *keyData, error) {
-	data, err := readKeyData(buf)
-	if err != nil {
-		return nil, nil, err
-	}
-
+func (d *keyData) load(tpm *tpm2.TPMContext, session *tpm2.Session) (tpm2.ResourceContext, error) {
 	srkContext, err := tpm.WrapHandle(srkHandle)
 	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot create context for SRK: %w", err)
+		return nil, xerrors.Errorf("cannot create context for SRK: %w", err)
 	}
 
-	keyContext, _, err := tpm.Load(srkContext, data.KeyPrivate, data.KeyPublic, nil, session.AddAttrs(tpm2.AttrAudit))
+	keyContext, _, err := tpm.Load(srkContext, d.KeyPrivate, d.KeyPublic, nil, session.AddAttrs(tpm2.AttrAudit))
 	if err != nil {
 		invalidObject := false
 		switch e := err.(type) {
@@ -150,12 +150,12 @@ func loadKeyData(tpm *tpm2.TPMContext, buf io.Reader, session *tpm2.Session) (tp
 			}
 		}
 		if invalidObject {
-			return nil, nil, keyFileError{errors.New("bad sealed key object or TPM owner changed")}
+			return nil, keyFileError{errors.New("bad sealed key object or TPM owner changed")}
 		}
-		return nil, nil, xerrors.Errorf("cannot load sealed key object in to TPM: %w", err)
+		return nil, xerrors.Errorf("cannot load sealed key object in to TPM: %w", err)
 	}
 
-	return keyContext, data, nil
+	return keyContext, nil
 }
 
 func (d *keyData) write(buf io.Writer) error {
@@ -338,4 +338,24 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 	}
 
 	return nil
+}
+
+func (k *SealedKeyObject) AuthMode2F() AuthMode {
+	return k.data.AuthModeHint
+}
+
+func LoadSealedKeyObject(path string) (*SealedKeyObject, error) {
+	// Open the key data file
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, InvalidKeyFileError{fmt.Sprintf("cannot open key data file: %v", err)}
+	}
+	defer f.Close()
+
+	data, err := readKeyData(f)
+	if err != nil {
+		return nil, InvalidKeyFileError{err.Error()}
+	}
+
+	return &SealedKeyObject{data}, nil
 }

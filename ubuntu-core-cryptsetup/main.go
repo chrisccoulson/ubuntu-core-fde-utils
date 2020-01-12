@@ -89,12 +89,11 @@ func run() int {
 		}
 	}
 
-	keyFile, err := os.Open(keyFilePath)
+	keyDataObject, err := fdeutil.LoadSealedKeyObject(keyFilePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot activate device %s: cannot open key file: %v\n", sourceDevice, err)
+		fmt.Fprintf(os.Stderr, "Cannot activate device %s: cannot load sealed key object file: %v\n", sourceDevice, err)
 		return invalidKeyFileExitCode
 	}
-	defer keyFile.Close()
 
 	pin, err := func() (string, error) {
 		if pinFilePath == "" {
@@ -156,7 +155,7 @@ func run() int {
 	reprovisionAttempted := false
 
 RetryUnseal:
-	key, err := fdeutil.UnsealKeyFromTPM(tpm, keyFile, pin, false)
+	key, err := keyDataObject.UnsealFromTPM(tpm, pin, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot activate device %s: error unsealing key: %v\n", sourceDevice, err)
 		ret := unexpectedErrorExitCode
@@ -166,7 +165,7 @@ RetryUnseal:
 			// retrying the unseal operation - if the previous SRK was evicted, the TPM owner hasn't changed and the storage hierarchy still
 			// has a null authorization value, then this will allow us to unseal the key without requiring any type of manual recovery. If the
 			// storage hierarchy has a non-null authorization value, ProvionTPM will fail. If the TPM owner has changed, ProvisionTPM might
-			// succeed, but UnsealKeyFromTPM will fail with InvalidKeyFileError when retried.
+			// succeed, but UnsealFromTPM will fail with InvalidKeyFileError when retried.
 			if !reprovisionAttempted {
 				reprovisionAttempted = true
 				fmt.Fprintf(os.Stderr, " Attempting automatic recovery...\n")
@@ -202,7 +201,7 @@ RetryUnseal:
 		}
 		return nil
 	}(); err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot activate device %s: error saving unsealed key to temporary file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Cannot activate device %s: error saving unsealed key to temporary file: %v\n", sourceDevice, err)
 		return unexpectedErrorExitCode
 	}
 	defer os.Remove(unsealedKeyFilePath)
