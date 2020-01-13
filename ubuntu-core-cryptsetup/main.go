@@ -35,10 +35,6 @@ import (
 	"golang.org/x/xerrors"
 )
 
-const (
-	recoveryReasonFilePathTemplate = "/run/ucc-recovery-reason."
-)
-
 type recoveryReason uint8
 
 const (
