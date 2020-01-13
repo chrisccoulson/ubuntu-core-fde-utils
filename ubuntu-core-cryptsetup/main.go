@@ -35,7 +35,7 @@ import (
 )
 
 const (
-	unsealedKeyFilePath string = "/run/unlock.tmp"
+	unsealedKeyFileNameTemplate = "ubuntu-core-cryptsetup.XXXXXX"
 )
 
 const (
@@ -230,18 +230,21 @@ func run() int {
 		break
 	}
 
-	if err := func() error {
-		unsealedKeyFile, err := os.OpenFile(unsealedKeyFilePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	unsealedKeyFilePath, err := func() (string, error) {
+		f, err := ioutil.TempFile("/run", unsealedKeyFileNameTemplate)
 		if err != nil {
-			return xerrors.Errorf("cannot create file: %w", err)
+			return "", xerrors.Errorf("cannot create temporary file: %w", err)
 		}
-		defer unsealedKeyFile.Close()
-
-		if _, err := unsealedKeyFile.Write(key); err != nil {
-			return xerrors.Errorf("cannot write key to file: %w", err)
+		defer f.Close()
+		if err := f.Chmod(0600); err != nil {
+			return "", err
 		}
-		return nil
-	}(); err != nil {
+		if _, err := f.Write(key); err != nil {
+			return "", xerrors.Errorf("cannot write key to file: %w", err)
+		}
+		return f.Name(), nil
+	}()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot activate device %s: error saving unsealed key to temporary file: %v\n", sourceDevice, err)
 		return unexpectedErrorExitCode
 	}
