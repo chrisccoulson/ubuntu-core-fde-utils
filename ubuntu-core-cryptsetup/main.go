@@ -26,7 +26,6 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 
 	"github.com/chrisccoulson/ubuntu-core-fde-utils"
@@ -46,7 +45,6 @@ const (
 	tpmVerificationErrExitCode
 	tpmProvisioningErrExitCode
 	tpmLockedOutExitCode
-	pinFailExitCode
 	activationFailExitCode
 )
 
@@ -111,7 +109,6 @@ func run() int {
 	}
 
 	var insecure bool
-	tries := 1
 	var filteredOptions []string
 
 	if len(args) >= 6 && args[5] != "" && args[5] != "-" && args[5] != "none" {
@@ -121,12 +118,8 @@ func run() int {
 			case opt == "insecure-tpm-connection":
 				insecure = true
 			case strings.HasPrefix(opt, "tries="):
-				var err error
-				tries, err = strconv.Atoi(strings.TrimPrefix(opt, "tries="))
-				if err != nil || tries < 1 {
-					fmt.Fprintf(os.Stderr, "Cannot activate device %s: invalid value for \"tries=\"\n", sourceDevice)
-					return invalidArgsExitCode
-				}
+				// Filter out "tries="
+				// systemd-cryptsetup is always called with "tries=1", and we'll loop on the PIN until TPM lockout
 			default:
 				filteredOptions = append(filteredOptions, opt)
 			}
@@ -215,11 +208,7 @@ func run() int {
 			case fdeutil.ErrLockout:
 				ret = tpmLockedOutExitCode
 			case fdeutil.ErrPinFail:
-				tries -= 1
-				if tries > 0 {
-					continue
-				}
-				ret = pinFailExitCode
+				continue
 			default:
 				if _, ok := err.(fdeutil.InvalidKeyFileError); ok {
 					ret = invalidKeyFileExitCode
