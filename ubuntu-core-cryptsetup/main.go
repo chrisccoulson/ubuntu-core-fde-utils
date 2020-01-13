@@ -22,6 +22,7 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -35,13 +36,18 @@ import (
 	"golang.org/x/xerrors"
 )
 
+const (
+	recoveryReasonFilePathTemplate = "/run/ucc-recovery-reason."
+)
+
 type recoveryReason uint8
 
 const (
 	recoveryReasonUnexpectedError recoveryReason = iota + 1
+	recoveryReasonForced
 	recoveryReasonInvalidKeyFile
-	recoveryReasonProvisioningError
 	recoveryReasonTPMVerificationError
+	recoveryReasonProvisioningError
 	recoveryReasonTPMLockout
 	recoveryReasonPinFail
 )
@@ -95,7 +101,7 @@ func askPassword(sourceDevice, msg string) (string, error) {
 	return strings.TrimRight(result, "\n"), nil
 }
 
-func activateWithRecoveryKey(volume, sourceDevice string, tries int, activateOptions []string) error {
+func activateWithRecoveryKey(volume, sourceDevice string, tries int, activateOptions []string, reason recoveryReason) error {
 	var lastErr error
 Retry:
 	for i := 0; i < tries; i++ {
@@ -104,17 +110,21 @@ Retry:
 			return err
 		}
 
+		lastErr = nil
+
 		// The recovery key should be provided as 8 groups of 5 base-10 digits, with each 5 digits being converted to a 2-byte number
 		// to make a 16-byte key.
 		var key bytes.Buffer
 		for len(recoveryPassphrase) > 0 {
 			if len(recoveryPassphrase) < 5 {
 				// Badly formatted: not enough digits.
+				lastErr = errors.New("incorrectly formatted recovery key")
 				continue Retry
 			}
 			x, err := strconv.ParseUint(recoveryPassphrase[0:5], 10, 16)
 			if err != nil {
 				// Badly formatted: the 5 digits are not a base-10 number that fits in to 2-bytes.
+				lastErr = errors.New("incorrectly formatted recovery key")
 				continue Retry
 			}
 			binary.Write(&key, binary.LittleEndian, uint16(x))
@@ -126,18 +136,26 @@ Retry:
 			}
 		}
 
-		lastErr = nil
 		if err := activate(volume, sourceDevice, key.Bytes(), activateOptions); err != nil {
 			lastErr = err
-			if _, isExitErr := err.(*exec.ExitError); !isExitErr {
-				return err
+			if _, isExitErr := err.(*exec.ExitError); isExitErr {
+				continue
 			}
-		} else {
-			break
+			return err
 		}
+		break
 	}
 
-	return lastErr
+	if lastErr != nil {
+		return lastErr
+	}
+
+	f, err := os.OpenFile(recoveryReasonFilePathTemplate+volume, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err == nil {
+		defer f.Close()
+		f.Write([]byte{byte(reason)})
+	}
+	return nil
 }
 
 func getPIN(sourceDevice, pinFilePath string) (string, error) {
@@ -225,7 +243,12 @@ func activateWithTPM(volume, sourceDevice, keyFilePath, ekCertFilePath, pinFileP
 		break
 	}
 
-	return activate(volume, sourceDevice, key, activateOptions)
+	if err := activate(volume, sourceDevice, key, activateOptions); err != nil {
+		return err
+	}
+
+	os.Remove(recoveryReasonFilePathTemplate + volume)
+	return nil
 }
 
 func run() int {
@@ -255,6 +278,7 @@ func run() int {
 	}
 
 	var insecure bool
+	var forceRecovery bool
 	pinTries := 1
 	recoveryTries := 1
 	var filteredOptions []string
@@ -265,6 +289,8 @@ func run() int {
 			switch {
 			case opt == "insecure-tpm-connection":
 				insecure = true
+			case opt == "force-recovery":
+				forceRecovery = true
 			case strings.HasPrefix(opt, "tries="):
 				// Filter out "tries="
 				// systemd-cryptsetup is always called with "tries=1", and we'll loop on the PIN until TPM lockout
@@ -288,8 +314,16 @@ func run() int {
 		}
 	}
 
-	recoveryReasonFilePath := "/run/ucc-recovery-reason." + volume
 	filteredOptions = append(filteredOptions, "tries=1")
+
+	if forceRecovery {
+		if err := activateWithRecoveryKey(volume, sourceDevice, recoveryTries, filteredOptions, recoveryReasonForced); err != nil {
+			fmt.Fprintf(os.Stderr, "Cannot activate device %s with recovery key: %v\n", sourceDevice, err)
+			return 1
+		}
+		fmt.Printf("Successfully activated device %s with recovery key\n", sourceDevice)
+		return 0
+	}
 
 	if err := activateWithTPM(volume, sourceDevice, keyFilePath, ekCertFilePath, pinFilePath, insecure, pinTries, filteredOptions); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot activate device %s with TPM: %v\n", sourceDevice, err)
@@ -318,22 +352,15 @@ func run() int {
 			recoveryReason = recoveryReasonPinFail
 		}
 
-		if err := activateWithRecoveryKey(volume, sourceDevice, recoveryTries, filteredOptions); err != nil {
+		if err := activateWithRecoveryKey(volume, sourceDevice, recoveryTries, filteredOptions, recoveryReason); err != nil {
 			fmt.Fprintf(os.Stderr, "Cannot activate device %s with recovery key: %v\n", sourceDevice, err)
 			return 1
-		}
-
-		f, err := os.OpenFile(recoveryReasonFilePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-		if err == nil {
-			defer f.Close()
-			f.Write([]byte{byte(recoveryReason)})
 		}
 
 		fmt.Printf("Successfully activated device %s with recovery key (reason %d)\n", sourceDevice, recoveryReason)
 		return 0
 	}
 
-	os.Remove(recoveryReasonFilePath)
 	fmt.Printf("Successfully activated device %s with TPM\n", sourceDevice)
 	return 0
 }
