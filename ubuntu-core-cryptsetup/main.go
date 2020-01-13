@@ -62,7 +62,6 @@ func getPIN(sourceDevice, pinFilePath string) (string, error) {
 			return "", xerrors.Errorf("cannot run systemd-ask-password: %w", err)
 		}
 		pin, err := out.ReadString('\n')
-		fmt.Println(pin)
 		if err != nil {
 			return "", xerrors.Errorf("cannot read PIN from stdout: %w", err)
 		}
