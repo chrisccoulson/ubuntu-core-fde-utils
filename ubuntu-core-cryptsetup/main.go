@@ -101,13 +101,31 @@ func askPassword(sourceDevice, msg string) (string, error) {
 	return strings.TrimRight(result, "\n"), nil
 }
 
-func activateWithRecoveryKey(volume, sourceDevice string, tries int, activateOptions []string, reason recoveryReason) error {
+func getRecoveryKey(sourceDevice, recoveryKeyPath string) (string, error) {
+	if recoveryKeyPath == "" {
+		return askPassword(sourceDevice, "Please enter the recovery key for disk "+sourceDevice+":")
+	}
+
+	file, err := os.Open(recoveryKeyPath)
+	if err != nil {
+		return "", xerrors.Errorf("cannot open recovery key file: %w", err)
+	}
+	defer file.Close()
+
+	key, err := ioutil.ReadAll(file)
+	if err != nil {
+		return "", xerrors.Errorf("cannot read recovery key file contents: %w", err)
+	}
+	return strings.TrimRight(string(key), "\n"), nil
+}
+
+func activateWithRecoveryKey(volume, sourceDevice, recoveryKeyPath string, tries int, activateOptions []string, reason recoveryReason) error {
 	var lastErr error
 Retry:
 	for i := 0; i < tries; i++ {
-		recoveryPassphrase, err := askPassword(sourceDevice, "Please enter the recovery key for disk "+sourceDevice+":")
+		recoveryPassphrase, err := getRecoveryKey(sourceDevice, recoveryKeyPath)
 		if err != nil {
-			return err
+			return xerrors.Errorf("cannot obtain recovery key: %w", err)
 		}
 
 		lastErr = nil
@@ -118,13 +136,13 @@ Retry:
 		for len(recoveryPassphrase) > 0 {
 			if len(recoveryPassphrase) < 5 {
 				// Badly formatted: not enough digits.
-				lastErr = errors.New("incorrectly formatted recovery key")
+				lastErr = errors.New("incorrectly formatted recovery key (insufficient characters)")
 				continue Retry
 			}
 			x, err := strconv.ParseUint(recoveryPassphrase[0:5], 10, 16)
 			if err != nil {
 				// Badly formatted: the 5 digits are not a base-10 number that fits in to 2-bytes.
-				lastErr = errors.New("incorrectly formatted recovery key")
+				lastErr = errors.New("incorrectly formatted recovery key (invalid base-10 number)")
 				continue Retry
 			}
 			binary.Write(&key, binary.LittleEndian, uint16(x))
@@ -173,7 +191,7 @@ func getPIN(sourceDevice, pinFilePath string) (string, error) {
 	if err != nil {
 		return "", xerrors.Errorf("cannot read PIN file contents: %w", err)
 	}
-	return string(pin), nil
+	return strings.TrimRight(string(pin), "\n"), nil
 }
 
 func activateWithTPM(volume, sourceDevice, keyFilePath, ekCertFilePath, pinFilePath string, insecure bool, tries int, activateOptions []string) error {
@@ -254,7 +272,7 @@ func activateWithTPM(volume, sourceDevice, keyFilePath, ekCertFilePath, pinFileP
 func run() int {
 	args := flag.Args()
 	if len(args) == 0 {
-		fmt.Printf("Usage: ubuntu-core-cryptsetup VOLUME SOURCE-DEVICE KEY-FILE EK-CERT-FILE [PIN] [OPTIONS]\n")
+		fmt.Printf("Usage: ubuntu-core-cryptsetup VOLUME SOURCE-DEVICE SEALED-KEY-FILE EK-CERT-FILE [AUTH-FILE] [OPTIONS]\n")
 		return 0
 	}
 
@@ -265,16 +283,20 @@ func run() int {
 
 	volume := args[0]
 	sourceDevice := args[1]
-	keyFilePath := args[2]
+
+	var keyFilePath string
+	if args[2] != "" && args[2] != "-" && args[2] != "none" {
+		keyFilePath = args[2]
+	}
 
 	var ekCertFilePath string
 	if args[3] != "" && args[3] != "-" && args[3] != "none" {
 		ekCertFilePath = args[3]
 	}
 
-	var pinFilePath string
+	var authFilePath string
 	if len(args) >= 5 && args[4] != "" && args[4] != "-" && args[4] != "none" {
-		pinFilePath = args[4]
+		authFilePath = args[4]
 	}
 
 	var insecure bool
@@ -317,7 +339,7 @@ func run() int {
 	filteredOptions = append(filteredOptions, "tries=1")
 
 	if forceRecovery {
-		if err := activateWithRecoveryKey(volume, sourceDevice, recoveryTries, filteredOptions, recoveryReasonForced); err != nil {
+		if err := activateWithRecoveryKey(volume, sourceDevice, authFilePath, recoveryTries, filteredOptions, recoveryReasonForced); err != nil {
 			fmt.Fprintf(os.Stderr, "Cannot activate device %s with recovery key: %v\n", sourceDevice, err)
 			return 1
 		}
@@ -325,7 +347,7 @@ func run() int {
 		return 0
 	}
 
-	if err := activateWithTPM(volume, sourceDevice, keyFilePath, ekCertFilePath, pinFilePath, insecure, pinTries, filteredOptions); err != nil {
+	if err := activateWithTPM(volume, sourceDevice, keyFilePath, ekCertFilePath, authFilePath, insecure, pinTries, filteredOptions); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot activate device %s with TPM: %v\n", sourceDevice, err)
 
 		var ikfe fdeutil.InvalidKeyFileError
@@ -352,7 +374,7 @@ func run() int {
 			recoveryReason = recoveryReasonPinFail
 		}
 
-		if err := activateWithRecoveryKey(volume, sourceDevice, recoveryTries, filteredOptions, recoveryReason); err != nil {
+		if err := activateWithRecoveryKey(volume, sourceDevice, "", recoveryTries, filteredOptions, recoveryReason); err != nil {
 			fmt.Fprintf(os.Stderr, "Cannot activate device %s with recovery key: %v\n", sourceDevice, err)
 			return 1
 		}
