@@ -54,7 +54,7 @@ const (
 
 func activate(volume, sourceDevice string, key []byte, options []string) error {
 	keyFilePath, err := func() (string, error) {
-		f, err := ioutil.TempFile("/run", "ubuntu-core-cryptsetup.XXXXXX")
+		f, err := ioutil.TempFile("/run", "ubuntu-core-cryptsetup.")
 		if err != nil {
 			return "", xerrors.Errorf("cannot create temporary file: %w", err)
 		}
