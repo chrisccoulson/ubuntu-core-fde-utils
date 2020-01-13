@@ -20,11 +20,13 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/chrisccoulson/ubuntu-core-fde-utils"
@@ -47,6 +49,40 @@ const (
 	pinFailExitCode
 	activationFailExitCode
 )
+
+func getPIN(sourceDevice, pinFilePath string) (string, error) {
+	if pinFilePath == "" {
+		cmd := exec.Command(
+			"systemd-ask-password",
+			"--icon", "drive-harddisk",
+			"--id", "ubuntu-core-cryptsetup:"+sourceDevice,
+			"Please enter the PIN for disk "+sourceDevice+":")
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stdin = os.Stdin
+		if err := cmd.Run(); err != nil {
+			return "", xerrors.Errorf("cannot run systemd-ask-password: %w", err)
+		}
+		pin, err := out.ReadString('\n')
+		fmt.Println(pin)
+		if err != nil {
+			return "", xerrors.Errorf("cannot read PIN from stdout: %w", err)
+		}
+		return strings.TrimRight(pin, "\n"), nil
+	}
+
+	file, err := os.Open(pinFilePath)
+	if err != nil {
+		return "", xerrors.Errorf("cannot open PIN file: %w", err)
+	}
+	defer file.Close()
+
+	pin, err := ioutil.ReadAll(file)
+	if err != nil {
+		return "", xerrors.Errorf("cannot read PIN file contents: %w", err)
+	}
+	return string(pin), nil
+}
 
 func run() int {
 	args := flag.Args()
@@ -75,6 +111,7 @@ func run() int {
 	}
 
 	var insecure bool
+	tries := 1
 	var filteredOptions []string
 
 	if len(args) >= 6 && args[5] != "" && args[5] != "-" && args[5] != "none" {
@@ -83,6 +120,13 @@ func run() int {
 			switch {
 			case opt == "insecure-tpm-connection":
 				insecure = true
+			case strings.HasPrefix(opt, "tries="):
+				var err error
+				tries, err = strconv.Atoi(strings.TrimPrefix(opt, "tries="))
+				if err != nil || tries < 1 {
+					fmt.Fprintf(os.Stderr, "Cannot activate device %s: invalid value for \"tries=\"\n", sourceDevice)
+					return invalidArgsExitCode
+				}
 			default:
 				filteredOptions = append(filteredOptions, opt)
 			}
@@ -93,28 +137,6 @@ func run() int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot activate device %s: cannot load sealed key object file: %v\n", sourceDevice, err)
 		return invalidKeyFileExitCode
-	}
-
-	pin, err := func() (string, error) {
-		if pinFilePath == "" {
-			return "", nil
-		}
-
-		pinFile, err := os.Open(pinFilePath)
-		if err != nil {
-			return "", xerrors.Errorf("cannot open PIN file: %w", err)
-		}
-		defer pinFile.Close()
-
-		pin, err := ioutil.ReadAll(pinFile)
-		if err != nil {
-			return "", xerrors.Errorf("cannot read PIN file contents: %w", err)
-		}
-		return string(pin), nil
-	}()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot activate device %s: cannot obtain PIN: %v\n", sourceDevice, err)
-		return unexpectedErrorExitCode
 	}
 
 	tpm, err := func() (*fdeutil.TPMConnection, error) {
@@ -153,40 +175,59 @@ func run() int {
 	defer tpm.Close()
 
 	reprovisionAttempted := false
+	var key []byte
 
-RetryUnseal:
-	key, err := keyDataObject.UnsealFromTPM(tpm, pin, false)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot activate device %s: error unsealing key: %v\n", sourceDevice, err)
-		ret := unexpectedErrorExitCode
-		switch err {
-		case fdeutil.ErrProvisioning:
-			// ErrProvisioning in this context indicates that there isn't a valid persistent SRK. Have a go at creating one now and then
-			// retrying the unseal operation - if the previous SRK was evicted, the TPM owner hasn't changed and the storage hierarchy still
-			// has a null authorization value, then this will allow us to unseal the key without requiring any type of manual recovery. If the
-			// storage hierarchy has a non-null authorization value, ProvionTPM will fail. If the TPM owner has changed, ProvisionTPM might
-			// succeed, but UnsealFromTPM will fail with InvalidKeyFileError when retried.
-			if !reprovisionAttempted {
-				reprovisionAttempted = true
-				fmt.Fprintf(os.Stderr, " Attempting automatic recovery...\n")
-				if err := fdeutil.ProvisionTPM(tpm, fdeutil.ProvisionModeWithoutLockout, nil, nil); err == nil {
-					fmt.Fprintf(os.Stderr, " ...ProvisionTPM succeeded. Retrying unseal operation now\n")
-					goto RetryUnseal
-				} else {
-					fmt.Fprintf(os.Stderr, " ...ProvisionTPM failed: %v\n", err)
+	for {
+		var err error
+		var pin string
+		if keyDataObject.AuthMode2F() == fdeutil.AuthModePIN {
+			pin, err = getPIN(sourceDevice, pinFilePath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Cannot activate device %s: cannot obtain PIN: %v\n", sourceDevice, err)
+				return unexpectedErrorExitCode
+			}
+			pinFilePath = ""
+		}
+
+	RetryUnseal:
+		key, err = keyDataObject.UnsealFromTPM(tpm, pin, false)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Cannot activate device %s: error unsealing key: %v\n", sourceDevice, err)
+			ret := unexpectedErrorExitCode
+			switch err {
+			case fdeutil.ErrProvisioning:
+				// ErrProvisioning in this context indicates that there isn't a valid persistent SRK. Have a go at creating one now and then
+				// retrying the unseal operation - if the previous SRK was evicted, the TPM owner hasn't changed and the storage hierarchy still
+				// has a null authorization value, then this will allow us to unseal the key without requiring any type of manual recovery. If the
+				// storage hierarchy has a non-null authorization value, ProvionTPM will fail. If the TPM owner has changed, ProvisionTPM might
+				// succeed, but UnsealFromTPM will fail with InvalidKeyFileError when retried.
+				if !reprovisionAttempted {
+					reprovisionAttempted = true
+					fmt.Fprintf(os.Stderr, " Attempting automatic recovery...\n")
+					if err := fdeutil.ProvisionTPM(tpm, fdeutil.ProvisionModeWithoutLockout, nil, nil); err == nil {
+						fmt.Fprintf(os.Stderr, " ...ProvisionTPM succeeded. Retrying unseal operation now\n")
+						goto RetryUnseal
+					} else {
+						fmt.Fprintf(os.Stderr, " ...ProvisionTPM failed: %v\n", err)
+					}
+				}
+				ret = tpmProvisioningErrExitCode
+			case fdeutil.ErrLockout:
+				ret = tpmLockedOutExitCode
+			case fdeutil.ErrPinFail:
+				tries -= 1
+				if tries > 0 {
+					continue
+				}
+				ret = pinFailExitCode
+			default:
+				if _, ok := err.(fdeutil.InvalidKeyFileError); ok {
+					ret = invalidKeyFileExitCode
 				}
 			}
-			ret = tpmProvisioningErrExitCode
-		case fdeutil.ErrLockout:
-			ret = tpmLockedOutExitCode
-		case fdeutil.ErrPinFail:
-			ret = pinFailExitCode
-		default:
-			if _, ok := err.(fdeutil.InvalidKeyFileError); ok {
-				ret = invalidKeyFileExitCode
-			}
+			return ret
 		}
-		return ret
+		break
 	}
 
 	if err := func() error {
