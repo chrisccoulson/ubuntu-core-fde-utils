@@ -75,20 +75,22 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interf
 
 	// The NV index requires 2 policies - one for writing in order to initialize, and one for changing the
 	// auth value. Create the one for writing first
-	authPolicy1 := initTrialPolicyDigest(tpm2.AlgorithmSHA256)
-	authPolicy1 = trialPolicySigned(tpm2.AlgorithmSHA256, authPolicy1, key.Name(), nil)
+	trial, _ := tpm2.ComputeAuthPolicy(tpm2.AlgorithmSHA256)
+	trial.PolicySigned(key, nil)
+	authPolicy1 := trial.GetDigest()
 
 	// The second policy is for changing the auth value which requires the admin role, so we use
 	// PolicyCommandCode for this
-	authPolicy2 := initTrialPolicyDigest(tpm2.AlgorithmSHA256)
-	authPolicy2 = trialPolicyCommandCode(tpm2.AlgorithmSHA256, authPolicy2, tpm2.CommandNVChangeAuth)
-	authPolicy2 = trialPolicyAuthValue(tpm2.AlgorithmSHA256, authPolicy2)
+	trial, _ = tpm2.ComputeAuthPolicy(tpm2.AlgorithmSHA256)
+	trial.PolicyCommandCode(tpm2.CommandNVChangeAuth)
+	trial.PolicyAuthValue()
+	authPolicy2 := trial.GetDigest()
 
 	authPolicies := tpm2.DigestList{authPolicy1, authPolicy2}
-	authPolicy, err := trialPolicyOR(tpm2.AlgorithmSHA256, authPolicies)
-	if err != nil {
-		return nil, nil, fmt.Errorf("cannot compute authorization policy for NV index: %v", err)
-	}
+
+	trial, _ = tpm2.ComputeAuthPolicy(tpm2.AlgorithmSHA256)
+	trial.PolicyOR(authPolicies)
+	authPolicy := trial.GetDigest()
 
 	// Define the NV index
 	nvPublic := tpm2.NVPublic{

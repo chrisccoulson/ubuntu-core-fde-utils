@@ -20,7 +20,6 @@
 package fdeutil
 
 import (
-	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -28,7 +27,6 @@ import (
 	"errors"
 	"fmt"
 	"hash"
-	"sort"
 
 	"github.com/chrisccoulson/go-tpm2"
 )
@@ -53,17 +51,16 @@ const (
 )
 
 type policyComputeInput struct {
-	secureBootPCRAlg        tpm2.AlgorithmId
-	grubPCRAlg              tpm2.AlgorithmId
-	snapModelPCRAlg         tpm2.AlgorithmId
-	secureBootPCRDigests    tpm2.DigestList
-	grubPCRDigests          tpm2.DigestList
-	snapModelPCRDigests     tpm2.DigestList
-	pinIndexHandle          tpm2.Handle
-	pinIndexName            tpm2.Name
-	policyRevokeIndexHandle tpm2.Handle
-	policyRevokeIndexName   tpm2.Name
-	policyRevokeCount       uint64
+	secureBootPCRAlg     tpm2.AlgorithmId
+	grubPCRAlg           tpm2.AlgorithmId
+	snapModelPCRAlg      tpm2.AlgorithmId
+	secureBootPCRDigests tpm2.DigestList
+	grubPCRDigests       tpm2.DigestList
+	snapModelPCRDigests  tpm2.DigestList
+	pinObjectName        tpm2.Name
+	pinIndex             tpm2.ResourceContext
+	policyRevokeIndex    tpm2.ResourceContext
+	policyRevokeCount    uint64
 }
 
 type policyData struct {
@@ -119,68 +116,6 @@ func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, own
 	return context, nil
 }
 
-func initTrialPolicyDigest(alg tpm2.AlgorithmId) tpm2.Digest {
-	digestSize := getDigestSize(alg)
-	return make(tpm2.Digest, digestSize)
-}
-
-func trialPolicyUpdate(alg tpm2.AlgorithmId, currentDigest tpm2.Digest, command tpm2.CommandCode, arg2 tpm2.Name,
-	arg3 tpm2.Nonce) tpm2.Digest {
-	h := hashAlgToGoHash(alg)
-	h.Write(currentDigest)
-	binary.Write(h, binary.BigEndian, command)
-	h.Write(arg2)
-
-	intermediateDigest := h.Sum(nil)
-
-	h = hashAlgToGoHash(alg)
-	h.Write(intermediateDigest)
-	h.Write(arg3)
-
-	return h.Sum(nil)
-}
-
-func trialPolicySigned(alg tpm2.AlgorithmId, currentDigest tpm2.Digest, authName tpm2.Name,
-	policyRef tpm2.Nonce) tpm2.Digest {
-	return trialPolicyUpdate(alg, currentDigest, tpm2.CommandPolicySigned, authName, policyRef)
-}
-
-func trialPolicyCommandCode(alg tpm2.AlgorithmId, currentDigest tpm2.Digest,
-	command tpm2.CommandCode) tpm2.Digest {
-	h := hashAlgToGoHash(alg)
-	h.Write(currentDigest)
-	binary.Write(h, binary.BigEndian, tpm2.CommandPolicyCommandCode)
-	binary.Write(h, binary.BigEndian, command)
-
-	return h.Sum(nil)
-}
-
-func trialPolicyAuthValue(alg tpm2.AlgorithmId, currentDigest tpm2.Digest) tpm2.Digest {
-	h := hashAlgToGoHash(alg)
-	h.Write(currentDigest)
-	binary.Write(h, binary.BigEndian, tpm2.CommandPolicyAuthValue)
-
-	return h.Sum(nil)
-}
-
-func trialPolicyOR(alg tpm2.AlgorithmId, pHashList tpm2.DigestList) (tpm2.Digest, error) {
-	if len(pHashList) > 8 {
-		return nil, errors.New("cannot have more than 8 digests in a PolicyOR")
-	}
-	digests := new(bytes.Buffer)
-	for _, digest := range pHashList {
-		digests.Write(digest)
-	}
-	resetPolicyDigest := initTrialPolicyDigest(alg)
-
-	h := hashAlgToGoHash(alg)
-	h.Write(resetPolicyDigest)
-	binary.Write(h, binary.BigEndian, tpm2.CommandPolicyOR)
-	digests.WriteTo(h)
-
-	return h.Sum(nil), nil
-}
-
 func ensureSufficientORDigests(digests tpm2.DigestList) tpm2.DigestList {
 	if len(digests) == 0 {
 		// This is really an error - return nothing here and let the consumer of this handle the error
@@ -192,58 +127,16 @@ func ensureSufficientORDigests(digests tpm2.DigestList) tpm2.DigestList {
 	return tpm2.DigestList{digests[0], digests[0]}
 }
 
-func trialPolicyPCR(alg tpm2.AlgorithmId, currentDigest tpm2.Digest, pcrs tpm2.PCRSelectionList,
-	pcrDigest tpm2.Digest) (tpm2.Digest, error) {
-	h := hashAlgToGoHash(alg)
-	h.Write(currentDigest)
-	binary.Write(h, binary.BigEndian, tpm2.CommandPolicyPCR)
-	if err := tpm2.MarshalToWriter(h, pcrs); err != nil {
-		return nil, fmt.Errorf("cannot marshal pcrs: %v", err)
-	}
-	h.Write(pcrDigest)
-
-	return h.Sum(nil), nil
-}
-
 func makePCRSelectionList(alg tpm2.AlgorithmId, index int) tpm2.PCRSelectionList {
 	return tpm2.PCRSelectionList{
 		tpm2.PCRSelection{Hash: alg, Select: tpm2.PCRSelectionData{index}}}
 }
 
-func computePCRDigest(alg tpm2.AlgorithmId, pcrs tpm2.PCRSelectionList, digests tpm2.DigestList) tpm2.Digest {
+func computePCRDigest(alg tpm2.AlgorithmId, digests tpm2.DigestList) tpm2.Digest {
 	h := hashAlgToGoHash(alg)
-	j := 0
-	for _, selection := range pcrs {
-		sel := selection.Select
-		sort.Ints(sel)
-		for _ = range sel {
-			h.Write(digests[j])
-			j++
-		}
+	for _, d := range digests {
+		h.Write(d)
 	}
-	return h.Sum(nil)
-}
-
-func trialPolicySecret(alg tpm2.AlgorithmId, currentDigest tpm2.Digest, name tpm2.Name,
-	policyRef tpm2.Nonce) tpm2.Digest {
-	return trialPolicyUpdate(alg, currentDigest, tpm2.CommandPolicySecret, name, policyRef)
-}
-
-func trialPolicyNV(alg tpm2.AlgorithmId, currentDigest tpm2.Digest, operandB tpm2.Operand, offset uint16,
-	operation tpm2.ArithmeticOp, name tpm2.Name) tpm2.Digest {
-	h := hashAlgToGoHash(alg)
-	h.Write(operandB)
-	binary.Write(h, binary.BigEndian, offset)
-	binary.Write(h, binary.BigEndian, operation)
-
-	args := h.Sum(nil)
-
-	h = hashAlgToGoHash(alg)
-	h.Write(currentDigest)
-	binary.Write(h, binary.BigEndian, tpm2.CommandPolicyNV)
-	h.Write(args)
-	h.Write(name)
-
 	return h.Sum(nil)
 }
 
@@ -252,69 +145,48 @@ func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData
 		return nil, nil, errors.New("no secure-boot digests provided")
 	}
 	secureBootORDigests := make(tpm2.DigestList, 0)
-	for i, digest := range input.secureBootPCRDigests {
-		policyDigest := initTrialPolicyDigest(alg)
+	for _, digest := range input.secureBootPCRDigests {
+		trial, _ := tpm2.ComputeAuthPolicy(alg)
 		pcrs := makePCRSelectionList(input.secureBootPCRAlg, secureBootPCR)
-		pcrDigest := computePCRDigest(alg, pcrs, tpm2.DigestList{digest})
-		policyDigest, err := trialPolicyPCR(alg, policyDigest, pcrs, pcrDigest)
-		if err != nil {
-			return nil, nil, fmt.Errorf("cannot execute PolicyPCR with secure-boot digest at index "+
-				"%d: %v", i, err)
-		}
-		secureBootORDigests = append(secureBootORDigests, policyDigest)
+		pcrDigest := computePCRDigest(alg, tpm2.DigestList{digest})
+		trial.PolicyPCR(pcrDigest, pcrs)
+		secureBootORDigests = append(secureBootORDigests, trial.GetDigest())
 	}
 
 	if len(input.grubPCRDigests) == 0 {
 		return nil, nil, fmt.Errorf("no grub digests provided")
 	}
 	grubORDigests := make(tpm2.DigestList, 0)
-	for i, digest := range input.grubPCRDigests {
-		policyDigest := initTrialPolicyDigest(alg)
-		policyDigest, err := trialPolicyOR(alg, ensureSufficientORDigests(secureBootORDigests))
-		if err != nil {
-			return nil, nil, fmt.Errorf("cannot execute PolicyOR of secure-boot policy digests: %v",
-				err)
-		}
+	for _, digest := range input.grubPCRDigests {
+		trial, _ := tpm2.ComputeAuthPolicy(alg)
+		trial.PolicyOR(ensureSufficientORDigests(secureBootORDigests))
 		pcrs := makePCRSelectionList(input.grubPCRAlg, grubPCR)
-		pcrDigest := computePCRDigest(alg, pcrs, tpm2.DigestList{digest})
-		policyDigest, err = trialPolicyPCR(alg, policyDigest, pcrs, pcrDigest)
-		if err != nil {
-			return nil, nil, fmt.Errorf("cannot execute PolicyPCR with grub digest at index "+
-				"%d: %v", i, err)
-		}
-		grubORDigests = append(grubORDigests, policyDigest)
+		pcrDigest := computePCRDigest(alg, tpm2.DigestList{digest})
+		trial.PolicyPCR(pcrDigest, pcrs)
+		grubORDigests = append(grubORDigests, trial.GetDigest())
 	}
 
 	if len(input.snapModelPCRDigests) == 0 {
 		return nil, nil, fmt.Errorf("no snap model digests provided")
 	}
 	snapModelORDigests := make(tpm2.DigestList, 0)
-	for i, digest := range input.snapModelPCRDigests {
-		policyDigest := initTrialPolicyDigest(alg)
-		policyDigest, err := trialPolicyOR(alg, ensureSufficientORDigests(grubORDigests))
-		if err != nil {
-			return nil, nil, fmt.Errorf("cannot execute PolicyOR of grub policy digests: %v", err)
-		}
+	for _, digest := range input.snapModelPCRDigests {
+		trial, _ := tpm2.ComputeAuthPolicy(alg)
+		trial.PolicyOR(ensureSufficientORDigests(grubORDigests))
 		pcrs := makePCRSelectionList(input.snapModelPCRAlg, snapModelPCR)
-		pcrDigest := computePCRDigest(alg, pcrs, tpm2.DigestList{digest})
-		policyDigest, err = trialPolicyPCR(alg, policyDigest, pcrs, pcrDigest)
-		if err != nil {
-			return nil, nil, fmt.Errorf("cannot execute PolicyPCR with snap model digest at index "+
-				"%d: %v", i, err)
-		}
-		snapModelORDigests = append(snapModelORDigests, policyDigest)
+		pcrDigest := computePCRDigest(alg, tpm2.DigestList{digest})
+		trial.PolicyPCR(pcrDigest, pcrs)
+		snapModelORDigests = append(snapModelORDigests, trial.GetDigest())
 	}
 
-	policy, err := trialPolicyOR(alg, ensureSufficientORDigests(snapModelORDigests))
-	if err != nil {
-		return nil, nil, fmt.Errorf("cannot execute PolicyOR of snap model digests: %v", err)
-	}
+	trial, _ := tpm2.ComputeAuthPolicy(alg)
+	trial.PolicyOR(ensureSufficientORDigests(snapModelORDigests))
 
 	operandB := make([]byte, 8)
 	binary.BigEndian.PutUint64(operandB, input.policyRevokeCount)
-	policy = trialPolicyNV(alg, policy, operandB, 0, tpm2.OpUnsignedLE, input.policyRevokeIndexName)
+	trial.PolicyNV(input.policyRevokeIndex, operandB, 0, tpm2.OpUnsignedLE)
 
-	policy = trialPolicySecret(alg, policy, input.pinIndexName, nil)
+	trial.PolicySecret(input.pinIndex, nil)
 
 	return &policyData{Algorithm: alg,
 		SecureBootPCRAlg:        input.secureBootPCRAlg,
@@ -323,9 +195,9 @@ func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData
 		SecureBootORDigests:     secureBootORDigests,
 		GrubORDigests:           grubORDigests,
 		SnapModelORDigests:      snapModelORDigests,
-		PinIndexHandle:          input.pinIndexHandle,
-		PolicyRevokeIndexHandle: input.policyRevokeIndexHandle,
-		PolicyRevokeCount:       input.policyRevokeCount}, policy, nil
+		PinIndexHandle:          input.pinIndex.Handle(),
+		PolicyRevokeIndexHandle: input.policyRevokeIndex.Handle(),
+		PolicyRevokeCount:       input.policyRevokeCount}, trial.GetDigest(), nil
 }
 
 func swallowPolicyORValueError(err error) error {

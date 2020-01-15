@@ -27,8 +27,8 @@ import (
 )
 
 const (
-	pinIndex              = tpm2.Handle(0x0181fff0)
-	policyRevocationIndex = tpm2.Handle(0x0181ffff)
+	pinIndexHandle              = tpm2.Handle(0x0181fff0)
+	policyRevocationIndexHandle = tpm2.Handle(0x0181ffff)
 )
 
 var (
