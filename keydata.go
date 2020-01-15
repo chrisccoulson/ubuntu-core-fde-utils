@@ -111,8 +111,8 @@ func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext,
 	_, _, err = tpm.CertifyCreation(nil, keyContext, nil, h.Sum(nil), nil, d.KeyCreationTicket, nil)
 	if err != nil {
 		switch e := err.(type) {
-		case tpm2.TPMParameterError:
-			if e.Code == tpm2.ErrorTicket {
+		case *tpm2.TPMParameterError:
+			if e.Code() == tpm2.ErrorTicket {
 				return nil, nil, errors.New("integrity check of key data failed because the " +
 					"creation data or creation ticket aren't cryptographically bound to the " +
 					"sealed key object")
@@ -146,8 +146,8 @@ func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext,
 	policyRevokeIndexContext, err := tpm.WrapHandle(d.AuxData.PolicyData.PolicyRevokeIndexHandle)
 	if err != nil {
 		switch e := err.(type) {
-		case tpm2.TPMHandleError:
-			if e.Code == tpm2.ErrorHandle {
+		case *tpm2.TPMHandleError:
+			if e.Code() == tpm2.ErrorHandle {
 				return nil, nil,
 					errors.New("integrity check of file failed because the NV index used " +
 						"for authorization policy revocation has been deleted")

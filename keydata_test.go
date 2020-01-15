@@ -35,16 +35,16 @@ type keydataSuite struct{}
 
 var _ = Suite(&keydataSuite{})
 
-func (s *keydataSuite) TestWriteFileUnhappy(c *C) {
+func (s *keydataSuite) TestWriteFile(c *C) {
 	kd := fdeutil.NewKeydata()
 	kd.PinFlags = 0x1
 
 	dest := filepath.Join(c.MkDir(), "keydata")
 	err := kd.WriteToFile(dest)
-	c.Assert(err, ErrorMatches, "cannot marshal key data .*")
+	c.Assert(err, IsNil)
 
 	_, err = ioutil.ReadFile(dest)
-	c.Check(err, ErrorMatches, "open .*/keydata: no such file or directory")
+	c.Check(err, IsNil)
 }
 
 // XXX: write a tests where something is marshalled

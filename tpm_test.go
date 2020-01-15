@@ -68,7 +68,7 @@ func openTPMSimulatorForTesting(t *testing.T) (*tpm2.TPMContext, *tpm2.TctiMssim
 
 	tpm, _ := tpm2.NewTPMContext(tcti)
 	if err := tpm.Startup(tpm2.StartupClear); err != nil {
-		tpmError, isTpmError := err.(tpm2.TPMError)
+		tpmError, isTpmError := err.(*tpm2.TPMError)
 		if !isTpmError || tpmError.Code != tpm2.ErrorInitialize {
 			t.Fatalf("Startup failed: %v", err)
 		}
