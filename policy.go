@@ -299,8 +299,8 @@ func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData
 
 func swallowPolicyORValueError(err error) error {
 	switch e := err.(type) {
-	case tpm2.TPMParameterError:
-		if e.Code == tpm2.ErrorValue && e.Command == tpm2.CommandPolicyOR {
+	case *tpm2.TPMParameterError:
+		if e.Code() == tpm2.ErrorValue && e.Command() == tpm2.CommandPolicyOR {
 			return nil
 		}
 	}
@@ -360,7 +360,7 @@ func executePolicySession(tpm *tpm2.TPMContext, sessionContext, pinContext tpm2.
 	if err := tpm.PolicyNV(policyRevokeContext, policyRevokeContext, sessionContext, operandB, 0,
 		tpm2.OpUnsignedLE, nil); err != nil {
 		switch e := err.(type) {
-		case tpm2.TPMError:
+		case *tpm2.TPMError:
 			if e.Code == tpm2.ErrorPolicy {
 				return ErrPolicyRevoked
 			}
@@ -378,8 +378,8 @@ func executePolicySession(tpm *tpm2.TPMContext, sessionContext, pinContext tpm2.
 	pinSession := tpm2.Session{Context: pinSessionContext}
 	if _, _, err := tpm.PolicySecret(pinContext, sessionContext, nil, nil, 0, &pinSession); err != nil {
 		switch e := err.(type) {
-		case tpm2.TPMSessionError:
-			if e.Code == tpm2.ErrorAuthFail {
+		case *tpm2.TPMSessionError:
+			if e.Code() == tpm2.ErrorAuthFail {
 				return ErrPinFail
 			}
 		}
