@@ -169,6 +169,9 @@ func TestComputePolicy(t *testing.T) {
 			if len(dataout.SnapModelORDigests) != len(data.input.snapModelPCRDigests) {
 				t.Errorf("Unexpected number of snap model OR digests")
 			}
+			if dataout.PinIndexHandle != data.input.pinIndex.Handle() {
+				t.Errorf("Unexpected PIN NV index handle")
+			}
 			if dataout.PolicyRevokeIndexHandle != data.input.policyRevokeIndex.Handle() {
 				t.Errorf("Unexpected policy revocation NV index handle")
 			}
@@ -198,16 +201,8 @@ func TestExecutePolicy(t *testing.T) {
 	tpm, tcti := openTPMSimulatorForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, nil); err != nil && err != ErrClearRequiresPPI {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
-	}
-
-	status, err := ProvisionStatus(tpm)
-	if err != nil {
-		t.Fatalf("Cannot check provision status: %v", err)
-	}
-	if status&AttrValidSRK == 0 {
-		t.Fatalf("No valid SRK for test")
 	}
 
 	pinIndex, pinPolicies, err := createPinNvIndex(tpm, pinIndexHandle, nil)
