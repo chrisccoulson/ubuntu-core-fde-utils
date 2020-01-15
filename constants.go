@@ -30,7 +30,7 @@ const (
 	// FIXME: Dynamically select algorithms based on what's available on the device
 	defaultSessionHashAlgorithm tpm2.AlgorithmId = tpm2.AlgorithmSHA256
 	sealedKeyNameAlgorithm      tpm2.AlgorithmId = tpm2.AlgorithmSHA256
-	signingKeyHashAlgorithm tpm2.AlgorithmId = tpm2.AlgorithmSHA256
+	signingKeyHashAlgorithm     tpm2.AlgorithmId = tpm2.AlgorithmSHA256
 
 	secureBootPCR = 7
 	grubPCR       = 8
