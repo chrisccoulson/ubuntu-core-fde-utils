@@ -20,6 +20,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"errors"
@@ -73,13 +74,41 @@ func activate(volume, sourceDevice string, key []byte, options []string) error {
 	defer os.Remove(keyFilePath)
 
 	cmd := exec.Command("/lib/systemd/systemd-cryptsetup", "attach", volume, sourceDevice, keyFilePath, strings.Join(options, ","))
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	cmd.Env = os.Environ()
+	cmd.Env = append(cmd.Env, "SYSTEMD_LOG_TARGET=console")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return xerrors.Errorf("cannot create stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return xerrors.Errorf("cannot create stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
 		return err
 	}
 
-	return nil
+	done := make(chan bool, 2)
+	go func() {
+		rd := bufio.NewScanner(stdout)
+		for rd.Scan() {
+			fmt.Printf("systemd-cryptsetup: %s\n", rd.Text())
+		}
+		done <- true
+	}()
+	go func() {
+		rd := bufio.NewScanner(stderr)
+		for rd.Scan() {
+			fmt.Fprintf(os.Stderr, "systemd-cryptsetup: %s\n", rd.Text())
+		}
+		done <- true
+	}()
+	for i := 0; i < 2; i++ {
+		<-done
+	}
+
+	return cmd.Wait()
 }
 
 func askPassword(sourceDevice, msg string) (string, error) {
