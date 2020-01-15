@@ -53,6 +53,7 @@ func (l *pathList) Set(value string) error {
 var update bool
 var masterKeyFile string
 var keyFile string
+var pinIndex string
 var policyRevocationIndex string
 var ownerAuth string
 var kernels pathList
@@ -63,6 +64,7 @@ func init() {
 	flag.BoolVar(&update, "update", false, "")
 	flag.StringVar(&masterKeyFile, "master-key-file", "", "")
 	flag.StringVar(&keyFile, "key-file", "", "")
+	flag.StringVar(&pinIndex, "pin-index", "", "")
 	flag.StringVar(&policyRevocationIndex, "policy-revocation-index", "", "")
 	flag.StringVar(&ownerAuth, "auth", "", "")
 	flag.Var(&kernels, "with-kernel", "")
@@ -95,6 +97,15 @@ func main() {
 		defer in.Close()
 	}
 
+	var pinHandle tpm2.Handle
+	if pinIndex != "" {
+		if h, err := hex.DecodeString(pinIndex); err != nil {
+			fmt.Fprintf(os.Stderr, "Invalid -pin-index: %v\n", err)
+			os.Exit(1)
+		} else {
+			pinHandle = tpm2.Handle(binary.BigEndian.Uint32(h))
+		}
+	}
 	var policyRevokeHandle tpm2.Handle
 	if policyRevocationIndex != "" {
 		if h, err := hex.DecodeString(policyRevocationIndex); err != nil {
@@ -143,7 +154,7 @@ func main() {
 		params.LoadPaths = append(params.LoadPaths, s)
 	}
 
-	if err := fdeutil.SealKeyToTPM(tpm, mode, keyFile, policyRevokeHandle, params, key,
+	if err := fdeutil.SealKeyToTPM(tpm, mode, keyFile, policyRevokeHandle, pinHandle, params, key,
 		ownerAuth); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot seal key to TPM: %v\n", err)
 		os.Exit(1)

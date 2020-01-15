@@ -55,14 +55,11 @@ func UnsealKeyFromTPM(tpm *tpm2.TPMContext, buf io.Reader, pin string) ([]byte, 
 
 	// Load the key data
 	var data keyData
-	keyContext, pinContext, err := data.loadAndIntegrityCheck(buf, tpm, false)
+	keyContext, err := data.loadAndIntegrityCheck(buf, tpm, false)
 	if err != nil {
 		return nil, fmt.Errorf("cannot load key data: %v", err)
 	}
-	defer func() {
-		tpm.FlushContext(keyContext)
-		tpm.FlushContext(pinContext)
-	}()
+	defer tpm.FlushContext(keyContext)
 
 	// Begin and execute policy session
 	srkContext, err := tpm.WrapHandle(srkHandle)
@@ -78,7 +75,7 @@ func UnsealKeyFromTPM(tpm *tpm2.TPMContext, buf io.Reader, pin string) ([]byte, 
 	}
 	defer tpm.FlushContext(sessionContext)
 
-	if err := executePolicySession(tpm, sessionContext, pinContext, data.AuxData.PolicyData, pin); err != nil {
+	if err := executePolicySession(tpm, sessionContext, data.AuxData.PolicyData, pin); err != nil {
 		switch err {
 		case ErrPinFail:
 			fallthrough

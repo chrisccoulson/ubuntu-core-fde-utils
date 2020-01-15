@@ -37,7 +37,7 @@ var _ = Suite(&keydataSuite{})
 
 func (s *keydataSuite) TestWriteFile(c *C) {
 	kd := fdeutil.NewKeydata()
-	kd.PinFlags = 0x1
+	kd.AskForPinHint = true
 
 	dest := filepath.Join(c.MkDir(), "keydata")
 	err := kd.WriteToFile(dest)
