@@ -3,10 +3,10 @@
 	"ignore": "test",
 	"package": [
 		{
-			"checksumSHA1": "yxvb6YFQBGEX7v4Pm6K5z7vstdc=",
+			"checksumSHA1": "3UG+LGSzTsv2r33YVcS8VBrMl4s=",
 			"path": "github.com/chrisccoulson/go-tpm2",
-			"revision": "776343808d29dafb72f4bb38376fe53875fc2ef6",
-			"revisionTime": "2019-10-15T21:56:18Z"
+			"revision": "01b3eecf58107855b5b8ea350d6d3f6c5af4c217",
+			"revisionTime": "2019-10-30T11:24:06Z"
 		},
 		{
 			"checksumSHA1": "PivTtD46tIChYSQcCe153L56W4Y=",
@@ -22,7 +22,7 @@
 			"revisionTime": "2019-09-06T18:49:57Z"
 		},
 		{
-			"checksumSHA1": "89YJCAgJAXBIjqzqeXiiO4cEuVo=",
+			"checksumSHA1": "ogoo3Fatp+IFS6WbaVX4sir4qlA=",
 			"path": "github.com/godbus/dbus",
 			"revision": "6eb4cf171088115fc4f087cb8a302859c601a546",
 			"revisionTime": "2019-07-26T03:53:44Z"
@@ -46,7 +46,7 @@
 			"revisionTime": "2019-09-14T15:45:38Z"
 		},
 		{
-			"checksumSHA1": "3anxpq/J8MUCJO7to/W4frpA35Y=",
+			"checksumSHA1": "eQ/ZmYriiV7H17HVA+w/y+OvHM8=",
 			"path": "github.com/snapcore/snapd/dirs",
 			"revision": "c1cd87df460bee8cdcc1f77786c9bd30e27e7ea2",
 			"revisionTime": "2019-09-11T18:46:24Z"
@@ -70,7 +70,7 @@
 			"revisionTime": "2019-09-14T15:45:38Z"
 		},
 		{
-			"checksumSHA1": "hWWybnDfJluajBFiZeLRFUGZxd0=",
+			"checksumSHA1": "RviK0UBTt+sabbw8xTn3Xu/PYzk=",
 			"path": "github.com/snapcore/snapd/osutil",
 			"revision": "c1cd87df460bee8cdcc1f77786c9bd30e27e7ea2",
 			"revisionTime": "2019-09-11T18:46:24Z"
@@ -82,13 +82,13 @@
 			"revisionTime": "2019-09-11T18:46:24Z"
 		},
 		{
-			"checksumSHA1": "qOmpG+ohztWk8ggoiR28QYJk3aA=",
+			"checksumSHA1": "euRJnHIKCL9xraGcbh6cDv70/5M=",
 			"path": "github.com/snapcore/snapd/release",
 			"revision": "c1cd87df460bee8cdcc1f77786c9bd30e27e7ea2",
 			"revisionTime": "2019-09-11T18:46:24Z"
 		},
 		{
-			"checksumSHA1": "cUiSTzeGoirYK0Q1UPvMZqz2Mvg=",
+			"checksumSHA1": "8cx1437LBeh5AzUlvZMtocK1TNc=",
 			"path": "github.com/snapcore/snapd/selinux",
 			"revision": "c1cd87df460bee8cdcc1f77786c9bd30e27e7ea2",
 			"revisionTime": "2019-09-11T18:46:24Z"
@@ -124,13 +124,13 @@
 			"revisionTime": "2019-09-14T15:45:38Z"
 		},
 		{
-			"checksumSHA1": "zfSheMKpwsr6LsxpTy9RQvuoehM=",
+			"checksumSHA1": "PlZjYTfMkWM4Njt+bftwtBbOYsE=",
 			"path": "github.com/snapcore/snapd/strutil",
 			"revision": "c1cd87df460bee8cdcc1f77786c9bd30e27e7ea2",
 			"revisionTime": "2019-09-11T18:46:24Z"
 		},
 		{
-			"checksumSHA1": "fL1WN8qr9Y9Ns/AlhhZJW1gAKro=",
+			"checksumSHA1": "vUqQUo808714J6/QPSpknOe7c/8=",
 			"path": "github.com/snapcore/snapd/testutil",
 			"revision": "c1cd87df460bee8cdcc1f77786c9bd30e27e7ea2",
 			"revisionTime": "2019-09-11T18:46:24Z"
@@ -148,31 +148,43 @@
 			"revisionTime": "2019-09-14T15:45:38Z"
 		},
 		{
-			"checksumSHA1": "wRLo86qqt/7IwI8X43IjXLvveU0=",
+			"checksumSHA1": "GtamqiJoL7PGHsN454AoffBFMa8=",
 			"path": "golang.org/x/net/context",
 			"revision": "a7b16738d86b947dd0fadb08ca2c2342b51958b6",
 			"revisionTime": "2019-09-08T16:12:21Z"
 		},
 		{
-			"checksumSHA1": "Iq1P5ZE0krASxqe/+FcJgiNNspE=",
+			"checksumSHA1": "hYsuWh8Zj6z+8rFsK7F7mABIR44=",
 			"path": "golang.org/x/sys/unix",
 			"revision": "dd2ff4accc098aceecb86b36eaa7829b2a17b1c9",
 			"revisionTime": "2018-03-01T08:23:35Z"
 		},
 		{
-			"checksumSHA1": "538I8ghUdvZa25NxgMUDpq14Qic=",
+			"checksumSHA1": "hurBRtR9I3o8NVs74ggKny2c4go=",
+			"path": "golang.org/x/xerrors",
+			"revision": "1b5146add8981d58be77b16229c0ff0f8bebd8c1",
+			"revisionTime": "2019-10-05T12:30:33Z"
+		},
+		{
+			"checksumSHA1": "LnzK4nslUNXBIfAt9PbXCJCvMdA=",
+			"path": "golang.org/x/xerrors/internal",
+			"revision": "9bdfabe68543c54f90421aeb9a60ef8061b5b544",
+			"revisionTime": "2019-07-19T19:12:34Z"
+		},
+		{
+			"checksumSHA1": "CEFTYXtWmgSh+3Ik1NmDaJcz4E0=",
 			"path": "gopkg.in/check.v1",
 			"revision": "20d25e2804050c1cd24a7eea1e7a6447dd0e74ec",
 			"revisionTime": "2016-12-08T18:13:25Z"
 		},
 		{
-			"checksumSHA1": "c+Uweyg73+WJ+p0CecOLPgTEbKc=",
+			"checksumSHA1": "t95/FNK2nGCx3e6IARbO7OrcCuY=",
 			"path": "gopkg.in/tomb.v2",
 			"revision": "d5d1b5820637886def9eef33e03a27a9f166942c",
 			"revisionTime": "2016-12-08T15:16:19Z"
 		},
 		{
-			"checksumSHA1": "xldGnHk44I4mgAwYKfsu7TqBPqM=",
+			"checksumSHA1": "QqDq2x8XOU7IoOR98Cx1eiV5QY8=",
 			"path": "gopkg.in/yaml.v2",
 			"revision": "51d6538a90f86fe93ac480b35f37b2be17fef232",
 			"revisionTime": "2018-11-15T11:05:04Z"
