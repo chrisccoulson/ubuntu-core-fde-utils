@@ -32,6 +32,10 @@ import (
 	"golang.org/x/xerrors"
 )
 
+const (
+	pcrAlgorithm tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
+)
+
 type OSComponentImage interface {
 	fmt.Stringer
 	ReadAll() ([]byte, error)
@@ -285,24 +289,24 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 	// Compute PCR digests
 	var secureBootDigests tpm2.DigestList
 	if params != nil {
-		secureBootDigests, err = computeSecureBootPolicyDigests(tpm.TPMContext, defaultHashAlgorithm, params)
+		secureBootDigests, err = computeSecureBootPolicyDigests(tpm.TPMContext, pcrAlgorithm, params)
 		if err != nil {
 			return fmt.Errorf("cannot compute secure boot policy digests: %v", err)
 		}
 	} else {
 		_, pcrValues, err := tpm.PCRRead(tpm2.PCRSelectionList{
-			tpm2.PCRSelection{Hash: defaultHashAlgorithm, Select: tpm2.PCRSelectionData{secureBootPCR}}})
+			tpm2.PCRSelection{Hash: pcrAlgorithm, Select: tpm2.PCRSelectionData{secureBootPCR}}})
 		if err != nil {
 			return xerrors.Errorf("cannot read secure boot PCR value: %w", err)
 		}
-		secureBootDigests = append(secureBootDigests, pcrValues[defaultHashAlgorithm][secureBootPCR])
+		secureBootDigests = append(secureBootDigests, pcrValues[pcrAlgorithm][secureBootPCR])
 	}
 
 	// Use the PCR digests and NV index names to generate a single policy digest
 	policyComputeIn := policyComputeInput{
-		secureBootPCRAlg:     defaultHashAlgorithm,
-		grubPCRAlg:           defaultHashAlgorithm,
-		snapModelPCRAlg:      defaultHashAlgorithm,
+		secureBootPCRAlg:     pcrAlgorithm,
+		grubPCRAlg:           pcrAlgorithm,
+		snapModelPCRAlg:      pcrAlgorithm,
 		secureBootPCRDigests: secureBootDigests,
 		grubPCRDigests:       tpm2.DigestList{make(tpm2.Digest, 32)},
 		snapModelPCRDigests:  tpm2.DigestList{make(tpm2.Digest, 32)},
@@ -310,7 +314,7 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 		policyRevokeIndex:    policyRevokeIndex,
 		policyRevokeCount:    nextPolicyRevokeCount}
 
-	policyData, authPolicy, err := computePolicy(defaultHashAlgorithm, &policyComputeIn)
+	policyData, authPolicy, err := computePolicy(sealedKeyNameAlgorithm, &policyComputeIn)
 	if err != nil {
 		return fmt.Errorf("cannot compute authorization policy: %v", err)
 	}
@@ -318,7 +322,7 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 	// Define the template for the sealed key object, using the computed policy digest
 	template := tpm2.Public{
 		Type:       tpm2.ObjectTypeKeyedHash,
-		NameAlg:    tpm2.HashAlgorithmSHA256,
+		NameAlg:    sealedKeyNameAlgorithm,
 		Attrs:      tpm2.AttrFixedTPM | tpm2.AttrFixedParent,
 		AuthPolicy: authPolicy,
 		Params: tpm2.PublicParamsU{
