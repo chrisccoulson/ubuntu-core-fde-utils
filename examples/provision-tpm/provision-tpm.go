@@ -47,9 +47,7 @@ func init() {
 		"Request to clear the TPM via the physical presence interface")
 }
 
-func main() {
-	flag.Parse()
-
+func run() int {
 	args := flag.Args()
 
 	if requestClear {
@@ -58,12 +56,12 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("Request to clear the TPM submitted successfully. Now perform a system restart")
-		return
+		return 0
 	}
 
 	if clear && noLockoutAuth {
 		fmt.Fprintf(os.Stderr, "-clear and -no-lockout-auth can't be used at the same time\n")
-		os.Exit(1)
+		return 1
 	}
 
 	var newLockoutAuth string
@@ -74,7 +72,7 @@ func main() {
 	tpm, err := fdeutil.ConnectToDefaultTPM()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot acquire TPM context: %v", err)
-		os.Exit(1)
+		return 1
 	}
 	defer tpm.Close()
 
@@ -108,6 +106,13 @@ func main() {
 		default:
 			fmt.Fprintf(os.Stderr, "Failed to provision the TPM: %v\n", err)
 		}
-		os.Exit(1)
+		return 1
 	}
+
+	return 0
+}
+
+func main() {
+	flag.Parse()
+	os.Exit(run())
 }

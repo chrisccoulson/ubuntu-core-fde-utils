@@ -113,6 +113,14 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 		return nil, xerrors.Errorf("cannot obtain context for new NV index: %w", err)
 	}
 
+	succeeded := false
+	defer func() {
+		if succeeded {
+			return
+		}
+		tpm.NVUndefineSpace(tpm2.HandleOwner, context, hmacSession.WithAuthValue(ownerAuth))
+	}()
+
 	// The name associated with context is read back from the TPM with no integrity protection, so we don't know if it's correct yet.
 	// We need to check that it's consistent with the NV index we created before adding it to an authorization policy.
 
@@ -183,6 +191,7 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 		return nil, errors.New("the NV index does not indicate that it has been initialized correctly")
 	}
 
+	succeeded = true
 	return context, nil
 }
 
