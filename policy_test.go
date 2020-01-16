@@ -42,12 +42,12 @@ func (c *mockResourceContext) Handle() tpm2.Handle {
 }
 
 func TestComputePolicy(t *testing.T) {
-	hasher := hashAlgToGoHash(tpm2.HashAlgorithmSHA256)
+	hasher := tpm2.HashAlgorithmSHA256.NewHash()
 	hasher.Write([]byte("PIN"))
 	pinName, _ := tpm2.MarshalToBytes(tpm2.HashAlgorithmSHA256, tpm2.RawBytes(hasher.Sum(nil)))
 	pinIndex := &mockResourceContext{pinName, testCreationParams.PinHandle}
 
-	hasher = hashAlgToGoHash(tpm2.HashAlgorithmSHA256)
+	hasher = tpm2.HashAlgorithmSHA256.NewHash()
 	hasher.Write([]byte("REVOKE"))
 	revokeIndexName, _ := tpm2.MarshalToBytes(tpm2.HashAlgorithmSHA256, tpm2.RawBytes(hasher.Sum(nil)))
 	revokeIndex := &mockResourceContext{revokeIndexName, testCreationParams.PolicyRevocationHandle}
@@ -56,7 +56,7 @@ func TestComputePolicy(t *testing.T) {
 
 	for _, data := range []string{"foo", "bar", "1234", "ABC"} {
 		for _, alg := range []tpm2.HashAlgorithmId{tpm2.HashAlgorithmSHA256, tpm2.HashAlgorithmSHA512} {
-			hasher := hashAlgToGoHash(alg)
+			hasher := alg.NewHash()
 			hasher.Write([]byte(data))
 			digestMatrix[alg] = append(digestMatrix[alg], hasher.Sum(nil))
 		}
@@ -180,7 +180,7 @@ func TestComputePolicy(t *testing.T) {
 				t.Errorf("Unexpected policy revocation count")
 			}
 
-			digestSize := getDigestSize(data.alg)
+			digestSize := data.alg.Size()
 			for _, l := range []tpm2.DigestList{dataout.SecureBootORDigests,
 				dataout.GrubORDigests, dataout.SnapModelORDigests} {
 				for _, digest := range l {
@@ -260,13 +260,13 @@ func TestExecutePolicy(t *testing.T) {
 	digestMatrix := make(map[tpm2.HashAlgorithmId]tpm2.DigestList)
 	for _, data := range []string{"foo", "bar", "xyz", "1234", "5678"} {
 		for _, alg := range []tpm2.HashAlgorithmId{tpm2.HashAlgorithmSHA256, tpm2.HashAlgorithmSHA1} {
-			hasher := hashAlgToGoHash(alg)
+			hasher := alg.NewHash()
 			hasher.Write([]byte(data))
 			dataDigest := hasher.Sum(nil)
 
-			digestSize := getDigestSize(alg)
+			digestSize := alg.Size()
 
-			hasher = hashAlgToGoHash(alg)
+			hasher = alg.NewHash()
 			hasher.Write(make([]byte, digestSize))
 			hasher.Write(dataDigest)
 
