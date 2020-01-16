@@ -43,12 +43,12 @@ func TestComputePolicy(t *testing.T) {
 	hasher := hashAlgToGoHash(tpm2.AlgorithmSHA256)
 	hasher.Write([]byte("PIN"))
 	pinName, _ := tpm2.MarshalToBytes(tpm2.AlgorithmSHA256, tpm2.RawBytes(hasher.Sum(nil)))
-	pinIndex := &mockResourceContext{pinName, pinIndexHandle}
+	pinIndex := &mockResourceContext{pinName, testCreationParams.PinHandle}
 
 	hasher = hashAlgToGoHash(tpm2.AlgorithmSHA256)
 	hasher.Write([]byte("REVOKE"))
 	revokeIndexName, _ := tpm2.MarshalToBytes(tpm2.AlgorithmSHA256, tpm2.RawBytes(hasher.Sum(nil)))
-	revokeIndex := &mockResourceContext{revokeIndexName, policyRevocationIndexHandle}
+	revokeIndex := &mockResourceContext{revokeIndexName, testCreationParams.PolicyRevocationHandle}
 
 	digestMatrix := make(map[tpm2.AlgorithmId]tpm2.DigestList)
 
@@ -94,7 +94,6 @@ func TestComputePolicy(t *testing.T) {
 				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][0]},
 				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][1]},
 				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.AlgorithmSHA256][2]},
-				pinObjectName:        pinName,
 				pinIndex:             pinIndex,
 				policyRevokeIndex:    revokeIndex,
 				policyRevokeCount:    4551,
@@ -205,7 +204,7 @@ func TestExecutePolicy(t *testing.T) {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	pinIndex, pinPolicies, err := createPinNvIndex(tpm, pinIndexHandle, nil)
+	pinIndex, pinPolicies, err := createPinNvIndex(tpm, testCreationParams.PinHandle, nil)
 	if err != nil {
 		t.Fatalf("createPinNvIndex failed: %v", err)
 	}
@@ -215,7 +214,7 @@ func TestExecutePolicy(t *testing.T) {
 		}
 	}()
 
-	policyRevokeIndex, err := createPolicyRevocationNvIndex(tpm, policyRevocationIndexHandle, nil)
+	policyRevokeIndex, err := createPolicyRevocationNvIndex(tpm, testCreationParams.PolicyRevocationHandle, nil)
 	if err != nil {
 		t.Fatalf("createPolicyRevocationNvIndex failed: %v", err)
 	}

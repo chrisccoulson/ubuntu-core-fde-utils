@@ -26,14 +26,14 @@ import (
 	"os"
 
 	"github.com/chrisccoulson/go-tpm2"
+	"golang.org/x/xerrors"
 )
 
 const (
 	pinNvIndexNameAlgorithm tpm2.AlgorithmId = tpm2.AlgorithmSHA256
 )
 
-func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interface{}) (tpm2.ResourceContext,
-	tpm2.DigestList, error) {
+func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interface{}) (tpm2.ResourceContext, tpm2.DigestList, error) {
 	// To prevent someone with knowledge of the owner authorization (which is empty unless someone has taken
 	// ownership of the TPM) from resetting the PIN by just undefining and redifining a new NV index with the
 	// same properties, require the NV index to be written to and only allow writes with a signed
@@ -45,7 +45,7 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interf
 
 	srkContext, err := tpm.WrapHandle(srkHandle)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot create context for SRK: %v", err)
+		return nil, nil, xerrors.Errorf("cannot create context for SRK: %w", err)
 	}
 
 	// Create and load a signing key
@@ -65,11 +65,11 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interf
 				Exponent: 0}}}
 	priv, pub, _, _, _, err := tpm.Create(srkContext, nil, &template, nil, nil, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot create signing key for initializing NV index: %v", err)
+		return nil, nil, xerrors.Errorf("cannot create signing key for initializing NV index: %w", err)
 	}
 	key, _, err := tpm.Load(srkContext, priv, pub, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot load signing key to initialize NV index: %v", err)
+		return nil, nil, xerrors.Errorf("cannot load signing key to initialize NV index: %2", err)
 	}
 	defer tpm.FlushContext(key)
 
@@ -101,19 +101,18 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interf
 		Size:       0}
 
 	if err := tpm.NVDefineSpace(tpm2.HandleOwner, nil, &nvPublic, ownerAuth); err != nil {
-		return nil, nil, fmt.Errorf("cannot define NV space: %v", err)
+		return nil, nil, xerrors.Errorf("cannot define NV space: %w", err)
 	}
 
 	context, err := tpm.WrapHandle(handle)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot obtain context for new NV index: %v", err)
+		return nil, nil, xerrors.Errorf("cannot obtain context for new NV index: %w", err)
 	}
 
 	// Begin a session to initialize the index
-	sessionContext, err := tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypePolicy, nil,
-		pinNvIndexNameAlgorithm, nil)
+	sessionContext, err := tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypePolicy, nil, pinNvIndexNameAlgorithm, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot begin authorization session to initialize NV index: %v", err)
+		return nil, nil, xerrors.Errorf("cannot begin authorization session to initialize NV index: %w", err)
 	}
 	defer tpm.FlushContext(sessionContext)
 
@@ -125,33 +124,31 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interf
 	// Sign the digest
 	signature, err := tpm.Sign(key, h.Sum(nil), nil, nil, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot produce signed authorization to initialize NV index: %v", err)
+		return nil, nil, xerrors.Errorf("cannot produce signed authorization to initialize NV index: %w", err)
 	}
 
 	// Execute the policy assertions
 	if _, _, err := tpm.PolicySigned(key, sessionContext, true, nil, nil, 0, signature); err != nil {
-		return nil, nil,
-			fmt.Errorf("cannot execute PolicySigned assertion to initialize NV index: %v", err)
+		return nil, nil, xerrors.Errorf("cannot execute PolicySigned assertion to initialize NV index: %w", err)
 	}
 	if err := tpm.PolicyOR(sessionContext, authPolicies); err != nil {
-		return nil, nil, fmt.Errorf("cannot execute PolicyOR assertion to initialize NV index: %v", err)
+		return nil, nil, xerrors.Errorf("cannot execute PolicyOR assertion to initialize NV index: %w", err)
 	}
 
 	// Initialize the index
 	session := tpm2.Session{Context: sessionContext}
 	if err := tpm.NVWrite(context, context, nil, 0, &session); err != nil {
-		return nil, nil, fmt.Errorf("cannot initialize NV index: %v", err)
+		return nil, nil, xerrors.Errorf("cannot initialize NV index: %w", err)
 	}
 
 	// Verify that the index now has the written attribute - if it doesn't for some reason, then it would
 	// be trivial for someone to recreate the index with the same properties in order to remove the PIN
 	nvPub, _, err := tpm.NVReadPublic(context)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot read NV index public area: %v", err)
+		return nil, nil, xerrors.Errorf("cannot read NV index public area: %w", err)
 	}
 	if nvPub.Attrs&tpm2.AttrNVWritten == 0 {
-		return nil, nil,
-			errors.New("the NV index does not indicate that it has been initialized correctly")
+		return nil, nil, errors.New("the NV index does not indicate that it has been initialized correctly")
 	}
 
 	return context, authPolicies, nil

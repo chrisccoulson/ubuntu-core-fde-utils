@@ -31,6 +31,10 @@ const (
 	defaultSessionHashAlgorithm tpm2.AlgorithmId = tpm2.AlgorithmSHA256
 	sealedKeyNameAlgorithm      tpm2.AlgorithmId = tpm2.AlgorithmSHA256
 	signingKeyHashAlgorithm     tpm2.AlgorithmId = tpm2.AlgorithmSHA256
+
+	secureBootPCR = 7
+	grubPCR       = 8
+	snapModelPCR  = 11
 )
 
 var (
