@@ -1,15 +1,31 @@
-- db1.bin is the UEFI database from a Dell Precision Workstation 7510, containing the 2 Microsoft CAs.
-- dbx1.bin is the UEFI forbidden signature database from the same machine, with MS-2016-08-08.bin applied.
-- db2.bin is the UEFI database from a QEMU instance running OVMF with "Microsoft Windows Production PCA 2011", "Microsoft Corporation UEFI CA 2011" and a test CA certificate enrolled.
-- db3.bin is the same as db2.bin with a second test CA certificate enrolled.
-- dbx2.in is the UEFI forbidden signature database from the same QEMU instance.
+- efivars/ contains:
+  - a KEK database from a Dell Precision Workstation 7510.
+  - a UEFI signature database from the same machine, containing the 2 Microsoft CAs.
+  - a UEFI forbidden signature database from the same machine, with MS-2016-08-08.bin applied.
+- efivars1/ contains:
+  - a KEK database from a QEMU instance running OVMF with "Ubuntu OVMF Secure Boot (PK/KEK key)", "Microsoft
+    Corporation KEK CA 2011" and a test KEK CA certificate enrolled.
+  - a UEFI signature database from the same QEMU instance with "Microsoft Windows Production PCA 2011",
+    "Microsoft Corporation UEFI CA 2011" and a test CA certificate enrolled.
+  - a UEFI forbidden signature database from the same QEMU instance with a single SHA-256 signature.
+- efivars2/ contains:
+  - The same KEK database from efivars1/.
+  - The same UEFI signature database from efivars1/, but with a second test CA certificate enrolled.
+  - The same UEFI forbidden signature database from efivars1/
+- efivars3/ contains:
+  - The same KEK database from efivars1/.
+  - The same UEFI signature database from efivars1/
+  - The same UEFI signature database from efivars1/, but with MS-2016-08-08.bin applied.
+
+- updates/ contains the MS-2016-08-08.bin dbx update.
+- updates1/ contains a UEFI db update containing the second test CA certificate already enrolled in efivars2/.
+- updates2/ contains a UEFI forbidden signature db update based on the contents of the forbidden signature
+  database from efivars3/, but with 2 sha256 signatures changed (one digest and one owner GUID).
+- updates3/ contains updates from updates/ and updates1/
 
 - eventlog1.bin is an event log from a QEMU instance running OVMF with the following configuration:
   - "Ubuntu OVMF Secure Boot (PK/KEK key)" enrolled in to PK.
-  - "Ubuntu OVMF Secure Boot (PK/KEK key)", "Microsoft Corporation KEK CA 2011" and test certificate enrolled in to
-    KEK.
-  - "Microsoft Windows Production PCA 2011", "Microsoft Corporation UEFI CA 2011" and test CA certificate enrolled
-    in to db (db2.bin).
+  - KEK database, UEFI database and forbidden signature databases from efivars1/.
   - Booted with a version of shim signed by the test UEFI CA key, Grub signed by Canonical's archive key (the
     issuer of which is shim's embedded vendor cert) and a custom kernel signed by the test UEFI CA key.
 - eventlog2.bin is an event log from the same QEMU instance but with with secure boot validation disabled in shim
@@ -17,17 +33,17 @@
 
 - mock.efi is a mock EFI executable that has no signature.
 - mock.efi.signed.1 is a mock EFI executable signed with the key from a certificate issued by the test CA in
-  db2.bin.
+  efivars1/.
 - mock.efi.signed.2 is the same as mock.efi.signed.1 but signed with the key from a certificate issued by the
-  second test CA in db3.bin.
+  second test CA in efivars2/.
 
 - mockshim1.efi.signed.1 is a mock shim EFI executable signed with the key from a certificate issued by the test
-  CA in db2.bin, and the same test CA certificate embedded as the vendor cert.
+  CA in efivars1/, and the same test CA certificate embedded as the vendor cert.
 - mockshim1.efi.signed.2 is the same as mockshim1.efi.signed.1 but signed with the key from a certificate issued
-  by the second test CA in db3.bin.
+  by the second test CA in efivars2/.
 - mockshim2.efi.signed.1 is a mock shim EFI executable signed with the key from a certificate issued by the test CA
-  in db2.bin, and the second test CA certificate from db3.bin embedded as the vendor cert.
+  in efivars1/, and the second test CA certificate from efivars2/ embedded as the vendor cert.
 - mockshim2.efi.signed.2 is the same as mockshim2.efi.signed.1 but signed with the key from a certificate issued
-  by the second test CA in db3.bin.
+  by the second test CA in efivars2/.
 - mockshim.efi.signed.1 is a mock shim EFI executable signed with the key from a certificate issued by the test CA
-  in db2.bin, with no vendor cert.
+  in efivars1/, with no vendor cert.
