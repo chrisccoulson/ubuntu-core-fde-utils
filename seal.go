@@ -32,6 +32,10 @@ import (
 	"golang.org/x/xerrors"
 )
 
+const (
+	pcrAlgorithm tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
+)
+
 type OSComponentImage interface {
 	ReadAll() ([]byte, error)
 }
@@ -91,6 +95,16 @@ type SealParams struct {
 	// generated authorization policy. Alternate boot sequences resulting in the same authorization policy
 	// are automatically de-duplicated.
 	LoadPaths []*OSComponent
+
+	// SecureBootDbKeystores are the source directories for UEFI signature database updates and corresponds to
+	// the "--keystore" options passed to sbkeysync when applying updates. To support atomic updates of
+	// UEFI signature databases, SealKeyToTPM should be called before the updates contained in these
+	// directories are applied by sbkeysync. After applying updates, it should be called again. The ordering
+	// of directories here is important - it must match the ordering of directories passed to sbkeysync via
+	// the --keystore command by whatever agent is responsible for applying updates. This functionality
+	// depends on sbkeysync being available in one of the shell search paths, and assumes that updates are
+	// applied with the "--no-default-keystores" option.
+	SecureBootDbKeystores []string
 }
 
 type CreationParams struct {
@@ -250,24 +264,24 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 	// Compute PCR digests
 	var secureBootDigests tpm2.DigestList
 	if params != nil {
-		secureBootDigests, err = computeSecureBootPolicyDigests(tpm.TPMContext, defaultHashAlgorithm, params)
+		secureBootDigests, err = computeSecureBootPolicyDigests(tpm.TPMContext, pcrAlgorithm, params)
 		if err != nil {
 			return fmt.Errorf("cannot compute secure boot policy digests: %v", err)
 		}
 	} else {
 		_, pcrValues, err := tpm.PCRRead(tpm2.PCRSelectionList{
-			tpm2.PCRSelection{Hash: defaultHashAlgorithm, Select: tpm2.PCRSelectionData{secureBootPCR}}})
+			tpm2.PCRSelection{Hash: pcrAlgorithm, Select: tpm2.PCRSelectionData{secureBootPCR}}})
 		if err != nil {
 			return xerrors.Errorf("cannot read secure boot PCR value: %w", err)
 		}
-		secureBootDigests = append(secureBootDigests, pcrValues[defaultHashAlgorithm][secureBootPCR])
+		secureBootDigests = append(secureBootDigests, pcrValues[pcrAlgorithm][secureBootPCR])
 	}
 
 	// Use the PCR digests and NV index names to generate a single policy digest
 	policyComputeIn := policyComputeInput{
-		secureBootPCRAlg:     defaultHashAlgorithm,
-		grubPCRAlg:           defaultHashAlgorithm,
-		snapModelPCRAlg:      defaultHashAlgorithm,
+		secureBootPCRAlg:     pcrAlgorithm,
+		grubPCRAlg:           pcrAlgorithm,
+		snapModelPCRAlg:      pcrAlgorithm,
 		secureBootPCRDigests: secureBootDigests,
 		grubPCRDigests:       tpm2.DigestList{make(tpm2.Digest, 32)},
 		snapModelPCRDigests:  tpm2.DigestList{make(tpm2.Digest, 32)},
@@ -275,7 +289,7 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 		policyRevokeIndex:    policyRevokeIndex,
 		policyRevokeCount:    nextPolicyRevokeCount}
 
-	policyData, authPolicy, err := computePolicy(defaultHashAlgorithm, &policyComputeIn)
+	policyData, authPolicy, err := computePolicy(sealedKeyNameAlgorithm, &policyComputeIn)
 	if err != nil {
 		return fmt.Errorf("cannot compute authorization policy: %v", err)
 	}
@@ -283,7 +297,7 @@ func SealKeyToTPM(tpm *TPMConnection, dest string, create *CreationParams, param
 	// Define the template for the sealed key object, using the computed policy digest
 	template := tpm2.Public{
 		Type:       tpm2.ObjectTypeKeyedHash,
-		NameAlg:    tpm2.HashAlgorithmSHA256,
+		NameAlg:    sealedKeyNameAlgorithm,
 		Attrs:      tpm2.AttrFixedTPM | tpm2.AttrFixedParent,
 		AuthPolicy: authPolicy,
 		Params: tpm2.PublicParamsU{
