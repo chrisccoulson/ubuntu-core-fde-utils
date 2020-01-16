@@ -166,7 +166,7 @@ func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte,
 	}
 
 	// Create an initial session for HMAC authorizations
-	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultHashAlgorithm, nil)
+	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultSessionHashAlgorithm, nil)
 	if err != nil {
 		return xerrors.Errorf("cannot start session: %w", err)
 	}
@@ -361,7 +361,7 @@ func isObjectPrimaryKeyWithTemplate(tpm *tpm2.TPMContext, hierarchy tpm2.Handle,
 	h.Write(context.Name())
 
 	alg := make([]byte, 2)
-	binary.BigEndian.PutUint16(alg, uint16(tpm2.HashAlgorithmSHA256))
+	binary.BigEndian.PutUint16(alg, uint16(srkTemplate.NameAlg))
 
 	expectedQualifiedName := h.Sum(alg)
 	if !bytes.Equal(expectedQualifiedName, qualifiedName) {
