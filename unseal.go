@@ -64,7 +64,7 @@ func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string) ([]byte, er
 	defer tpm.FlushContext(keyContext)
 
 	// Begin and execute policy session
-	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, defaultHashAlgorithm, nil)
+	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, sealedKeyNameAlgorithm, nil)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot start policy session: %w", err)
 	}

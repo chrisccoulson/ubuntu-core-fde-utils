@@ -28,6 +28,7 @@ import (
 )
 
 var parentsOnly bool
+
 func init() {
 	flag.BoolVar(&parentsOnly, "parents-only", false, "")
 }

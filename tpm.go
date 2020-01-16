@@ -287,7 +287,7 @@ func (t *TPMConnection) init(endorsementAuth []byte) error {
 		Algorithm: tpm2.SymAlgorithmAES,
 		KeyBits:   tpm2.SymKeyBitsU{Data: uint16(128)},
 		Mode:      tpm2.SymModeU{Data: tpm2.SymModeCFB}}
-	sessionContext, err := t.StartAuthSession(ekContext, nil, tpm2.SessionTypeHMAC, &symmetric, defaultHashAlgorithm, nil)
+	sessionContext, err := t.StartAuthSession(ekContext, nil, tpm2.SessionTypeHMAC, &symmetric, defaultSessionHashAlgorithm, nil)
 	if err != nil {
 		return xerrors.Errorf("cannot create HMAC session: %w", err)
 	}
