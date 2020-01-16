@@ -37,12 +37,18 @@ const (
 )
 
 type OSComponentImage interface {
+	fmt.Stringer
 	ReadAll() ([]byte, error)
 }
 
 type SnapFileOSComponent struct {
 	Container snap.Container
+	Path      string
 	FileName  string
+}
+
+func (f SnapFileOSComponent) String() string {
+	return f.Path + ":" + f.FileName
 }
 
 func (f SnapFileOSComponent) ReadAll() ([]byte, error) {
@@ -50,6 +56,10 @@ func (f SnapFileOSComponent) ReadAll() ([]byte, error) {
 }
 
 type FileOSComponent string
+
+func (p FileOSComponent) String() string {
+	return string(p)
+}
 
 func (p FileOSComponent) ReadAll() ([]byte, error) {
 	f, err := os.Open(string(p))

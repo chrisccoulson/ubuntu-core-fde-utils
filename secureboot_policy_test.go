@@ -513,12 +513,13 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 									&OSComponent{
 										LoadType: DirectLoadWithShimVerify,
 										Image:    FileOSComponent("testdata/mock.efi.signed.1")}}}}}}},
-			err: "cannot process events from event log: cannot process KEK measurement event: cannot process KEK measurement event 0: cannot " +
-				"process subsequent events from event log: cannot process db measurement event: cannot process db measurement event 0: cannot " +
-				"process subsequent events from event log: cannot process dbx measurement event: cannot process dbx measurement event 0: cannot " +
-				"process subsequent events from event log: cannot compute OS load events: cannot compute events for component at index 0: " +
-				"cannot process Shim executable: cannot compute events for subsequent components: cannot compute events for component at index " +
-				"0: cannot process executable: cannot compute measurement for PE binary verification: no root certificate found",
+			err: "cannot process events from event log: cannot process KEK measurement event: cannot process KEK measurement event 0: " +
+				"cannot process subsequent events from event log: cannot process db measurement event: cannot process db measurement event 0: " +
+				"cannot process subsequent events from event log: cannot process dbx measurement event: cannot process dbx measurement event " +
+				"0: cannot process subsequent events from event log: cannot compute OS load events: cannot compute events for component at " +
+				"index 0 (testdata/mockshim1.efi.signed.1): cannot process Shim executable: cannot compute events for subsequent components: " +
+				"cannot compute events for component at index 0 (testdata/mock.efi.signed.2): cannot process executable: cannot compute " +
+				"measurement for PE binary verification: no root certificate found",
 		},
 		{
 			// Test with an unsigned kernel
@@ -538,13 +539,14 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 									&OSComponent{
 										LoadType: DirectLoadWithShimVerify,
 										Image:    FileOSComponent("testdata/mock.efi")}}}}}}},
-			err: "cannot process events from event log: cannot process KEK measurement event: cannot process KEK measurement event 0: cannot " +
-				"process subsequent events from event log: cannot process db measurement event: cannot process db measurement event 0: cannot " +
-				"process subsequent events from event log: cannot process dbx measurement event: cannot process dbx measurement event 0: cannot " +
-				"process subsequent events from event log: cannot compute OS load events: cannot compute events for component at index 0: " +
-				"cannot process Shim executable: cannot compute events for subsequent components: cannot compute events for component at index " +
-				"0: cannot process executable: cannot compute events for subsequent components: cannot compute events for component at index 0: " +
-				"cannot process executable: cannot compute measurement for PE binary verification: cannot read signature length: EOF",
+			err: "cannot process events from event log: cannot process KEK measurement event: cannot process KEK measurement event 0: " +
+				"cannot process subsequent events from event log: cannot process db measurement event: cannot process db measurement event 0: " +
+				"cannot process subsequent events from event log: cannot process dbx measurement event: cannot process dbx measurement event " +
+				"0: cannot process subsequent events from event log: cannot compute OS load events: cannot compute events for component at " +
+				"index 0 (testdata/mockshim1.efi.signed.1): cannot process Shim executable: cannot compute events for subsequent components: " +
+				"cannot compute events for component at index 0 (testdata/mock.efi.signed.1): cannot process executable: cannot compute events " +
+				"for subsequent components: cannot compute events for component at index 0 (testdata/mock.efi): cannot process executable: " +
+				"cannot compute measurement for PE binary verification: cannot read signature length: EOF",
 		},
 		{
 			// Test with secure boot enforcement disabled in shim
@@ -721,9 +723,9 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 				"cannot process subsequent events from event log: cannot process db measurement event: cannot process db measurement event 0: " +
 				"cannot process subsequent events from event log: cannot process dbx measurement event: cannot process dbx measurement event " +
 				"0: cannot process subsequent events from event log: cannot compute OS load events: cannot compute events for component at " +
-				"index 0: cannot process executable: cannot compute events for subsequent components: cannot compute events for component at " +
-				"index 0: cannot process executable: cannot compute measurement for PE binary verification: shim verification specified " +
-				"without being preceeded by a shim executable",
+				"index 0 (testdata/mock.efi.signed.1): cannot process executable: cannot compute events for subsequent components: cannot " +
+				"compute events for component at index 0 (testdata/mock.efi.signed.1): cannot process executable: cannot compute measurement " +
+				"for PE binary verification: shim verification specified without being preceeded by a shim executable",
 		},
 		{
 			// Test that shim binaries without a vendor cert work correctly
