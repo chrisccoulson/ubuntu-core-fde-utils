@@ -34,20 +34,20 @@ import (
 )
 
 var (
-	knownDigests = map[tpm2.AlgorithmId]struct {
+	knownDigests = map[tpm2.HashAlgorithmId]struct {
 		constructor func() hash.Hash
 		size        int
 	}{
-		tpm2.AlgorithmSHA1:   {constructor: sha1.New, size: sha1.Size},
-		tpm2.AlgorithmSHA256: {constructor: sha256.New, size: sha256.Size},
-		tpm2.AlgorithmSHA384: {constructor: sha512.New384, size: sha512.Size384},
-		tpm2.AlgorithmSHA512: {constructor: sha512.New, size: sha512.Size}}
+		tpm2.HashAlgorithmSHA1:   {constructor: sha1.New, size: sha1.Size},
+		tpm2.HashAlgorithmSHA256: {constructor: sha256.New, size: sha256.Size},
+		tpm2.HashAlgorithmSHA384: {constructor: sha512.New384, size: sha512.Size384},
+		tpm2.HashAlgorithmSHA512: {constructor: sha512.New, size: sha512.Size}}
 )
 
 type policyComputeInput struct {
-	secureBootPCRAlg     tpm2.AlgorithmId
-	grubPCRAlg           tpm2.AlgorithmId
-	snapModelPCRAlg      tpm2.AlgorithmId
+	secureBootPCRAlg     tpm2.HashAlgorithmId
+	grubPCRAlg           tpm2.HashAlgorithmId
+	snapModelPCRAlg      tpm2.HashAlgorithmId
 	secureBootPCRDigests tpm2.DigestList
 	grubPCRDigests       tpm2.DigestList
 	snapModelPCRDigests  tpm2.DigestList
@@ -58,10 +58,10 @@ type policyComputeInput struct {
 }
 
 type policyData struct {
-	Algorithm               tpm2.AlgorithmId
-	SecureBootPCRAlg        tpm2.AlgorithmId
-	GrubPCRAlg              tpm2.AlgorithmId
-	SnapModelPCRAlg         tpm2.AlgorithmId
+	Algorithm               tpm2.HashAlgorithmId
+	SecureBootPCRAlg        tpm2.HashAlgorithmId
+	GrubPCRAlg              tpm2.HashAlgorithmId
+	SnapModelPCRAlg         tpm2.HashAlgorithmId
 	SecureBootORDigests     tpm2.DigestList
 	GrubORDigests           tpm2.DigestList
 	SnapModelORDigests      tpm2.DigestList
@@ -70,7 +70,7 @@ type policyData struct {
 	PolicyRevokeCount       uint64
 }
 
-func hashAlgToGoHash(hashAlg tpm2.AlgorithmId) hash.Hash {
+func hashAlgToGoHash(hashAlg tpm2.HashAlgorithmId) hash.Hash {
 	knownDigest, isKnown := knownDigests[hashAlg]
 	if !isKnown {
 		panic("Unknown digest algorithm")
@@ -78,7 +78,7 @@ func hashAlgToGoHash(hashAlg tpm2.AlgorithmId) hash.Hash {
 	return knownDigest.constructor()
 }
 
-func getDigestSize(alg tpm2.AlgorithmId) uint {
+func getDigestSize(alg tpm2.HashAlgorithmId) uint {
 	known, isKnown := knownDigests[alg]
 	if !isKnown {
 		panic("Unknown digest algorithm")
@@ -89,7 +89,7 @@ func getDigestSize(alg tpm2.AlgorithmId) uint {
 func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interface{}) (tpm2.ResourceContext, error) {
 	public := tpm2.NVPublic{
 		Index:   handle,
-		NameAlg: tpm2.AlgorithmSHA256,
+		NameAlg: tpm2.HashAlgorithmSHA256,
 		Attrs:   tpm2.MakeNVAttributes(tpm2.AttrNVAuthWrite|tpm2.AttrNVAuthRead, tpm2.NVTypeCounter),
 		Size:    8}
 
@@ -120,28 +120,30 @@ func ensureSufficientORDigests(digests tpm2.DigestList) tpm2.DigestList {
 	return tpm2.DigestList{digests[0], digests[0]}
 }
 
-func makePCRSelectionList(alg tpm2.AlgorithmId, index int) tpm2.PCRSelectionList {
+func makePCRSelectionList(alg tpm2.HashAlgorithmId, index int) tpm2.PCRSelectionList {
 	return tpm2.PCRSelectionList{
 		tpm2.PCRSelection{Hash: alg, Select: tpm2.PCRSelectionData{index}}}
 }
 
-func computePCRDigest(alg tpm2.AlgorithmId, digests tpm2.DigestList) tpm2.Digest {
-	h := hashAlgToGoHash(alg)
-	for _, d := range digests {
-		h.Write(d)
-	}
-	return h.Sum(nil)
+func computePolicyPCRParams(policyAlg, pcrAlg tpm2.HashAlgorithmId, digest tpm2.Digest, index int) (tpm2.Digest, tpm2.PCRSelectionList) {
+	pcrs := makePCRSelectionList(pcrAlg, index)
+
+	pcrValues := make(tpm2.PCRValues)
+	pcrValues.EnsureBank(pcrAlg)
+	pcrValues[pcrAlg][index] = digest
+	pcrDigest, _ := tpm2.ComputePCRDigest(policyAlg, pcrs, pcrValues)
+
+	return pcrDigest, pcrs
 }
 
-func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData, tpm2.Digest, error) {
+func computePolicy(alg tpm2.HashAlgorithmId, input *policyComputeInput) (*policyData, tpm2.Digest, error) {
 	if len(input.secureBootPCRDigests) == 0 {
 		return nil, nil, errors.New("no secure-boot digests provided")
 	}
 	secureBootORDigests := make(tpm2.DigestList, 0)
 	for _, digest := range input.secureBootPCRDigests {
 		trial, _ := tpm2.ComputeAuthPolicy(alg)
-		pcrs := makePCRSelectionList(input.secureBootPCRAlg, secureBootPCR)
-		pcrDigest := computePCRDigest(alg, tpm2.DigestList{digest})
+		pcrDigest, pcrs := computePolicyPCRParams(alg, input.secureBootPCRAlg, digest, secureBootPCR)
 		trial.PolicyPCR(pcrDigest, pcrs)
 		secureBootORDigests = append(secureBootORDigests, trial.GetDigest())
 	}
@@ -153,8 +155,7 @@ func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData
 	for _, digest := range input.grubPCRDigests {
 		trial, _ := tpm2.ComputeAuthPolicy(alg)
 		trial.PolicyOR(ensureSufficientORDigests(secureBootORDigests))
-		pcrs := makePCRSelectionList(input.grubPCRAlg, grubPCR)
-		pcrDigest := computePCRDigest(alg, tpm2.DigestList{digest})
+		pcrDigest, pcrs := computePolicyPCRParams(alg, input.grubPCRAlg, digest, grubPCR)
 		trial.PolicyPCR(pcrDigest, pcrs)
 		grubORDigests = append(grubORDigests, trial.GetDigest())
 	}
@@ -166,8 +167,7 @@ func computePolicy(alg tpm2.AlgorithmId, input *policyComputeInput) (*policyData
 	for _, digest := range input.snapModelPCRDigests {
 		trial, _ := tpm2.ComputeAuthPolicy(alg)
 		trial.PolicyOR(ensureSufficientORDigests(grubORDigests))
-		pcrs := makePCRSelectionList(input.snapModelPCRAlg, snapModelPCR)
-		pcrDigest := computePCRDigest(alg, tpm2.DigestList{digest})
+		pcrDigest, pcrs := computePolicyPCRParams(alg, input.snapModelPCRAlg, digest, snapModelPCR)
 		trial.PolicyPCR(pcrDigest, pcrs)
 		snapModelORDigests = append(snapModelORDigests, trial.GetDigest())
 	}

@@ -37,26 +37,26 @@ func validateSRK(t *testing.T, tpm *tpm2.TPMContext) {
 		t.Fatalf("ReadPublic failed: %v", err)
 	}
 
-	if pub.Type != tpm2.AlgorithmRSA {
+	if pub.Type != tpm2.ObjectTypeRSA {
 		t.Errorf("SRK has unexpected type")
 	}
-	if pub.NameAlg != tpm2.AlgorithmSHA256 {
+	if pub.NameAlg != tpm2.HashAlgorithmSHA256 {
 		t.Errorf("SRK has unexpected name algorithm")
 	}
 	if pub.Attrs != tpm2.AttrFixedTPM|tpm2.AttrFixedParent|tpm2.AttrSensitiveDataOrigin|
 		tpm2.AttrUserWithAuth|tpm2.AttrRestricted|tpm2.AttrDecrypt {
 		t.Errorf("SRK has unexpected attributes")
 	}
-	if pub.Params.RSADetail().Symmetric.Algorithm != tpm2.AlgorithmAES {
+	if pub.Params.RSADetail().Symmetric.Algorithm != tpm2.SymObjectAlgorithmAES {
 		t.Errorf("SRK has unexpected symmetric algorithm")
 	}
 	if pub.Params.RSADetail().Symmetric.KeyBits.Sym() != 128 {
 		t.Errorf("SRK has unexpected symmetric key length")
 	}
-	if pub.Params.RSADetail().Symmetric.Mode.Sym() != tpm2.AlgorithmCFB {
+	if pub.Params.RSADetail().Symmetric.Mode.Sym() != tpm2.SymModeCFB {
 		t.Errorf("SRK has unexpected symmetric mode")
 	}
-	if pub.Params.RSADetail().Scheme.Scheme != tpm2.AlgorithmNull {
+	if pub.Params.RSADetail().Scheme.Scheme != tpm2.RSASchemeNull {
 		t.Errorf("SRK has unexpected RSA scheme")
 	}
 	if pub.Params.RSADetail().KeyBits != 2048 {

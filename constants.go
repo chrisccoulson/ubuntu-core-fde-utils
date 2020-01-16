@@ -28,9 +28,8 @@ const (
 
 	// SHA-256 is mandatory to exist on every PC-Client TPM
 	// FIXME: Dynamically select algorithms based on what's available on the device
-	defaultSessionHashAlgorithm tpm2.AlgorithmId = tpm2.AlgorithmSHA256
-	sealedKeyNameAlgorithm      tpm2.AlgorithmId = tpm2.AlgorithmSHA256
-	signingKeyHashAlgorithm     tpm2.AlgorithmId = tpm2.AlgorithmSHA256
+	defaultSessionHashAlgorithm tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
+	sealedKeyNameAlgorithm      tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
 
 	secureBootPCR = 7
 	grubPCR       = 8
@@ -39,7 +38,7 @@ const (
 
 var (
 	paramEncryptAlg = tpm2.SymDef{
-		Algorithm: tpm2.AlgorithmAES,
+		Algorithm: tpm2.SymAlgorithmAES,
 		KeyBits:   tpm2.SymKeyBitsU{Data: uint16(128)},
-		Mode:      tpm2.SymModeU{Data: tpm2.AlgorithmCFB}}
+		Mode:      tpm2.SymModeU{Data: tpm2.SymModeCFB}}
 )

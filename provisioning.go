@@ -75,17 +75,17 @@ const (
 
 var (
 	srkTemplate = tpm2.Public{
-		Type:    tpm2.AlgorithmRSA,
-		NameAlg: tpm2.AlgorithmSHA256,
-		Attrs: tpm2.AttrFixedTPM | tpm2.AttrFixedParent | tpm2.AttrSensitiveDataOrigin |
-			tpm2.AttrUserWithAuth | tpm2.AttrRestricted | tpm2.AttrDecrypt,
+		Type:    tpm2.ObjectTypeRSA,
+		NameAlg: tpm2.HashAlgorithmSHA256,
+		Attrs: tpm2.AttrFixedTPM | tpm2.AttrFixedParent | tpm2.AttrSensitiveDataOrigin | tpm2.AttrUserWithAuth | tpm2.AttrRestricted |
+			tpm2.AttrDecrypt,
 		Params: tpm2.PublicParamsU{
 			Data: &tpm2.RSAParams{
 				Symmetric: tpm2.SymDefObject{
-					Algorithm: tpm2.AlgorithmAES,
+					Algorithm: tpm2.SymObjectAlgorithmAES,
 					KeyBits:   tpm2.SymKeyBitsU{Data: uint16(128)},
-					Mode:      tpm2.SymModeU{Data: tpm2.AlgorithmCFB}},
-				Scheme:   tpm2.RSAScheme{Scheme: tpm2.AlgorithmNull},
+					Mode:      tpm2.SymModeU{Data: tpm2.SymModeCFB}},
+				Scheme:   tpm2.RSAScheme{Scheme: tpm2.RSASchemeNull},
 				KeyBits:  2048,
 				Exponent: 0}}}
 )

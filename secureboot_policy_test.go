@@ -393,8 +393,7 @@ func replayLogToTPM(t *testing.T, tpm *tpm2.TPMContext, tcti *tpm2.TctiMssim, lo
 
 		var digests tpm2.TaggedHashList
 		for alg, digest := range event.Digests {
-			digests = append(digests,
-				tpm2.TaggedHash{HashAlg: tpm2.AlgorithmId(alg), Digest: tpm2.Digest(digest)})
+			digests = append(digests, tpm2.TaggedHash{HashAlg: tpm2.HashAlgorithmId(alg), Digest: tpm2.Digest(digest)})
 		}
 		if err := tpm.PCRExtend(tpm2.Handle(event.PCRIndex), digests, nil); err != nil {
 			t.Fatalf("PCRExtend failed: %v", err)
@@ -850,7 +849,7 @@ func TestComputeSecureBootPolicyDigests(t *testing.T) {
 				efivarsPathForTesting = ""
 			}()
 
-			digests, err := computeSecureBootPolicyDigests(tpm, tpm2.AlgorithmSHA256, data.params)
+			digests, err := computeSecureBootPolicyDigests(tpm, tpm2.HashAlgorithmSHA256, data.params)
 			if data.err != "" {
 				if err == nil {
 					t.Fatalf("Expected computeSecureBootPolicyDigests to fail")
