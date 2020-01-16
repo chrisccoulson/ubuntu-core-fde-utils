@@ -328,7 +328,15 @@ func SealKeyToTPM(tpm *tpm2.TPMContext, dest string, create *CreationParams, par
 //
 // This function requires knowledge of the storage hierarchy authorization value. If an incorrect authorization is provided, a
 // ErrOwnerAuthFail error will be returned and the key data file won't be deleted.
+//
+// This function requires the TPM to be correctly provisioned, else a ErrProvisioningError error will be returned.
 func DeleteKey(tpm *tpm2.TPMContext, path string, ownerAuth interface{}) error {
+	if status, err := ProvisionStatus(tpm); err != nil {
+		return xerrors.Errorf("cannot determine the current provisioning status of the TPM: %w", err)
+	} else if status&AttrValidSRK == 0 {
+		return ErrProvisioning
+	}
+
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {

@@ -123,7 +123,7 @@ func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext, flu
 	if err != nil {
 		var e *tpm2.TPMError
 		if xerrors.As(err, &e) && e.Code == tpm2.ErrorTicket {
-			return nil, keyFileError{"integrity check of key data failed because the creation data or creation ticket aren't "+
+			return nil, keyFileError{"integrity check of key data failed because the creation data or creation ticket aren't " +
 				"cryptographically bound to the sealed key object"}
 		}
 		return nil, xerrors.Errorf("cannot complete integrity checks as CertifyCreation failed: %w", err)
@@ -150,14 +150,13 @@ func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext, flu
 	pinIndexContext, err := tpm.WrapHandle(d.AuxData.PolicyData.PinIndexHandle)
 	if err != nil {
 		if _, notFound := err.(tpm2.ResourceUnavailableError); notFound {
-			return nil, keyFileError{"integrity check of key data failed because the NV index used for the PIN does not exist on the TPM"}
+			return nil, keyFileError{"the NV index used for the PIN does not exist on the TPM"}
 		}
-		return nil, xerrors.Errorf("cannot complete integrity checks: cannot obtain context for PIN NV index: %w", err)
+		return nil, xerrors.Errorf("cannot obtain context for PIN NV index: %w", err)
 	}
 
 	if !bytes.Equal(d.AuxData.PinIndexName, pinIndexContext.Name()) {
-		return nil, keyFileError{"integrity check of key data failed because the NV index used for the PIN is not cryptographically " +
-			"bound to the sealed key object"}
+		return nil, keyFileError{"the NV index used for the PIN is not cryptographically bound to the sealed key object"}
 	}
 
 	// Now verify that the NV index used for policy revocation is cryptographucally bound to the sealed key
@@ -165,15 +164,14 @@ func (d *keyData) loadAndIntegrityCheck(buf io.Reader, tpm *tpm2.TPMContext, flu
 	policyRevokeIndexContext, err := tpm.WrapHandle(d.AuxData.PolicyData.PolicyRevokeIndexHandle)
 	if err != nil {
 		if _, notFound := err.(tpm2.ResourceUnavailableError); notFound {
-			return nil, keyFileError{"integrity check of key data failed because the NV index used for authorization policy " +
-				"revocation does not exist"}
+			return nil, keyFileError{"the NV index used for authorization policy revocation does not exist"}
 		}
-		return nil, xerrors.Errorf("cannot complete integrity checks: cannot obtain context for policy revocation NV index: %w", err)
+		return nil, xerrors.Errorf("cannot obtain context for policy revocation NV index: %w", err)
 	}
 
 	if !bytes.Equal(d.AuxData.PolicyRevokeIndexName, policyRevokeIndexContext.Name()) {
-		return nil, keyFileError{"integrity check of key data failed because the NV index used for authorization policy revocation " +
-			"is not cryptographically bound to the sealed key object"}
+		return nil, keyFileError{"the NV index used for authorization policy revocation is not cryptographically bound to the sealed key " +
+			"object"}
 	}
 
 	// All good! All TPM objects pass the TPM's integrity checks, and external data is all cryptographically

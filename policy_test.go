@@ -24,6 +24,8 @@ import (
 	"testing"
 
 	"github.com/chrisccoulson/go-tpm2"
+
+	"golang.org/x/xerrors"
 )
 
 type mockResourceContext struct {
@@ -621,14 +623,16 @@ func TestExecutePolicy(t *testing.T) {
 				if err == nil {
 					t.Fatalf("Expected an error")
 				}
-				if err != ErrPolicyRevoked {
+				var e *tpm2.TPMError
+				if !xerrors.As(err, &e) || e.Code != tpm2.ErrorPolicy || e.Command != tpm2.CommandPolicyNV {
 					t.Errorf("Unexpected error: %v", err)
 				}
 			} else if data.pinInput != data.pinDefine {
 				if err == nil {
 					t.Fatalf("Expected an error")
 				}
-				if err != ErrPinFail {
+				var e *tpm2.TPMSessionError
+				if !xerrors.As(err, &e) || e.Code() != tpm2.ErrorAuthFail || e.Command() != tpm2.CommandPolicySecret {
 					t.Errorf("Unexpected error: %v", err)
 				}
 			} else if err != nil {
