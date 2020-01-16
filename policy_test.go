@@ -96,7 +96,6 @@ func TestComputePolicy(t *testing.T) {
 				secureBootPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
 				grubPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
 				snapModelPCRDigests:  tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][2]},
-				pinObjectName:        pinName,
 				pinIndex:             pinIndex,
 				policyRevokeIndex:    revokeIndex,
 				policyRevokeCount:    4551,
@@ -171,6 +170,9 @@ func TestComputePolicy(t *testing.T) {
 			if len(dataout.SnapModelORDigests) != len(data.input.snapModelPCRDigests) {
 				t.Errorf("Unexpected number of snap model OR digests")
 			}
+			if dataout.PinIndexHandle != data.input.pinIndex.Handle() {
+				t.Errorf("Unexpected PIN NV index handle")
+			}
 			if dataout.PolicyRevokeIndexHandle != data.input.policyRevokeIndex.Handle() {
 				t.Errorf("Unexpected policy revocation NV index handle")
 			}
@@ -204,7 +206,7 @@ func TestExecutePolicy(t *testing.T) {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultHashAlgorithm, nil)
+	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultSessionHashAlgorithm, nil)
 	if err != nil {
 		t.Fatalf("StartAuthSession failed: %v", err)
 	}
