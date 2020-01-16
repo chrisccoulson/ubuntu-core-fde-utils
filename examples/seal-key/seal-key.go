@@ -124,7 +124,7 @@ func main() {
 
 	var create *fdeutil.CreationParams
 	if !update {
-		create = &fdeutil.CreationParams{PolicyRevocationHandle: policyRevokeHandle, PinHandle: pinHandle, OwnerAuth: ownerAuth}
+		create = &fdeutil.CreationParams{PolicyRevocationHandle: policyRevokeHandle, PinHandle: pinHandle, OwnerAuth: []byte(ownerAuth)}
 	}
 
 	tpm, err := fdeutil.ConnectToDefaultTPM()

@@ -23,6 +23,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"os"
 
 	"github.com/chrisccoulson/go-tpm2"
@@ -48,9 +50,17 @@ const (
 )
 
 const (
-	// AttrValidSRK indicates that the TPM contains a valid primary key with the expected properties at the
-	// expected location.
+	// AttrValidSRK indicates that the TPM contains a valid primary storage key with the expected properties at the
+	// expected location. Note that this does not mean that the object was created with the same template that ProvisionTPM
+	// uses, and is no guarantee that a call to ProvisionTPM wouldn't result in a different key being created.
 	AttrValidSRK ProvisionStatusAttributes = 1 << iota
+
+	// AttrValidEK indicates that the TPM contains a valid endorsement key at the expected location. On a TPMConnection created
+	// with SecureConnectToDefaultTPM, it means that the TPM contains the key associated with the verified endorsment certificate.
+	// On a TPMConnection created with ConnectToDefaultTPM, it means that the TPM contains a valid primary key with the expected
+	// properties at the expected location, but does not mean that the object was created with the the same template that
+	// ProvisionTPM uses, and is no guarantee that a call to ProvisionTPM wouldn't result in a different key being created.
+	AttrValidEK
 
 	AttrDAParamsOK         // The dictionary attack lockout parameters are configured correctly.
 	AttrOwnerClearDisabled // The ability to clear the TPM with owner authorization is disabled.
@@ -90,42 +100,62 @@ var (
 				Exponent: 0}}}
 )
 
-// ProvisionTPM prepares the TPM associated with the tpm parameter for full disk encryption. The mode parameter
-// specifies the behaviour of this function.
+type ProvisionAuths struct {
+	Owner       []byte
+	Endorsement []byte
+	Lockout     []byte
+}
+
+// ProvisionTPM prepares the TPM associated with the tpm parameter for full disk encryption. The mode parameter specifies the
+// behaviour of this function.
 //
-// If mode is not ProvisionModeWithoutLockout, this function performs operations that require knowledge of the
-// lockout hierarchy authorization value. If no authorization value is provided via lockoutAuth but the TPM
-// indicates that the lockout hierarchy authorization value has previously been set, this will return a
-// ErrRequiresLockoutAuth error. In this case, either the function should be called with the lockout hierarchy
-// authorization (if it is known), or the TPM must be cleared via the physical presence interface by calling
-// RequestTPMClearUsingPPI and performing a system restart. If the wrong lockout hierarchy authorization value is
-// provided, then a ErrLockoutAuthFail error will be returned. If this happens, the TPM will have entered
-// dictionary attack lockout mode for the lockout hierarchy. Further calls will result in a ErrInLockout error
-// being returned. The only way to recover from this is to either wait for the pre-programmed recovery time to
-// expire, or to clear the TPM via the physical presence interface.
+// If mode is not ProvisionModeWithoutLockout, this function performs operations that require knowledge of the lockout hierarchy
+// authorization value. If no authorization value is provided via the Lockout field of the auths parameter but the TPM indicates that
+// the lockout hierarchy authorization value has previously been set, this will return a ErrRequiresLockoutAuth error. In this case,
+// either the function should be called with the lockout hierarchy authorization (if it is known), or the TPM must be cleared via the
+// physical presence interface by calling RequestTPMClearUsingPPI and performing a system restart. If the wrong lockout hierarchy
+// authorization value is provided, then a AuthFailError error will be returned. If this happens, the TPM will have entered dictionary
+// attack lockout mode for the lockout hierarchy. Further calls will result in a ErrLockout error being returned. The only way to
+// recover from this is to either wait for the pre-programmed recovery time to expire, or to clear the TPM via the physical presence
+// interface.
 //
-// If mode is ProvisionModeClear, this function will attempt to clear the TPM before provisioning it. If owner
-// clear has been disabled (which will be the case if the TPM has previously been provisioned with this function),
-// then ErrClearRequiresPPI will be returned. In this case, the TPM must be cleared via the physical presence
-// interface by calling RequestTPMClearUsingPPI and performing a system restart.
+// If mode is ProvisionModeClear, this function will attempt to clear the TPM before provisioning it. If owner clear has been disabled
+// (which will be the case if the TPM has previously been provisioned with this function), then ErrClearRequiresPPI will be returned.
+// In this case, the TPM must be cleared via the physical presence interface by calling RequestTPMClearUsingPPI and performing a
+// system restart.
 //
-// This function will create and persist a storage root key if required, which requires knowledge of the
-// authorization value for the storage hierarchy. If called with mode set to ProvisionModeClear, or if called
-// just after clearing the TPM via the physical presence interface, the authorization value for the storage
-// hierarchy will be empty at the point that it is required. If called with any other mode and if the
-// authorization value for the storage hierarchy has previously been set, it will need to be provided via the
-// ownerAuth parameter. If the wrong value is provided for the storage hierarchy authorization, then a
-// ErrOwnerAuthFail error will be returned. If the correct authorization value is not known, then the only way
-// to recover from this is to call the function with mode set to ProvisionModeClear. If there is an object already
-// stored at the location used for the storage root key, and that object is not a primary key or doesn't have the
-// expected public template, then this function will evict it automatically from the TPM.
+// This function will create and persist an endorsement key, which requires knowledge of the authorization values for the storage
+// and endorsement hierarchies. If called with mode set to ProvisionModeClear, or if called just after clearing the TPM via the
+// physical presence interface, the authorization values for these hierarchies will be empty at the point that they are required. If
+// called with any other mode and if the authorization values have previously been set, they will need to be provided via the Owner
+// and Endorsement fields of the auths parameter. If the wrong value is provided for either authorization, then a AuthFailError
+// error will be returned. If the correct authorization values are not known, then the only way to recover from this is to call the
+// function with mode set to ProvisionModeClear. If there is an object already stored at the location used for the endorsement key
+// then this function will evict it automatically from the TPM.
 //
-// If mode is not ProvisionModeWithoutLockout, the authorization value for the lockout hierarchy will be set to
-// newLockoutAuth
-func ProvisionTPM(tpm *tpm2.TPMContext, mode ProvisionMode, newLockoutAuth, ownerAuth, lockoutAuth []byte) error {
+// This function will create and persist a storage root key, which requires knowledge of the authorization value for the storage
+// hierarchy. If called with mode set to ProvisionModeClear, or if called just after clearing the TPM via the physical presence
+// interface, the authorization value for the storage hierarchy will be empty at the point that it is required. If called with any
+// other mode and if the authorization value for the storage hierarchy has previously been set, it will need to be provided via the
+// Owner field of the auths parameter. If the wrong value is provided for the storage hierarchy authorization, then a AuthFailError
+// error will be returned. If the correct authorization value is not known, then the only way to recover from this is to call the
+// function with mode set to ProvisionModeClear. If there is an object already stored at the location used for the storage root key
+// then this function will evict it automatically from the TPM.
+//
+// If mode is not ProvisionModeWithoutLockout, the authorization value for the lockout hierarchy will be set to newLockoutAuth
+func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte, auths *ProvisionAuths) error {
 	status, err := ProvisionStatus(tpm)
 	if err != nil {
 		return xerrors.Errorf("cannot determine the current status: %w", err)
+	}
+
+	var ownerAuth []byte
+	var endorsementAuth []byte
+	var lockoutAuth []byte
+	if auths != nil {
+		ownerAuth = auths.Owner
+		endorsementAuth = auths.Endorsement
+		lockoutAuth = auths.Lockout
 	}
 
 	if mode != ProvisionModeWithoutLockout && status&AttrLockoutAuthSet > 0 && len(lockoutAuth) == 0 {
@@ -134,85 +164,133 @@ func ProvisionTPM(tpm *tpm2.TPMContext, mode ProvisionMode, newLockoutAuth, owne
 		return ErrRequiresLockoutAuth
 	}
 
+	// Create an initial session for HMAC authorizations
+	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultSessionHashAlgorithm, nil)
+	if err != nil {
+		return xerrors.Errorf("cannot start session: %w", err)
+	}
+	defer tpm.FlushContext(sessionContext)
+
+	session := &tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrContinueSession}
+
 	if mode == ProvisionModeClear {
 		if status&AttrOwnerClearDisabled > 0 {
 			return ErrClearRequiresPPI
 		}
 
-		if err := tpm.Clear(tpm2.HandleLockout, lockoutAuth); err != nil {
+		if err := tpm.Clear(tpm2.HandleLockout, session.WithAuthValue(lockoutAuth)); err != nil {
 			switch {
 			case isAuthFailError(err):
-				return ErrLockoutAuthFail
+				return AuthFailError{tpm2.HandleLockout}
 			case isLockoutError(err):
-				return ErrInLockout
+				return ErrLockout
 			}
 			return xerrors.Errorf("cannot clear the TPM: %w", err)
 		}
 
+		// These values are all clear now
 		lockoutAuth = nil
 		ownerAuth = nil
+		endorsementAuth = nil
 		status = 0
 	}
 
-	if status&AttrValidSRK == 0 {
-		srkContext, err := tpm.WrapHandle(srkHandle)
-		if err == nil {
-			if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, ownerAuth); err != nil {
-				if isAuthFailError(err) {
-					return ErrOwnerAuthFail
-				}
-				return xerrors.Errorf("cannot evict existing object at handle required by storage root key: %w", err)
-			}
-		} else if _, notFound := err.(tpm2.ResourceUnavailableError); !notFound {
-			return xerrors.Errorf("cannot create context for object at handle required by storage root key: %w", err)
-		}
-
-		srkContext, _, _, _, _, _, err = tpm.CreatePrimary(tpm2.HandleOwner, nil, &srkTemplate, nil, nil, ownerAuth)
-		if err != nil {
+	// Provision an endorsement key
+	ekContext, err := tpm.WrapHandle(ekHandle)
+	if err == nil {
+		if _, err := tpm.EvictControl(tpm2.HandleOwner, ekContext, ekHandle, session.WithAuthValue(ownerAuth)); err != nil {
 			if isAuthFailError(err) {
-				return ErrOwnerAuthFail
+				return AuthFailError{tpm2.HandleOwner}
 			}
-			return xerrors.Errorf("cannot create storage root key: %w", err)
+			return xerrors.Errorf("cannot evict existing object at handle required by endorsement key: %w", err)
 		}
-		defer tpm.FlushContext(srkContext)
+	} else if _, notFound := err.(tpm2.ResourceUnavailableError); !notFound {
+		return xerrors.Errorf("cannot create context for object at handle required by endorsement key: %w", err)
+	}
 
-		if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, ownerAuth); err != nil {
-			// Owner auth failure would have been caught by CreatePrimary
-			return xerrors.Errorf("cannot make storage root key persistent: %w", err)
+	ekContext, _, _, _, _, _, err = tpm.CreatePrimary(tpm2.HandleEndorsement, nil, &ekTemplate, nil, nil,
+		session.WithAuthValue(endorsementAuth))
+	if err != nil {
+		if isAuthFailError(err) {
+			return AuthFailError{tpm2.HandleEndorsement}
 		}
+		return xerrors.Errorf("cannot create endorsement key: %w", err)
+	}
+	defer tpm.FlushContext(ekContext)
+
+	if _, err := tpm.EvictControl(tpm2.HandleOwner, ekContext, ekHandle, session.WithAuthValue(ownerAuth)); err != nil {
+		if isAuthFailError(err) {
+			return AuthFailError{tpm2.HandleOwner}
+		}
+		return xerrors.Errorf("cannot make endorsement key persistent: %w", err)
+	}
+
+	// Close the existing session and create a new session that's salted with a value protected with the newly provisioned EK.
+	// This will have a symmetric algorithm for parameter encryption during HierarchyChangeAuth.
+	tpm.FlushContext(sessionContext)
+	if err := tpm.init(nil); err != nil {
+		var verifyErr verificationError
+		if xerrors.As(err, &verifyErr) {
+			return TPMVerificationError{fmt.Sprintf("cannot reinitialize TPM connection after provisioning endorsement key: %v", err)}
+		}
+		return xerrors.Errorf("cannot reinitialize TPM connection after provisioning endorsement key: %w", err)
+	}
+	session = tpm.HmacSession()
+
+	// Provision a storage root key
+	srkContext, err := tpm.WrapHandle(srkHandle)
+	if err == nil {
+		if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, session.WithAuthValue(ownerAuth)); err != nil {
+			if isAuthFailError(err) {
+				return AuthFailError{tpm2.HandleOwner}
+			}
+			return xerrors.Errorf("cannot evict existing object at handle required by storage root key: %w", err)
+		}
+	} else if _, notFound := err.(tpm2.ResourceUnavailableError); !notFound {
+		return xerrors.Errorf("cannot create context for object at handle required by storage root key: %w", err)
+	}
+
+	srkContext, _, _, _, _, _, err = tpm.CreatePrimary(tpm2.HandleOwner, nil, &srkTemplate, nil, nil, session.WithAuthValue(ownerAuth))
+	if err != nil {
+		if isAuthFailError(err) {
+			return AuthFailError{tpm2.HandleOwner}
+		}
+		return xerrors.Errorf("cannot create storage root key: %w", err)
+	}
+	defer tpm.FlushContext(srkContext)
+
+	if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkHandle, session.WithAuthValue(ownerAuth)); err != nil {
+		// Owner auth failure would have been caught by CreatePrimary
+		return xerrors.Errorf("cannot make storage root key persistent: %w", err)
 	}
 
 	if mode == ProvisionModeWithoutLockout {
 		return nil
 	}
 
-	if err := tpm.DictionaryAttackParameters(tpm2.HandleLockout, maxTries, recoveryTime, lockoutRecovery, lockoutAuth); err != nil {
+	// Perform actions that require the lockout hierarchy authorization.
+
+	// Set the DA parameters.
+	if err := tpm.DictionaryAttackParameters(tpm2.HandleLockout, maxTries, recoveryTime, lockoutRecovery,
+		session.WithAuthValue(lockoutAuth)); err != nil {
 		switch {
 		case isAuthFailError(err):
-			return ErrLockoutAuthFail
+			return AuthFailError{tpm2.HandleLockout}
 		case isLockoutError(err):
-			return ErrInLockout
+			return ErrLockout
 		}
 		return xerrors.Errorf("cannot configure dictionary attack parameters: %w", err)
 	}
 
-	if err := tpm.ClearControl(tpm2.HandleLockout, true, lockoutAuth); err != nil {
+	// Disable owner clear
+	if err := tpm.ClearControl(tpm2.HandleLockout, true, session.WithAuthValue(lockoutAuth)); err != nil {
 		// Lockout auth failure or lockout mode would have been caught by DictionaryAttackParameters
 		return xerrors.Errorf("cannot disable owner clear: %w", err)
 	}
 
-	// This was either created by ProvisionStatus or by TPMContext.EvictControl if we needed to create a new one, so this can never fail
-	srkContext, _ := tpm.WrapHandle(srkHandle)
-	lockoutContext, _ := tpm.WrapHandle(tpm2.HandleLockout)
-	sessionContext, err :=
-		tpm.StartAuthSession(srkContext, lockoutContext, tpm2.SessionTypeHMAC, &paramEncryptAlg, defaultSessionHashAlgorithm, lockoutAuth)
-	if err != nil {
-		return xerrors.Errorf("cannot start session for command parameter encryption: %w", err)
-	}
-	defer tpm.FlushContext(sessionContext)
-
-	session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrCommandEncrypt, AuthValue: lockoutAuth}
-	if err := tpm.HierarchyChangeAuth(tpm2.HandleLockout, tpm2.Auth(newLockoutAuth), lockoutAuth, &session); err != nil {
+	// Set the lockout hierarchy authorization.
+	if err := tpm.HierarchyChangeAuth(tpm2.HandleLockout, tpm2.Auth(newLockoutAuth),
+		session.WithAuthValue(lockoutAuth).AddAttrs(tpm2.AttrCommandEncrypt)); err != nil {
 		return xerrors.Errorf("cannot set the lockout hierarchy authorization value: %w", err)
 	}
 
@@ -233,37 +311,53 @@ func RequestTPMClearUsingPPI() error {
 	return nil
 }
 
-func checkForValidSRK(tpm *tpm2.TPMContext) (bool, error) {
-	srkContext, err := tpm.WrapHandle(srkHandle)
+// isObjectPrimaryKeyWithTemplate checks whether the object associated with context is primary key in the specified hierarchy with
+// the specified template.
+//
+// This isn't completely accurate as it does not know if the unique field of the specified template was used to create the object,
+// so it should be used with caution. This function returning true is no guarantee that recreating the object with the specified
+// template would create the same object.
+func isObjectPrimaryKeyWithTemplate(tpm *tpm2.TPMContext, hierarchy tpm2.Handle, context tpm2.ResourceContext,
+	template *tpm2.Public, session *tpm2.Session) (bool, error) {
+	if session != nil {
+		session = session.AddAttrs(tpm2.AttrAudit)
+	}
+
+	pub, name, qualifiedName, err := tpm.ReadPublic(context, session)
 	if err != nil {
-		if _, notFound := err.(tpm2.ResourceUnavailableError); notFound {
+		return false, xerrors.Errorf("cannot read public area of object: %w", err)
+	}
+	if !bytes.Equal(name, context.Name()) {
+		return false, errors.New("public area does not match ResourceContext")
+	}
+
+	pub.Unique = template.Unique
+
+	pubBytes, _ := tpm2.MarshalToBytes(pub)
+	templateBytes, _ := tpm2.MarshalToBytes(template)
+	if !bytes.Equal(pubBytes, templateBytes) {
+		if template.Type == tpm2.ObjectTypeRSA && template.Params.RSADetail().Exponent == 0 {
+			var templateCopy *tpm2.Public
+			tpm2.UnmarshalFromBytes(templateBytes, &templateCopy)
+			templateCopy.Params.RSADetail().Exponent = 65537
+			templateBytes, _ = tpm2.MarshalToBytes(templateCopy)
+			if !bytes.Equal(pubBytes, templateBytes) {
+				return false, nil
+			}
+		} else {
 			return false, nil
 		}
-		return false, xerrors.Errorf("cannot create context for SRK: %w", err)
 	}
 
-	pub, _, qualifiedName, err := tpm.ReadPublic(srkContext)
-	if err != nil {
-		return false, xerrors.Errorf("cannot read public part of SRK: %w", err)
-	}
-
-	pub.Unique = tpm2.PublicIDU{}
-
-	srkPubBytes, _ := tpm2.MarshalToBytes(pub)
-	srkTemplateBytes, _ := tpm2.MarshalToBytes(srkTemplate)
-	if !bytes.Equal(srkPubBytes, srkTemplateBytes) {
-		return false, nil
-	}
-
-	owner, _ := tpm.WrapHandle(tpm2.HandleOwner)
+	parent, _ := tpm.WrapHandle(hierarchy)
 
 	// Determine if this is a primary key by validating its qualified name. From the spec, the qualified name
 	// of key B (QNb) which is a child of key A is QNb = Hb(QNa || NAMEb). Key A in this case should be
 	// the storage primary seed, which has a qualified name matching its name (and the name is the handle
 	// for the storage hierarchy)
 	h := sha256.New()
-	h.Write(owner.Name())
-	h.Write(srkContext.Name())
+	h.Write(parent.Name())
+	h.Write(context.Name())
 
 	alg := make([]byte, 2)
 	binary.BigEndian.PutUint16(alg, uint16(srkTemplate.NameAlg))
@@ -276,12 +370,34 @@ func checkForValidSRK(tpm *tpm2.TPMContext) (bool, error) {
 	return true, nil
 }
 
-func ProvisionStatus(tpm *tpm2.TPMContext) (ProvisionStatusAttributes, error) {
+func hasValidSRK(tpm *tpm2.TPMContext, session *tpm2.Session) (bool, error) {
+	srkContext, err := tpm.WrapHandle(srkHandle)
+	if err != nil {
+		if _, unavail := err.(tpm2.ResourceUnavailableError); unavail {
+			return false, nil
+		}
+		return false, xerrors.Errorf("cannot obtain context for SRK: %w", err)
+	}
+
+	if ok, err := isObjectPrimaryKeyWithTemplate(tpm, tpm2.HandleOwner, srkContext, &srkTemplate, session); err != nil {
+		return false, xerrors.Errorf("cannot determine if object at SRK handle is a primary key in the storage hierarchy: %w", err)
+	} else if !ok {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+func ProvisionStatus(tpm *TPMConnection) (ProvisionStatusAttributes, error) {
 	var out ProvisionStatusAttributes
 
-	if valid, err := checkForValidSRK(tpm); err != nil {
-		return 0, xerrors.Errorf("cannot check for valid SRK: %w", err)
-	} else if valid {
+	if rc, err := tpm.EkContext(); err == nil && rc.Handle() != tpm2.HandleUnassigned {
+		out |= AttrValidEK
+	}
+
+	if ok, err := hasValidSRK(tpm.TPMContext, tpm.HmacSession()); err != nil {
+		return 0, err
+	} else if ok {
 		out |= AttrValidSRK
 	}
 

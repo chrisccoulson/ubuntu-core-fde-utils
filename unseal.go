@@ -20,6 +20,7 @@
 package fdeutil
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/chrisccoulson/go-tpm2"
@@ -27,7 +28,8 @@ import (
 	"golang.org/x/xerrors"
 )
 
-func UnsealKeyFromTPM(tpm *tpm2.TPMContext, buf io.Reader, pin string) ([]byte, error) {
+func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string) ([]byte, error) {
+	// Check if the TPM is in lockout mode
 	props, err := tpm.GetCapabilityTPMProperties(tpm2.PropertyPermanent, 1)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot fetch properties from TPM: %w", err)
@@ -37,64 +39,50 @@ func UnsealKeyFromTPM(tpm *tpm2.TPMContext, buf io.Reader, pin string) ([]byte, 
 		return nil, ErrLockout
 	}
 
+	// Use the HMAC session created when the connection was opened for parameter encryption rather than creating a new one.
+	hmacSession := tpm.HmacSession()
+
 	// Load the key data
-	var data keyData
-	keyContext, err := data.loadAndIntegrityCheck(buf, tpm, false)
+	keyContext, data, err := loadKeyData(tpm.TPMContext, buf, hmacSession)
 	if err != nil {
 		var kfErr keyFileError
-		var ruErr tpm2.ResourceUnavailableError
-		switch {
-		case xerrors.As(err, &kfErr):
+		if xerrors.As(err, &kfErr) {
 			// A keyFileError can be as a result of an improperly provisioned TPM - detect if
 			// the object at srkHandle is a valid primary key with the correct template. If it's
 			// not, then return a provisioning error.
-			if status, err := ProvisionStatus(tpm); err == nil && status&AttrValidSRK == 0 {
+			if ok, err := hasValidSRK(tpm.TPMContext, hmacSession); err == nil && !ok {
 				return nil, ErrProvisioning
 			}
-			return nil, InvalidKeyFileError{kfErr.msg}
-		case xerrors.As(err, &ruErr):
-			if ruErr.Handle == srkHandle {
-				// There's no object at srkHandle
-				return nil, ErrProvisioning
-			}
+			return nil, InvalidKeyFileError{kfErr.err.Error()}
+		}
+		var ruErr tpm2.ResourceUnavailableError
+		if xerrors.As(err, &ruErr) {
+			return nil, ErrProvisioning
 		}
 		return nil, xerrors.Errorf("cannot load key data file: %w", err)
 	}
 	defer tpm.FlushContext(keyContext)
 
 	// Begin and execute policy session
-
-	// This can't fail, as keyData.loadAndIntegrityCheck already created it
-	srkContext, _ := tpm.WrapHandle(srkHandle)
-
-	sessionContext, err := tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypePolicy, &paramEncryptAlg, sealedKeyNameAlgorithm, nil)
+	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, sealedKeyNameAlgorithm, nil)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot start policy session: %w", err)
 	}
 	defer tpm.FlushContext(sessionContext)
 
-	if err := executePolicySession(tpm, sessionContext, data.AuxData.PolicyData, pin); err != nil {
-		var tpmErr *tpm2.TPMError
+	if err := executePolicySession(tpm, sessionContext, data.PolicyData, pin); err != nil {
 		var tpmsErr *tpm2.TPMSessionError
-		switch {
-		case xerrors.As(err, &tpmsErr):
-			if tpmsErr.Code() == tpm2.ErrorAuthFail && tpmsErr.Command() == tpm2.CommandPolicySecret {
-				return nil, ErrPinFail
-			}
-		case xerrors.As(err, &tpmErr):
-			if tpmErr.Code == tpm2.ErrorPolicy && tpmErr.Command == tpm2.CommandPolicyNV {
-				return nil, ErrPolicyRevoked
-			}
+		if xerrors.As(err, &tpmsErr) && tpmsErr.Code() == tpm2.ErrorAuthFail && tpmsErr.Command() == tpm2.CommandPolicySecret {
+			return nil, ErrPinFail
 		}
-		return nil, xerrors.Errorf("cannot complete execution of policy session: %w", err)
+		return nil, InvalidKeyFileError{fmt.Sprintf("encountered an error whilst executing the authorization policy assertions: %v", err)}
 	}
 
 	// Unseal
-	session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrResponseEncrypt}
-	key, err := tpm.Unseal(keyContext, &session)
+	key, err := tpm.Unseal(keyContext, &tpm2.Session{Context: sessionContext}, hmacSession.AddAttrs(tpm2.AttrResponseEncrypt))
 	if err != nil {
 		if e, ok := err.(*tpm2.TPMSessionError); ok && e.Code() == tpm2.ErrorPolicyFail {
-			return nil, ErrPolicyFail
+			return nil, InvalidKeyFileError{"the authorization policy check failed during unsealing"}
 		}
 		return nil, xerrors.Errorf("cannot unseal key: %w", err)
 	}

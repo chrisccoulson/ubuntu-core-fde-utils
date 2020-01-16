@@ -20,12 +20,15 @@
 package fdeutil
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/chrisccoulson/go-tpm2"
+
+	"golang.org/x/xerrors"
 )
 
-func validateSRK(t *testing.T, tpm *tpm2.TPMContext) {
+func validateSRK(t *testing.T, tpm *TPMConnection) {
 	srkContext, err := tpm.WrapHandle(srkHandle)
 	if err != nil {
 		t.Errorf("Cannot create context for SRK: %v", err)
@@ -43,8 +46,8 @@ func validateSRK(t *testing.T, tpm *tpm2.TPMContext) {
 	if pub.NameAlg != tpm2.HashAlgorithmSHA256 {
 		t.Errorf("SRK has unexpected name algorithm")
 	}
-	if pub.Attrs != tpm2.AttrFixedTPM|tpm2.AttrFixedParent|tpm2.AttrSensitiveDataOrigin|
-		tpm2.AttrUserWithAuth|tpm2.AttrRestricted|tpm2.AttrDecrypt {
+	if pub.Attrs != tpm2.AttrFixedTPM|tpm2.AttrFixedParent|tpm2.AttrSensitiveDataOrigin|tpm2.AttrUserWithAuth|tpm2.AttrRestricted|
+		tpm2.AttrDecrypt {
 		t.Errorf("SRK has unexpected attributes")
 	}
 	if pub.Params.RSADetail().Symmetric.Algorithm != tpm2.SymObjectAlgorithmAES {
@@ -67,6 +70,55 @@ func validateSRK(t *testing.T, tpm *tpm2.TPMContext) {
 	}
 	if len(pub.Unique.RSA()) != 2048/8 {
 		t.Errorf("SRK has an unexpected RSA public modulus length")
+	}
+}
+
+func validateEK(t *testing.T, tpm *TPMConnection) {
+	ekContext, err := tpm.WrapHandle(ekHandle)
+	if err != nil {
+		t.Errorf("Cannot create context for EK: %v", err)
+	}
+
+	// Validate the properties of the EK
+	pub, _, _, err := tpm.ReadPublic(ekContext)
+	if err != nil {
+		t.Fatalf("ReadPublic failed: %v", err)
+	}
+
+	if pub.Type != tpm2.ObjectTypeRSA {
+		t.Errorf("EK has unexpected type")
+	}
+	if pub.NameAlg != tpm2.HashAlgorithmSHA256 {
+		t.Errorf("EK has unexpected name algorithm")
+	}
+	if pub.Attrs != tpm2.AttrFixedTPM|tpm2.AttrFixedParent|tpm2.AttrSensitiveDataOrigin|tpm2.AttrAdminWithPolicy|tpm2.AttrRestricted|
+		tpm2.AttrDecrypt {
+		t.Errorf("EK has unexpected attributes")
+	}
+	if !bytes.Equal(pub.AuthPolicy, []byte{0x83, 0x71, 0x97, 0x67, 0x44, 0x84, 0xb3, 0xf8, 0x1a, 0x90, 0xcc, 0x8d, 0x46, 0xa5, 0xd7,
+		0x24, 0xfd, 0x52, 0xd7, 0x6e, 0x06, 0x52, 0x0b, 0x64, 0xf2, 0xa1, 0xda, 0x1b, 0x33, 0x14, 0x69, 0xaa}) {
+		t.Errorf("EK has unexpected auth policy")
+	}
+	if pub.Params.RSADetail().Symmetric.Algorithm != tpm2.SymObjectAlgorithmAES {
+		t.Errorf("EK has unexpected symmetric algorithm")
+	}
+	if pub.Params.RSADetail().Symmetric.KeyBits.Sym() != 128 {
+		t.Errorf("EK has unexpected symmetric key length")
+	}
+	if pub.Params.RSADetail().Symmetric.Mode.Sym() != tpm2.SymModeCFB {
+		t.Errorf("EK has unexpected symmetric mode")
+	}
+	if pub.Params.RSADetail().Scheme.Scheme != tpm2.RSASchemeNull {
+		t.Errorf("EK has unexpected RSA scheme")
+	}
+	if pub.Params.RSADetail().KeyBits != 2048 {
+		t.Errorf("EK has unexpected RSA public modulus length")
+	}
+	if pub.Params.RSADetail().Exponent != 0 {
+		t.Errorf("EK has an unexpected non-default public exponent")
+	}
+	if len(pub.Unique.RSA()) != 2048/8 {
+		t.Errorf("EK has an unexpected RSA public modulus length")
 	}
 }
 
@@ -93,10 +145,11 @@ func TestProvisionNewTPM(t *testing.T) {
 
 			lockoutAuth := []byte("1234")
 
-			if err := ProvisionTPM(tpm, ProvisionModeClear, lockoutAuth, nil, nil); err != nil {
+			if err := ProvisionTPM(tpm, ProvisionModeClear, lockoutAuth, nil); err != nil {
 				t.Fatalf("ProvisionTPM failed: %v", err)
 			}
 
+			validateEK(t, tpm)
 			validateSRK(t, tpm)
 
 			// Validate the DA parameters
@@ -132,6 +185,18 @@ func TestProvisionNewTPM(t *testing.T) {
 				t.Errorf("Use of the lockout hierarchy auth failed: %v", err)
 			}
 
+			hmacSession := tpm.HmacSession()
+			if hmacSession == nil || hmacSession.Context == nil || hmacSession.Context.Handle().Type() != tpm2.HandleTypeHMACSession {
+				t.Errorf("Invalid HMAC session handle")
+			}
+			ekContext, err := tpm.EkContext()
+			if err != nil {
+				t.Fatalf("No EK context: %v", err)
+			}
+			if ekContext.Handle().Type() != tpm2.HandleTypePersistent {
+				t.Errorf("Invalid EK handle")
+			}
+
 			// Make sure ProvisionTPM didn't leak transient objects
 			handles, err := tpm.GetCapabilityHandles(tpm2.HandleTypeTransient.BaseHandle(),
 				tpm2.CapabilityMaxProperties)
@@ -147,7 +212,7 @@ func TestProvisionNewTPM(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GetCapability failed: %v", err)
 			}
-			if len(handles) > 0 {
+			if len(handles) > 1 || (len(handles) > 0 && handles[0] != hmacSession.Context.Handle()) {
 				t.Errorf("ProvisionTPM leaked loaded session handles")
 			}
 		})
@@ -156,7 +221,14 @@ func TestProvisionNewTPM(t *testing.T) {
 
 func TestProvisionErrorHandling(t *testing.T) {
 	tpm, tcti := openTPMSimulatorForTesting(t)
-	defer closeTPM(t, tpm)
+	defer func() {
+		clearTPMWithPlatformAuth(t, tpm)
+		closeTPM(t, tpm)
+	}()
+
+	errEndorsementAuthFail := AuthFailError{tpm2.HandleEndorsement}
+	errOwnerAuthFail := AuthFailError{tpm2.HandleOwner}
+	errLockoutAuthFail := AuthFailError{tpm2.HandleLockout}
 
 	authValue := []byte("1234")
 
@@ -208,7 +280,7 @@ func TestProvisionErrorHandling(t *testing.T) {
 				setLockoutAuth(t)
 			},
 			lockoutAuth: []byte("5678"),
-			err:         ErrLockoutAuthFail,
+			err:         errLockoutAuthFail,
 		},
 		{
 			desc: "ErrLockoutAuthFail2",
@@ -217,7 +289,7 @@ func TestProvisionErrorHandling(t *testing.T) {
 				setLockoutAuth(t)
 			},
 			lockoutAuth: []byte("5678"),
-			err:         ErrLockoutAuthFail,
+			err:         errLockoutAuthFail,
 		},
 		{
 			desc: "ErrInLockout1",
@@ -227,7 +299,7 @@ func TestProvisionErrorHandling(t *testing.T) {
 				tpm.HierarchyChangeAuth(tpm2.HandleLockout, nil, nil)
 			},
 			lockoutAuth: authValue,
-			err:         ErrInLockout,
+			err:         ErrLockout,
 		},
 		{
 			desc: "ErrInLockout2",
@@ -237,7 +309,7 @@ func TestProvisionErrorHandling(t *testing.T) {
 				tpm.HierarchyChangeAuth(tpm2.HandleLockout, nil, nil)
 			},
 			lockoutAuth: authValue,
-			err:         ErrInLockout,
+			err:         ErrLockout,
 		},
 		{
 			desc: "ErrOwnerAuthFail",
@@ -247,7 +319,17 @@ func TestProvisionErrorHandling(t *testing.T) {
 					t.Fatalf("HierarchyChangeAuth failed: %v", err)
 				}
 			},
-			err: ErrOwnerAuthFail,
+			err: errOwnerAuthFail,
+		},
+		{
+			desc: "ErrEndorsementAuthFail",
+			mode: ProvisionModeWithoutLockout,
+			prepare: func(t *testing.T) {
+				if err := tpm.HierarchyChangeAuth(tpm2.HandleEndorsement, authValue, nil); err != nil {
+					t.Fatalf("HierarchyChangeAuth failed: %v", err)
+				}
+			},
+			err: errEndorsementAuthFail,
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {
@@ -256,12 +338,82 @@ func TestProvisionErrorHandling(t *testing.T) {
 
 			data.prepare(t)
 
-			err := ProvisionTPM(tpm, data.mode, nil, nil, data.lockoutAuth)
+			err := ProvisionTPM(tpm, data.mode, nil, &ProvisionAuths{Lockout: data.lockoutAuth})
 			if err == nil {
 				t.Fatalf("ProvisionTPM should have returned an error")
 			}
 			if err != data.err {
 				t.Errorf("ProvisionTPM returned an unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestRecreateEK(t *testing.T) {
+	tpm, tcti := openTPMSimulatorForTesting(t)
+	defer closeTPM(t, tpm)
+
+	for _, data := range []struct {
+		desc string
+		mode ProvisionMode
+	}{
+		{
+			desc: "Full",
+			mode: ProvisionModeFull,
+		},
+		{
+			desc: "WithoutLockout",
+			mode: ProvisionModeWithoutLockout,
+		},
+	} {
+		t.Run(data.desc, func(t *testing.T) {
+			resetTPMSimulator(t, tpm, tcti)
+			clearTPMWithPlatformAuth(t, tpm)
+
+			lockoutAuth := []byte("1234")
+
+			if err := ProvisionTPM(tpm, ProvisionModeClear, lockoutAuth, nil); err != nil {
+				t.Fatalf("ProvisionTPM failed: %v", err)
+			}
+
+			ekContext, err := tpm.EkContext()
+			if err != nil {
+				t.Fatalf("No EK context: %v", err)
+			}
+			if ekContext.Handle().Type() != tpm2.HandleTypePersistent {
+				t.Errorf("Invalid EK handle type")
+			}
+			hmacSession := tpm.HmacSession()
+			if hmacSession == nil || hmacSession.Context == nil || hmacSession.Context.Handle().Type() != tpm2.HandleTypeHMACSession {
+				t.Errorf("Invalid HMAC session handle")
+			}
+
+			if _, err := tpm.EvictControl(tpm2.HandleOwner, ekContext, ekContext.Handle(), nil); err != nil {
+				t.Errorf("EvictControl failed: %v", err)
+			}
+
+			if err := ProvisionTPM(tpm, data.mode, lockoutAuth, &ProvisionAuths{Lockout: lockoutAuth}); err != nil {
+				t.Fatalf("ProvisionTPM failed: %v", err)
+			}
+
+			validateEK(t, tpm)
+
+			hmacSession2 := tpm.HmacSession()
+			if hmacSession2 == nil || hmacSession2.Context == nil || hmacSession2.Context.Handle().Type() != tpm2.HandleTypeHMACSession {
+				t.Errorf("Invalid HMAC session handle")
+			}
+			ekContext2, err := tpm.EkContext()
+			if err != nil {
+				t.Fatalf("No EK context: %v", err)
+			}
+			if ekContext2.Handle().Type() != tpm2.HandleTypePersistent {
+				t.Errorf("Invalid EK handle")
+			}
+			if hmacSession.Context.Handle() != tpm2.HandleUnassigned {
+				t.Errorf("Original HMAC session should have been flushed")
+			}
+			if ekContext.Handle() != tpm2.HandleUnassigned {
+				t.Errorf("Original EK context should have been evicted")
 			}
 		})
 	}
@@ -290,7 +442,7 @@ func TestRecreateSRK(t *testing.T) {
 
 			lockoutAuth := []byte("1234")
 
-			if err := ProvisionTPM(tpm, ProvisionModeClear, lockoutAuth, nil, nil); err != nil {
+			if err := ProvisionTPM(tpm, ProvisionModeClear, lockoutAuth, nil); err != nil {
 				t.Fatalf("ProvisionTPM failed: %v", err)
 			}
 
@@ -304,7 +456,7 @@ func TestRecreateSRK(t *testing.T) {
 				t.Errorf("EvictControl failed: %v", err)
 			}
 
-			if err := ProvisionTPM(tpm, data.mode, lockoutAuth, nil, lockoutAuth); err != nil {
+			if err := ProvisionTPM(tpm, data.mode, lockoutAuth, &ProvisionAuths{Lockout: lockoutAuth}); err != nil {
 				t.Fatalf("ProvisionTPM failed: %v", err)
 			}
 
@@ -313,9 +465,35 @@ func TestRecreateSRK(t *testing.T) {
 	}
 }
 
+func TestProvisionWithEndorsementAuth(t *testing.T) {
+	tpm, _ := openTPMSimulatorForTesting(t)
+	defer func() {
+		clearTPMWithPlatformAuth(t, tpm)
+		closeTPM(t, tpm)
+	}()
+
+	clearTPMWithPlatformAuth(t, tpm)
+
+	testAuth := []byte("1234")
+
+	if err := tpm.HierarchyChangeAuth(tpm2.HandleEndorsement, testAuth, nil); err != nil {
+		t.Fatalf("HierarchyChangeAuth failed: %v", err)
+	}
+
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, &ProvisionAuths{Endorsement: testAuth}); err != nil {
+		t.Fatalf("ProvisionTPM failed: %v", err)
+	}
+
+	validateEK(t, tpm)
+	validateSRK(t, tpm)
+}
+
 func TestProvisionWithOwnerAuth(t *testing.T) {
 	tpm, _ := openTPMSimulatorForTesting(t)
-	defer closeTPM(t, tpm)
+	defer func() {
+		clearTPMWithPlatformAuth(t, tpm)
+		closeTPM(t, tpm)
+	}()
 
 	clearTPMWithPlatformAuth(t, tpm)
 
@@ -325,11 +503,38 @@ func TestProvisionWithOwnerAuth(t *testing.T) {
 		t.Fatalf("HierarchyChangeAuth failed: %v", err)
 	}
 
-	if err := ProvisionTPM(tpm, ProvisionModeClear, nil, testAuth, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeClear, nil, &ProvisionAuths{Owner: testAuth}); err != nil {
 		t.Fatalf("ProvisionTPM failed: %v", err)
 	}
 
+	validateEK(t, tpm)
 	validateSRK(t, tpm)
+}
+
+func TestProvisionWithInvalidEkCert(t *testing.T) {
+	tpm, _ := openTPMSimulatorForTesting(t)
+	defer func() {
+		clearTPMWithPlatformAuth(t, tpm)
+		closeTPM(t, tpm)
+	}()
+
+	clearTPMWithPlatformAuth(t, tpm)
+
+	// Temporarily modify the public template so that ProvisionTPM generates a primary key that doesn't match the EK cert
+	ekTemplate.Unique.RSA()[0] = 0xff
+	defer func() {
+		ekTemplate.Unique.RSA()[0] = 0x00
+	}()
+
+	err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil)
+	if err == nil {
+		t.Fatalf("ProvisionTPM should have returned an error")
+	}
+	var ve TPMVerificationError
+	if !xerrors.As(err, &ve) && err.Error() != "verification of the TPM failed: cannot verify TPM: endorsement key returned from the "+
+		"TPM doesn't match the endorsement certificate" {
+		t.Errorf("ProvisionTPM returned an unexpected error: %v", err)
+	}
 }
 
 func TestProvisionStatus(t *testing.T) {
@@ -348,7 +553,7 @@ func TestProvisionStatus(t *testing.T) {
 
 	lockoutAuth := []byte("1234")
 
-	if err := ProvisionTPM(tpm, ProvisionModeClear, lockoutAuth, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeClear, lockoutAuth, nil); err != nil {
 		t.Fatalf("ProvisionTPM failed: %v", err)
 	}
 
@@ -356,9 +561,9 @@ func TestProvisionStatus(t *testing.T) {
 	if err != nil {
 		t.Errorf("ProvisionStatus failed: %v", err)
 	}
-	expected := AttrValidSRK | AttrDAParamsOK | AttrOwnerClearDisabled | AttrLockoutAuthSet
+	expected := AttrValidEK | AttrValidSRK | AttrDAParamsOK | AttrOwnerClearDisabled | AttrLockoutAuthSet
 	if status != expected {
-		t.Errorf("Unexpected status")
+		t.Errorf("Unexpected status %d", status)
 	}
 
 	if err := tpm.HierarchyChangeAuth(tpm2.HandleLockout, nil, lockoutAuth); err != nil {
@@ -369,9 +574,9 @@ func TestProvisionStatus(t *testing.T) {
 	if err != nil {
 		t.Errorf("ProvisionStatus failed: %v", err)
 	}
-	expected = AttrValidSRK | AttrDAParamsOK | AttrOwnerClearDisabled
+	expected = AttrValidEK | AttrValidSRK | AttrDAParamsOK | AttrOwnerClearDisabled
 	if status != expected {
-		t.Errorf("Unexpected status")
+		t.Errorf("Unexpected status %d", status)
 	}
 
 	if err := tpm.ClearControl(tpm2.HandlePlatform, false, nil); err != nil {
@@ -382,9 +587,9 @@ func TestProvisionStatus(t *testing.T) {
 	if err != nil {
 		t.Errorf("ProvisionStatus failed: %v", err)
 	}
-	expected = AttrValidSRK | AttrDAParamsOK
+	expected = AttrValidEK | AttrValidSRK | AttrDAParamsOK
 	if status != expected {
-		t.Errorf("Unexpected status")
+		t.Errorf("Unexpected status %d", status)
 	}
 
 	if err := tpm.DictionaryAttackParameters(tpm2.HandleLockout, 3, 0, 0, nil); err != nil {
@@ -395,9 +600,9 @@ func TestProvisionStatus(t *testing.T) {
 	if err != nil {
 		t.Errorf("ProvisionStatus failed: %v", err)
 	}
-	expected = AttrValidSRK
+	expected = AttrValidEK | AttrValidSRK
 	if status != expected {
-		t.Errorf("Unexpected status")
+		t.Errorf("Unexpected status %d", status)
 	}
 
 	srkContext, err := tpm.WrapHandle(srkHandle)
@@ -413,9 +618,27 @@ func TestProvisionStatus(t *testing.T) {
 	if err != nil {
 		t.Errorf("ProvisionStatus failed: %v", err)
 	}
+	expected = AttrValidEK
+	if status != expected {
+		t.Errorf("Unexpected status %d", status)
+	}
+
+	ekContext, err := tpm.WrapHandle(ekHandle)
+	if err != nil {
+		t.Fatalf("WrapHandle failed: %v", err)
+	}
+
+	if _, err := tpm.EvictControl(tpm2.HandleOwner, ekContext, ekContext.Handle(), nil); err != nil {
+		t.Errorf("EvictControl failed: %v", err)
+	}
+
+	status, err = ProvisionStatus(tpm)
+	if err != nil {
+		t.Errorf("ProvisionStatus failed: %v", err)
+	}
 	expected = 0
 	if status != expected {
-		t.Errorf("Unexpected status")
+		t.Errorf("Unexpected status %d", status)
 	}
 
 	primary, _, _, _, _, _, err := tpm.CreatePrimary(tpm2.HandleOwner, nil, &srkTemplate, nil, nil, nil)
@@ -445,6 +668,6 @@ func TestProvisionStatus(t *testing.T) {
 	}
 	expected = 0
 	if status != expected {
-		t.Errorf("Unexpected status")
+		t.Errorf("Unexpected status %d", status)
 	}
 }

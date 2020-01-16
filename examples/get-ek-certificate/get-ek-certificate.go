@@ -17,20 +17,39 @@
  *
  */
 
-package fdeutil
+package main
 
 import (
-	"github.com/chrisccoulson/go-tpm2"
+	"flag"
+	"fmt"
+	"os"
+
+	"github.com/chrisccoulson/ubuntu-core-fde-utils"
 )
 
-func NewKeydata() *keyData {
-	// XXX: mock this so that its actually useful and can be marshalled
-	return &keyData{
-		KeyPrivate: []byte("key-private"),
-		KeyPublic:  &tpm2.Public{},
-	}
+var parentsOnly bool
+
+func init() {
+	flag.BoolVar(&parentsOnly, "parents-only", false, "")
 }
 
-func (k *keyData) WriteToFile(dest string) error {
-	return k.writeToFile(dest)
+func main() {
+	flag.Parse()
+
+	if len(flag.Args()) != 1 {
+		fmt.Fprintf(os.Stderr, "Incorrect usage\n")
+		os.Exit(1)
+	}
+
+	tpm, err := fdeutil.ConnectToDefaultTPM()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot acquire TPM context: %v\n", err)
+		os.Exit(1)
+	}
+	defer tpm.Close()
+
+	if err := fdeutil.FetchAndSaveEkCertificateChain(tpm, parentsOnly, flag.Args()[0]); err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot fetch and save EK certificate and intermediates: %v\n", err)
+		os.Exit(1)
+	}
 }

@@ -30,31 +30,17 @@ var (
 	ErrClearRequiresPPI    = errors.New("clearing requires the use of the Physical Presence Interface")
 	ErrRequiresLockoutAuth = errors.New("the TPM indicates the lockout hierarchy has an authorization value, but one hasn't " +
 		"been provided")
-	ErrLockoutAuthFail = errors.New("an authorization check for the lockout hierarchy failed and the " +
-		"lockout hierarchy can not be used again for the configured recovery time")
-	ErrInLockout = errors.New("the lockout hierarchy can not be used because it is in lockout mode")
 
 	ErrProvisioning  = errors.New("the TPM is not correctly provisioned")
 	ErrKeyFileExists = errors.New("a key data file already exists at the specified path")
 
-	ErrOwnerAuthFail = errors.New("an authorization check for the storage hierarchy failed")
-
-	// ErrLockout is returned from UnsealKeyFromTPM when the TPM is in dictionary-attack lockout mode. Until
+	// ErrLockout is returned from any function when the TPM is in dictionary-attack lockout mode. Until
 	// the TPM exits lockout mode, the key will need to be recovered via a mechanism that is independent of
 	// the TPM (eg, a recovery key)
 	ErrLockout = errors.New("the TPM is in DA lockout mode")
 
 	// ErrPinFail is returned from UnsealKeyFromTPM if the provided PIN is incorrect.
 	ErrPinFail = errors.New("the provided PIN is incorrect")
-
-	// ErrPolicyRevoked is returned from UnsealKeyFromTPM if the authorization policy for the key has been
-	// revoked. Unless there is another key object with an authorization policy that hasn't been revoked,
-	// the key will need to be recovered via a mechanism that is indepdendent of the TPM (eg, a recovery key).
-	// Once recovered, the key will need to be sealed to the TPM again with a new authorization policy.
-	ErrPolicyRevoked = errors.New("the authorization policy has been revoked")
-
-	// ErrPolicyFail is returned from UnsealKeyFromTPM if the authorization policy check fails.
-	ErrPolicyFail = errors.New("the authorization policy check failed")
 )
 
 type TPMResourceExistsError struct {
@@ -71,4 +57,34 @@ type InvalidKeyFileError struct {
 
 func (e InvalidKeyFileError) Error() string {
 	return fmt.Sprintf("invalid key data file: %s", e.msg)
+}
+
+// AuthFailError is returned when an authorization fails.
+type AuthFailError struct {
+	Handle tpm2.Handle
+}
+
+func (e AuthFailError) Error() string {
+	return fmt.Sprintf("an authorization check failed for the hierarchy associated with %v", e.Handle)
+}
+
+// EkCertVerificationError is returned from SecureConnectToDefaultTPM if verification of the EK certificate against the built-in
+// root CA certificates fails, or the EK certificate does not have the correct properties, or the supplied certificate data cannot
+// be unmarshalled correctly because it is invalid.
+type EkCertVerificationError struct {
+	msg string
+}
+
+func (e EkCertVerificationError) Error() string {
+	return fmt.Sprintf("cannot verify the endorsement key certificate: %s", e.msg)
+}
+
+// TPMVerificationError is returned from SecureConnectToDefaultTPM if the TPM cannot prove it is the device for which the
+// supplied EK certificate was issued.
+type TPMVerificationError struct {
+	msg string
+}
+
+func (e TPMVerificationError) Error() string {
+	return fmt.Sprintf("cannot verify that the TPM is the device for which the supplied EK certificate was issued: %s", e.msg)
 }

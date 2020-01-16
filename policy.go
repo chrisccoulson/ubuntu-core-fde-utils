@@ -20,6 +20,7 @@
 package fdeutil
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -86,23 +87,38 @@ func getDigestSize(alg tpm2.HashAlgorithmId) uint {
 	return uint(known.size)
 }
 
-func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth interface{}) (tpm2.ResourceContext, error) {
+func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte, session *tpm2.Session) (tpm2.ResourceContext, error) {
 	public := tpm2.NVPublic{
 		Index:   handle,
 		NameAlg: tpm2.HashAlgorithmSHA256,
 		Attrs:   tpm2.MakeNVAttributes(tpm2.AttrNVAuthWrite|tpm2.AttrNVAuthRead, tpm2.NVTypeCounter),
 		Size:    8}
 
-	if err := tpm.NVDefineSpace(tpm2.HandleOwner, nil, &public, ownerAuth); err != nil {
+	if err := tpm.NVDefineSpace(tpm2.HandleOwner, nil, &public, session.WithAuthValue(ownerAuth)); err != nil {
 		return nil, xerrors.Errorf("cannot define NV space: %w", err)
 	}
+
+	// NVDefineSpace was integrity protected, so we know that we have an index with the expected public area at the handle we specified
+	// at this point.
 
 	context, err := tpm.WrapHandle(handle)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot obtain context for new NV index: %w", err)
 	}
 
-	if err := tpm.NVIncrement(context, context, nil); err != nil {
+	// The name associated with context is read back from the TPM with no integrity protection, so we don't know if it's correct yet.
+	// We need to check that it's consistent with the NV index we created before adding it to an authorization policy.
+
+	expectedName, err := public.Name()
+	if err != nil {
+		panic(fmt.Sprintf("cannot compute name of NV index: %v", err))
+	}
+	if !bytes.Equal(expectedName, context.Name()) {
+		return nil, errors.New("context for new NV index has unexpected name")
+	}
+
+	// The name associated with context is the one associated with the index we created. Initialize the index
+	if err := tpm.NVIncrement(context, context, session); err != nil {
 		return nil, xerrors.Errorf("cannot increment new NV index: %w", err)
 	}
 
@@ -177,9 +193,9 @@ func computePolicy(alg tpm2.HashAlgorithmId, input *policyComputeInput) (*policy
 
 	operandB := make([]byte, 8)
 	binary.BigEndian.PutUint64(operandB, input.policyRevokeCount)
-	trial.PolicyNV(input.policyRevokeIndex, operandB, 0, tpm2.OpUnsignedLE)
+	trial.PolicyNV(input.policyRevokeIndex.Name(), operandB, 0, tpm2.OpUnsignedLE)
 
-	trial.PolicySecret(input.pinIndex, nil)
+	trial.PolicySecret(input.pinIndex.Name(), nil)
 
 	return &policyData{Algorithm: alg,
 		SecureBootPCRAlg:        input.secureBootPCRAlg,
@@ -234,9 +250,8 @@ func executePolicySessionPCRAssertions(tpm *tpm2.TPMContext, sessionContext tpm2
 	return nil
 }
 
-func executePolicySession(tpm *tpm2.TPMContext, sessionContext tpm2.ResourceContext, input *policyData,
-	pin string) error {
-	if err := executePolicySessionPCRAssertions(tpm, sessionContext, input); err != nil {
+func executePolicySession(tpm *TPMConnection, sessionContext tpm2.ResourceContext, input *policyData, pin string) error {
+	if err := executePolicySessionPCRAssertions(tpm.TPMContext, sessionContext, input); err != nil {
 		return xerrors.Errorf("cannot execute PCR assertions: %w", err)
 	}
 
@@ -251,24 +266,13 @@ func executePolicySession(tpm *tpm2.TPMContext, sessionContext tpm2.ResourceCont
 		return xerrors.Errorf("cannot execute PolicyNV assertion: %w", err)
 	}
 
-	srkContext, err := tpm.WrapHandle(srkHandle)
-	if err != nil {
-		return xerrors.Errorf("cannot obtain context for SRK: %w", err)
-	}
 	pinIndexContext, err := tpm.WrapHandle(input.PinIndexHandle)
 	if err != nil {
 		return xerrors.Errorf("cannot obtain context for PIN NV index: %w", err)
 	}
-
-	pinSessionContext, err :=
-		tpm.StartAuthSession(srkContext, pinIndexContext, tpm2.SessionTypeHMAC, nil, defaultSessionHashAlgorithm, []byte(pin))
-	if err != nil {
-		return xerrors.Errorf("cannot start HMAC session for PIN verification: %w", err)
-	}
-	defer tpm.FlushContext(pinSessionContext)
-
-	pinSession := tpm2.Session{Context: pinSessionContext}
-	if _, _, err := tpm.PolicySecret(pinIndexContext, sessionContext, nil, nil, 0, &pinSession); err != nil {
+	// Use the HMAC session created when the connection was opened rather than creating a new one.
+	pinSession := tpm.HmacSession()
+	if _, _, err := tpm.PolicySecret(pinIndexContext, sessionContext, nil, nil, 0, pinSession.WithAuthValue([]byte(pin))); err != nil {
 		return xerrors.Errorf("cannot execute PolicySecret assertion: %w", err)
 	}
 

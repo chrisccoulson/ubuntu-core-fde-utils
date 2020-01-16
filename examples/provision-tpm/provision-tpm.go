@@ -28,11 +28,12 @@ import (
 )
 
 var (
-	clear         bool
-	lockoutAuth   string
-	noLockoutAuth bool
-	ownerAuth     string
-	requestClear  bool
+	clear           bool
+	lockoutAuth     string
+	noLockoutAuth   bool
+	ownerAuth       string
+	endorsementAuth string
+	requestClear    bool
 )
 
 func init() {
@@ -41,6 +42,7 @@ func init() {
 	flag.BoolVar(&noLockoutAuth, "no-lockout-auth", false,
 		"Don't perform provisioning actions that require the use of the lockout hierarchy authorization")
 	flag.StringVar(&ownerAuth, "owner-auth", "", "The current storage hierarchy authorization value")
+	flag.StringVar(&endorsementAuth, "endorsement-auth", "", "The current endorsement hierarchy authorization value")
 	flag.BoolVar(&requestClear, "request-clear", false,
 		"Request to clear the TPM via the physical presence interface")
 }
@@ -86,8 +88,8 @@ func main() {
 		mode = fdeutil.ProvisionModeFull
 	}
 
-	if err := fdeutil.ProvisionTPM(tpm, mode, []byte(newLockoutAuth), []byte(ownerAuth),
-		[]byte(lockoutAuth)); err != nil {
+	if err := fdeutil.ProvisionTPM(tpm, mode, []byte(newLockoutAuth), &fdeutil.ProvisionAuths{Owner: []byte(ownerAuth),
+		Endorsement: []byte(endorsementAuth), Lockout: []byte(lockoutAuth)}); err != nil {
 		switch err {
 		case fdeutil.ErrClearRequiresPPI:
 			fmt.Fprintf(os.Stderr,
@@ -98,15 +100,11 @@ func main() {
 				"The TPM indicates that the lockout hierarchy has an authorization value. "+
 					"Either re-run with -lockout-auth <auth> or request to clear the TPM "+
 					"with -request-clear if the authorization value isn't known\n")
-		case fdeutil.ErrLockoutAuthFail:
-			fmt.Fprintf(os.Stderr, "The lockout hierarchy authorization value provided is incorrect\n")
-		case fdeutil.ErrInLockout:
+		case fdeutil.ErrLockout:
 			fmt.Fprintf(os.Stderr,
 				"The lockout hierarchy is in dictionary attack lockout mode. Either wait for "+
 					"the recovery time to expire, or request to clear the TPM with "+
 					"-request-clear\n")
-		case fdeutil.ErrOwnerAuthFail:
-			fmt.Fprintf(os.Stderr, "The storage hierarchy authorization value provided is incorrect\n")
 		default:
 			fmt.Fprintf(os.Stderr, "Failed to provision the TPM: %v\n", err)
 		}

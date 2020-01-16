@@ -1,7 +1,9 @@
 examples/change-pin/change-pin
+examples/get-ek-certificate/get-ek-certificate
 examples/provision-status/provision-status
 examples/provision-tpm/provision-tpm
 examples/seal-key/seal-key
 examples/unseal-key/unseal-key
+examples/verify-tpm/verify-tpm
 unlock/unlock
 vendor/*/
