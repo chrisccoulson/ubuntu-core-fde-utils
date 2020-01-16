@@ -50,7 +50,6 @@ type keyData struct {
 	KeyCreationTicket       *tpm2.TkCreation
 	AskForPinHint           bool
 	PolicyData              *policyData
-	PinIndexPolicyORDigests tpm2.DigestList
 	BoundData               *boundKeyData
 }
 
