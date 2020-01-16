@@ -67,7 +67,7 @@ func UnsealKeyFromTPM(tpm *tpm2.TPMContext, buf io.Reader, pin string) ([]byte, 
 	// This can't fail, as keyData.loadAndIntegrityCheck already created it
 	srkContext, _ := tpm.WrapHandle(srkHandle)
 
-	sessionContext, err := tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypePolicy, &paramEncryptAlg, defaultHashAlgorithm, nil)
+	sessionContext, err := tpm.StartAuthSession(srkContext, nil, tpm2.SessionTypePolicy, &paramEncryptAlg, sealedKeyNameAlgorithm, nil)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot start policy session: %w", err)
 	}
