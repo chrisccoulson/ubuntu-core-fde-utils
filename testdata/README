@@ -30,6 +30,17 @@
     issuer of which is shim's embedded vendor cert) and a custom kernel signed by the test UEFI CA key.
 - eventlog2.bin is an event log from the same QEMU instance but with with secure boot validation disabled in shim
   via MokSBState.
+- eventlog3.bin is an event log from a QEMU instance running OVMF with the following configuration:
+  - "Ubuntu OVMF Secure Boot (PK/KEK key)" enrolled in to PK.
+  - KEK database, UEFI database and forbidden signature databases from efivars1/.
+  - Booted with a version of shim verified by the test UEFI CA key. The shim build contains the second test CA
+    certificate from efivars2/, which is used to verify GRUB and the kernel.
+- eventlog4.bin is an event log from the same QEMU instance as eventlog3.bin, with the following difference:
+  - UC20 style layout (recovery GRUB -> normal GRUB -> kernel). Everything is verified by the test CA in the UEFI db.
+- eventlog5.bin is an event log from the same QEMU instance as eventlog4.bin, with the following differences:
+  - UEFI signature DB updates from updates1/ are applied
+- eventlog6.bin is an event log from the same QEMU instance as eventlog5.bin, with the following differences
+  - Booted with a kernel that's verified by the second test CA certificate.
 
 - mock.efi is a mock EFI executable that has no signature.
 - mock.efi.signed.1 is a mock EFI executable signed with the key from a certificate issued by the test CA in
