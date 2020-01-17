@@ -31,8 +31,7 @@ var (
 	ErrRequiresLockoutAuth = errors.New("the TPM indicates the lockout hierarchy has an authorization value, but one hasn't " +
 		"been provided")
 
-	ErrProvisioning  = errors.New("the TPM is not correctly provisioned")
-	ErrKeyFileExists = errors.New("a key data file already exists at the specified path")
+	ErrProvisioning = errors.New("the TPM is not correctly provisioned")
 
 	// ErrLockout is returned from any function when the TPM is in dictionary-attack lockout mode. Until
 	// the TPM exits lockout mode, the key will need to be recovered via a mechanism that is independent of

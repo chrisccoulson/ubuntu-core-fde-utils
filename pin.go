@@ -21,7 +21,6 @@ package fdeutil
 
 import (
 	"bytes"
-	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/binary"
@@ -60,21 +59,7 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 		return nil, xerrors.Errorf("cannot create signing key for initializing NV index: %w", err)
 	}
 
-	keyPublic := tpm2.Public{
-		Type:    tpm2.ObjectTypeRSA,
-		NameAlg: tpm2.HashAlgorithmSHA256,
-		Attrs:   tpm2.AttrSensitiveDataOrigin | tpm2.AttrUserWithAuth | tpm2.AttrSign,
-		Params: tpm2.PublicParamsU{
-			Data: &tpm2.RSAParams{
-				Symmetric: tpm2.SymDefObject{Algorithm: tpm2.SymObjectAlgorithmNull},
-				Scheme: tpm2.RSAScheme{
-					Scheme: tpm2.RSASchemeRSAPSS,
-					Details: tpm2.AsymSchemeU{
-						Data: &tpm2.SigSchemeRSAPSS{HashAlg: tpm2.HashAlgorithmSHA256}}},
-				KeyBits:  2048,
-				Exponent: uint32(key.E)}},
-		Unique: tpm2.PublicIDU{Data: tpm2.PublicKeyRSA(key.N.Bytes())}}
-
+	keyPublic := createPublicAreaForRSASigningKey(&key.PublicKey)
 	keyName, err := keyPublic.Name()
 	if err != nil {
 		return nil, xerrors.Errorf("cannot compute name of signing key for initializing NV index: %w", err)
@@ -140,12 +125,13 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 	defer tpm.FlushContext(policySessionContext)
 
 	// Compute a digest for signing with our key
-	h := tpm2.HashAlgorithmSHA256.NewHash()
+	signDigest := tpm2.HashAlgorithmSHA256
+	h := signDigest.NewHash()
 	h.Write(policySessionContext.(tpm2.SessionContext).NonceTPM())
 	binary.Write(h, binary.BigEndian, int32(0))
 
 	// Sign the digest
-	sig, err := rsa.SignPSS(rand.Reader, key, crypto.SHA256, h.Sum(nil), &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash})
+	sig, err := rsa.SignPSS(rand.Reader, key, signDigest.GetHash(), h.Sum(nil), &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash})
 	if err != nil {
 		return nil, xerrors.Errorf("cannot provide signature for initializing NV index: %w", err)
 	}
@@ -153,7 +139,7 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 	// Load the public part of the key in to the TPM. There's no integrity protection for this command as if it's altered in
 	// transit then either the signature verification fails or the policy digest will not match the one associated with the NV
 	// index.
-	keyLoaded, _, err := tpm.LoadExternal(nil, &keyPublic, tpm2.HandleEndorsement)
+	keyLoaded, _, err := tpm.LoadExternal(nil, keyPublic, tpm2.HandleEndorsement)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot load public part of key used to initialize NV index to the TPM: %w", err)
 	}
@@ -163,7 +149,7 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 		SigAlg: tpm2.SigSchemeAlgRSAPSS,
 		Signature: tpm2.SignatureU{
 			Data: &tpm2.SignatureRSAPSS{
-				Hash: tpm2.HashAlgorithmSHA256,
+				Hash: signDigest,
 				Sig:  tpm2.PublicKeyRSA(sig)}}}
 
 	// Execute the policy assertions
@@ -249,7 +235,7 @@ func ChangePIN(tpm *TPMConnection, path string, oldAuth, newAuth string) error {
 		return fmt.Errorf("cannot load key data file: %v", err)
 	}
 
-	if err := performPINChange(tpm, data.PolicyData.PinIndexHandle, oldAuth, newAuth); err != nil {
+	if err := performPINChange(tpm, data.StaticPolicyData.PinIndexHandle, oldAuth, newAuth); err != nil {
 		return err
 	}
 
@@ -259,7 +245,7 @@ func ChangePIN(tpm *TPMConnection, path string, oldAuth, newAuth string) error {
 		data.AskForPinHint = true
 	}
 
-	if err := data.writeToFile(path); err != nil {
+	if err := data.writeToFileAtomic(path); err != nil {
 		return fmt.Errorf("cannot write key data file: %v", err)
 	}
 
