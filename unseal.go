@@ -21,14 +21,13 @@ package fdeutil
 
 import (
 	"fmt"
-	"io"
 
 	"github.com/chrisccoulson/go-tpm2"
 
 	"golang.org/x/xerrors"
 )
 
-func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string, lock bool) ([]byte, error) {
+func (k *SealedKeyObject) UnsealFromTPM(tpm *TPMConnection, pin string, lock bool) ([]byte, error) {
 	// Check if the TPM is in lockout mode
 	props, err := tpm.GetCapabilityTPMProperties(tpm2.PropertyPermanent, 1)
 	if err != nil {
@@ -43,7 +42,7 @@ func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string, lock bool) 
 	hmacSession := tpm.HmacSession()
 
 	// Load the key data
-	keyContext, data, err := loadKeyData(tpm.TPMContext, buf, hmacSession)
+	keyContext, err := k.data.load(tpm.TPMContext, hmacSession)
 	if err != nil {
 		var kfErr keyFileError
 		if xerrors.As(err, &kfErr) {
@@ -64,13 +63,13 @@ func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string, lock bool) 
 	defer tpm.FlushContext(keyContext)
 
 	// Begin and execute policy session
-	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, data.KeyPublic.NameAlg, nil)
+	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, k.data.KeyPublic.NameAlg, nil)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot start policy session: %w", err)
 	}
 	defer tpm.FlushContext(sessionContext)
 
-	if err := executePolicySession(tpm, sessionContext, data.StaticPolicyData, data.DynamicPolicyData, pin); err != nil {
+	if err := executePolicySession(tpm, sessionContext, k.data.StaticPolicyData, k.data.DynamicPolicyData, pin); err != nil {
 		var tpmsErr *tpm2.TPMSessionError
 		if xerrors.As(err, &tpmsErr) && tpmsErr.Code() == tpm2.ErrorAuthFail && tpmsErr.Command() == tpm2.CommandPolicySecret {
 			return nil, ErrPinFail
@@ -88,7 +87,7 @@ func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string, lock bool) 
 	}
 
 	if lock {
-		if err := lockAccessUntilTPMReset(tpm.TPMContext, data.StaticPolicyData); err != nil {
+		if err := lockAccessUntilTPMReset(tpm.TPMContext, k.data.StaticPolicyData); err != nil {
 			return nil, fmt.Errorf("cannot lock sealed key object from further access: %v", err)
 		}
 	}

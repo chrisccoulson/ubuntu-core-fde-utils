@@ -372,7 +372,7 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 	data := keyData{
 		KeyPrivate:        priv,
 		KeyPublic:         pub,
-		AskForPinHint:     false,
+		AuthModeHint:      AuthModeNone,
 		PinIndexKeyName:   pinIndexKeyName,
 		StaticPolicyData:  staticPolicyData,
 		DynamicPolicyData: dynamicPolicyData}
@@ -487,7 +487,12 @@ func DeleteKey(tpm *TPMConnection, path string, ownerAuth []byte) error {
 		return xerrors.Errorf("cannot open key data file: %w", err)
 	}
 
-	keyContext, data, err := loadKeyData(tpm.TPMContext, f, session)
+	data, err := readKeyData(f)
+	if err != nil {
+		return InvalidKeyFileError{err.Error()}
+	}
+
+	keyContext, err := data.load(tpm.TPMContext, session)
 	if err != nil {
 		switch e := err.(type) {
 		case keyFileError:

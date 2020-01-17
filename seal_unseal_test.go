@@ -58,14 +58,14 @@ func TestCreateAndUnseal(t *testing.T) {
 	}
 	defer deleteKey(t, tpm, keyFile)
 
-	f, err := os.Open(keyFile)
+	k, err := LoadSealedKeyObject(keyFile)
 	if err != nil {
-		t.Fatalf("Failed to open key data file: %v", err)
+		t.Fatalf("LoadSealedKeyObject failed: %v", err)
 	}
 
-	keyUnsealed, err := UnsealKeyFromTPM(tpm, f, "", false)
+	keyUnsealed, err := k.UnsealFromTPM(tpm, "", false)
 	if err != nil {
-		t.Fatalf("UnsealKeyFromTPM failed: %v", err)
+		t.Fatalf("UnsealFromTPM failed: %v", err)
 	}
 
 	if !bytes.Equal(key, keyUnsealed) {
@@ -194,14 +194,14 @@ func TestUpdateAndUnseal(t *testing.T) {
 		t.Errorf("File wasn't updated")
 	}
 
-	f, err := os.Open(keyFile)
+	k, err := LoadSealedKeyObject(keyFile)
 	if err != nil {
-		t.Fatalf("Failed to open key data file: %v", err)
+		t.Fatalf("LoadSealedKeyObject failed: %v", err)
 	}
 
-	keyUnsealed, err := UnsealKeyFromTPM(tpm, f, testPIN, false)
+	keyUnsealed, err := k.UnsealFromTPM(tpm, testPIN, false)
 	if err != nil {
-		t.Fatalf("UnsealKeyFromTPM failed: %v", err)
+		t.Fatalf("UnsealFromTPM failed: %v", err)
 	}
 
 	if !bytes.Equal(key, keyUnsealed) {
@@ -239,14 +239,14 @@ func TestUnsealWithPin(t *testing.T) {
 		t.Fatalf("ChangePIN failed: %v", err)
 	}
 
-	f, err := os.Open(keyFile)
+	k, err := LoadSealedKeyObject(keyFile)
 	if err != nil {
-		t.Fatalf("Failed to open key data file: %v", err)
+		t.Fatalf("LoadSealedKeyObject failed: %v", err)
 	}
 
-	keyUnsealed, err := UnsealKeyFromTPM(tpm, f, testPIN, false)
+	keyUnsealed, err := k.UnsealFromTPM(tpm, testPIN, false)
 	if err != nil {
-		t.Fatalf("UnsealKeyFromTPM failed: %v", err)
+		t.Fatalf("UnsealFromTPM failed: %v", err)
 	}
 
 	if !bytes.Equal(key, keyUnsealed) {
@@ -272,6 +272,7 @@ func TestUnsealRevoked(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	keyFile := tmpDir + "/keydata"
+	keyFile2 := tmpDir + "/keydata.old"
 	privFile := tmpDir + "/keypriv"
 
 	if err := SealKeyToTPM(tpm, keyFile, privFile, &testCreationParams, nil, key); err != nil {
@@ -279,14 +280,19 @@ func TestUnsealRevoked(t *testing.T) {
 	}
 	defer deleteKey(t, tpm, keyFile)
 
-	f, err := os.Open(keyFile)
+	f1, err := os.Open(keyFile)
 	if err != nil {
 		t.Fatalf("Cannot open file: %v", err)
 	}
-	defer f.Close()
+	defer f1.Close()
 
-	var keydata bytes.Buffer
-	if _, err := io.Copy(&keydata, f); err != nil {
+	f2, err := os.OpenFile(keyFile2, os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		t.Fatalf("Cannot open file: %v", err)
+	}
+	defer f2.Close()
+
+	if _, err := io.Copy(f2, f1); err != nil {
 		t.Fatalf("Cannot copy key data file: %v", err)
 	}
 
@@ -294,10 +300,16 @@ func TestUnsealRevoked(t *testing.T) {
 		t.Fatalf("UpdateKeyAuthPolicy failed: %v", err)
 	}
 
-	_, err = UnsealKeyFromTPM(tpm, &keydata, "", false)
-	if err == nil {
-		t.Fatalf("UnsealKeyFromTPM should have failed")
+	k, err := LoadSealedKeyObject(keyFile2)
+	if err != nil {
+		t.Fatalf("LoadSealedKeyObject failed: %v", err)
 	}
+
+	_, err = k.UnsealFromTPM(tpm, "", false)
+	if err == nil {
+		t.Fatalf("UnsealFromTPM should have failed")
+	}
+
 	if _, ok := err.(InvalidKeyFileError); !ok || err.Error() != "invalid key data file: encountered an error whilst executing the "+
 		"authorization policy assertions: dynamic authorization policy revocation check failed: TPM returned an error whilst executing "+
 		"command TPM_CC_PolicyNV: TPM_RC_POLICY (policy failure in math operation or an invalid authPolicy value)" {
@@ -335,14 +347,14 @@ func TestUnsealWithWrongPin(t *testing.T) {
 		t.Fatalf("ChangePIN failed: %v", err)
 	}
 
-	f, err := os.Open(keyFile)
+	k, err := LoadSealedKeyObject(keyFile)
 	if err != nil {
-		t.Fatalf("Failed to open key data file: %v", err)
+		t.Fatalf("LoadSealedKeyObject failed: %v", err)
 	}
 
-	_, err = UnsealKeyFromTPM(tpm, f, "", false)
+	_, err = k.UnsealFromTPM(tpm, "", false)
 	if err == nil {
-		t.Fatalf("UnsealKeyFromTPM should have failed")
+		t.Fatalf("UnsealFromTPM should have failed")
 	}
 	if err != ErrPinFail {
 		t.Errorf("Unexpected error: %v", err)
@@ -377,15 +389,16 @@ func TestUnsealPolicyFail(t *testing.T) {
 		t.Errorf("PCREvent failed: %v", err)
 	}
 
-	f, err := os.Open(keyFile)
+	k, err := LoadSealedKeyObject(keyFile)
 	if err != nil {
-		t.Fatalf("Failed to open key data file: %v", err)
+		t.Fatalf("LoadSealedKeyObject failed: %v", err)
 	}
 
-	_, err = UnsealKeyFromTPM(tpm, f, "", false)
+	_, err = k.UnsealFromTPM(tpm, "", false)
 	if err == nil {
-		t.Fatalf("UnsealKeyFromTPM should have failed")
+		t.Fatalf("UnsealFromTPM should have failed")
 	}
+
 	if _, ok := err.(InvalidKeyFileError); !ok || err.Error() != "invalid key data file: encountered an error whilst executing the "+
 		"authorization policy assertions: cannot execute PCR assertions: cannot execute PolicyOR assertion after PolicyPCR assertion "+
 		"against PCR7: TPM returned an error for parameter 1 whilst executing command TPM_CC_PolicyOR: TPM_RC_VALUE (value is out of "+
@@ -431,14 +444,14 @@ func TestUnsealLockout(t *testing.T) {
 		}
 	}()
 
-	f, err := os.Open(keyFile)
+	k, err := LoadSealedKeyObject(keyFile)
 	if err != nil {
-		t.Fatalf("Failed to open key data file: %v", err)
+		t.Fatalf("LoadSealedKeyObject failed: %v", err)
 	}
 
-	_, err = UnsealKeyFromTPM(tpm, f, "", false)
+	_, err = k.UnsealFromTPM(tpm, "", false)
 	if err == nil {
-		t.Fatalf("UnsealKeyFromTPM should have failed")
+		t.Fatalf("UnsealFromTPM should have failed")
 	}
 	if err != ErrLockout {
 		t.Errorf("Unexpected error: %v", err)
@@ -553,14 +566,14 @@ func TestUnsealProvisioningError(t *testing.T) {
 	}()
 
 	run := func(t *testing.T) {
-		f, err := os.Open(keyFile)
+		k, err := LoadSealedKeyObject(keyFile)
 		if err != nil {
-			t.Fatalf("Failed to open key data file: %v", err)
+			t.Fatalf("LoadSealedKeyObject failed: %v", err)
 		}
 
-		_, err = UnsealKeyFromTPM(tpm, f, "", false)
+		_, err = k.UnsealFromTPM(tpm, "", false)
 		if err == nil {
-			t.Fatalf("UnsealKeyFromTPM should have failed")
+			t.Fatalf("UnsealFromTPM should have failed")
 		}
 		if err != ErrProvisioning {
 			t.Errorf("Unexpected error: %v", err)
@@ -650,25 +663,23 @@ func TestLockAccessAfterUnseal(t *testing.T) {
 	}
 	defer deleteKey(t, tpm, keyFile)
 
-	f, err := os.Open(keyFile)
+	k, err := LoadSealedKeyObject(keyFile)
 	if err != nil {
-		t.Fatalf("Failed to open key data file: %v", err)
+		t.Fatalf("LoadSealedKeyObject failed: %v", err)
 	}
 
-	keyUnsealed, err := UnsealKeyFromTPM(tpm, f, "", true)
+	keyUnsealed, err := k.UnsealFromTPM(tpm, "", true)
 	if err != nil {
-		t.Fatalf("UnsealKeyFromTPM failed: %v", err)
+		t.Fatalf("UnsealFromTPM failed: %v", err)
 	}
 
 	if !bytes.Equal(key, keyUnsealed) {
 		t.Errorf("TPM returned the wrong key")
 	}
 
-	f.Seek(0, io.SeekStart)
-
-	_, err = UnsealKeyFromTPM(tpm, f, "", true)
+	_, err = k.UnsealFromTPM(tpm, "", true)
 	if err == nil {
-		t.Fatalf("UnsealKeyFromTPM should have failed")
+		t.Fatalf("UnsealFromTPM should have failed")
 	}
 	if _, ok := err.(InvalidKeyFileError); !ok || err.Error() != "invalid key data file: the authorization policy check failed "+
 		"during unsealing" {
@@ -678,11 +689,9 @@ func TestLockAccessAfterUnseal(t *testing.T) {
 	resetTPMSimulator(t, tpm, tcti)
 	replayLogToTPM(t, tpm, tcti, eventLog)
 
-	f.Seek(0, io.SeekStart)
-
-	keyUnsealed, err = UnsealKeyFromTPM(tpm, f, "", true)
+	keyUnsealed, err = k.UnsealFromTPM(tpm, "", true)
 	if err != nil {
-		t.Fatalf("UnsealKeyFromTPM failed: %v", err)
+		t.Fatalf("UnsealFromTPM failed: %v", err)
 	}
 
 	if !bytes.Equal(key, keyUnsealed) {
@@ -938,15 +947,15 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 			resetTPMSimulator(t, tpm, tcti)
 			replayLogToTPM(t, tpm, tcti, data.trustedLogPath)
 
-			f, err := os.Open(keyFile)
+			k, err := LoadSealedKeyObject(keyFile)
 			if err != nil {
-				t.Fatalf("Failed to open key data file: %v", err)
+				t.Fatalf("LoadSealedKeyObject failed: %v", err)
 			}
 
-			keyUnsealed, err := UnsealKeyFromTPM(tpm, f, "", false)
+			keyUnsealed, err := k.UnsealFromTPM(tpm, "", false)
 			if data.err == "" {
 				if err != nil {
-					t.Fatalf("UnsealKeyFromTPM failed: %v", err)
+					t.Fatalf("UnsealFromTPM failed: %v", err)
 				}
 
 				if !bytes.Equal(key, keyUnsealed) {
@@ -954,7 +963,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 				}
 			} else {
 				if err == nil {
-					t.Fatalf("UnsealKeyFromTPM should have failed")
+					t.Fatalf("UnsealFromTPM should have failed")
 				}
 				if err.Error() != data.err {
 					t.Errorf("Unexpected error string: %s", err)

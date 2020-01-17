@@ -38,7 +38,7 @@ var (
 	// the TPM (eg, a recovery key)
 	ErrLockout = errors.New("the TPM is in DA lockout mode")
 
-	// ErrPinFail is returned from UnsealKeyFromTPM if the provided PIN is incorrect.
+	// ErrPinFail is returned from SealedKeyObject.UnsealFromTPM if the provided PIN is incorrect.
 	ErrPinFail = errors.New("the provided PIN is incorrect")
 )
 

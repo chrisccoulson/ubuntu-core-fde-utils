@@ -47,19 +47,6 @@ func run() int {
 		return 1
 	}
 
-	var in *os.File
-	if keyFile == "-" {
-		in = os.Stdin
-	} else {
-		f, err := os.Open(keyFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Cannot open input file: %v\n", err)
-			return 1
-		}
-		in = f
-		defer in.Close()
-	}
-
 	var out *os.File
 	if outFile == "-" {
 		out = os.Stdout
@@ -80,7 +67,13 @@ func run() int {
 	}
 	defer tpm.Close()
 
-	key, err := fdeutil.UnsealKeyFromTPM(tpm, in, pin, false)
+	keyDataObject, err := fdeutil.LoadSealedKeyObject(keyFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot load sealed key object: %v\n", err)
+		return 1
+	}
+
+	key, err := keyDataObject.UnsealFromTPM(tpm, pin, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot unseal key: %v\n", err)
 		return 1

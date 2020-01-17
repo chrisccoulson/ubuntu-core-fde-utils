@@ -243,9 +243,9 @@ func ChangePIN(tpm *TPMConnection, path string, oldAuth, newAuth string) error {
 	}
 
 	if newAuth == "" {
-		data.AskForPinHint = false
+		data.AuthModeHint = AuthModeNone
 	} else {
-		data.AskForPinHint = true
+		data.AuthModeHint = AuthModePIN
 	}
 
 	if err := data.writeToFileAtomic(path); err != nil {
