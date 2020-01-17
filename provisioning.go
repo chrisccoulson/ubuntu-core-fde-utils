@@ -166,7 +166,7 @@ func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte,
 	}
 
 	// Create an initial session for HMAC authorizations
-	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultHashAlgorithm, nil)
+	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultSessionHashAlgorithm, nil)
 	if err != nil {
 		return xerrors.Errorf("cannot start session: %w", err)
 	}
