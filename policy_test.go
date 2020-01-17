@@ -45,7 +45,7 @@ func (c *mockResourceContext) Handle() tpm2.Handle {
 }
 
 func TestComputeStaticPolicy(t *testing.T) {
-	h := pinNvIndexNameAlgorithm.NewHash()
+	h := tpm2.HashAlgorithmSHA256.NewHash()
 	h.Write([]byte("PIN"))
 	pinName, _ := tpm2.MarshalToBytes(tpm2.HashAlgorithmSHA256, tpm2.RawBytes(h.Sum(nil)))
 	pinIndex := &mockResourceContext{pinName, testCreationParams.PinHandle}
@@ -81,10 +81,10 @@ func TestComputeStaticPolicy(t *testing.T) {
 				t.Errorf("Auth key public area has wrong modulus")
 			}
 
-			h := signingKeyNameAlgorithm.NewHash()
+			h := dataout.AuthorizeKeyPublic.NameAlg.NewHash()
 			h.Write(make(tpm2.Digest, data.alg.Size()))
 
-			sig, err := rsa.SignPSS(rand.Reader, key, signingKeyNameAlgorithm.GetHash(), h.Sum(nil),
+			sig, err := rsa.SignPSS(rand.Reader, key, dataout.AuthorizeKeyPublic.NameAlg.GetHash(), h.Sum(nil),
 				&rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash})
 			if err != nil {
 				t.Errorf("SignPSS failed: %v", err)
@@ -93,7 +93,7 @@ func TestComputeStaticPolicy(t *testing.T) {
 			pubKey := rsa.PublicKey{
 				N: new(big.Int).SetBytes(dataout.AuthorizeKeyPublic.Unique.RSA()),
 				E: int(dataout.AuthorizeKeyPublic.Params.RSADetail().Exponent)}
-			if err := rsa.VerifyPSS(&pubKey, signingKeyNameAlgorithm.GetHash(), h.Sum(nil), sig,
+			if err := rsa.VerifyPSS(&pubKey, dataout.AuthorizeKeyPublic.NameAlg.GetHash(), h.Sum(nil), sig,
 				&rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash}); err != nil {
 				t.Errorf("Invalid auth key")
 			}
@@ -146,6 +146,7 @@ func TestComputeDynamicPolicy(t *testing.T) {
 			alg:  tpm2.HashAlgorithmSHA256,
 			input: dynamicPolicyComputeParams{
 				key:                        key,
+				signAlg:                    tpm2.HashAlgorithmSHA256,
 				secureBootPCRAlg:           tpm2.HashAlgorithmSHA256,
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
@@ -161,6 +162,7 @@ func TestComputeDynamicPolicy(t *testing.T) {
 			alg:  tpm2.HashAlgorithmSHA1,
 			input: dynamicPolicyComputeParams{
 				key:                        key,
+				signAlg:                    tpm2.HashAlgorithmSHA256,
 				secureBootPCRAlg:           tpm2.HashAlgorithmSHA256,
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][3]},
@@ -176,6 +178,7 @@ func TestComputeDynamicPolicy(t *testing.T) {
 			alg:  tpm2.HashAlgorithmSHA256,
 			input: dynamicPolicyComputeParams{
 				key:                        key,
+				signAlg:                    tpm2.HashAlgorithmSHA256,
 				secureBootPCRAlg:           tpm2.HashAlgorithmSHA512,
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA512,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA512][0]},
@@ -191,6 +194,7 @@ func TestComputeDynamicPolicy(t *testing.T) {
 			alg:  tpm2.HashAlgorithmSHA256,
 			input: dynamicPolicyComputeParams{
 				key:                    key,
+				signAlg:                tpm2.HashAlgorithmSHA256,
 				secureBootPCRAlg:       tpm2.HashAlgorithmSHA256,
 				ubuntuBootParamsPCRAlg: tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests: tpm2.DigestList{
@@ -246,14 +250,14 @@ func TestComputeDynamicPolicy(t *testing.T) {
 			if dataout.AuthorizedPolicySignature.SigAlg != tpm2.SigSchemeAlgRSAPSS {
 				t.Errorf("Unexpected authorized policy signature algorithm")
 			}
-			if dataout.AuthorizedPolicySignature.Signature.RSAPSS().Hash != signingKeyNameAlgorithm {
+			if dataout.AuthorizedPolicySignature.Signature.RSAPSS().Hash != data.input.signAlg {
 				t.Errorf("Unexpected authorized policy signature digest algorithm")
 			}
 
-			h := signingKeyNameAlgorithm.NewHash()
+			h := data.input.signAlg.NewHash()
 			h.Write(dataout.AuthorizedPolicy)
 
-			if err := rsa.VerifyPSS(&key.PublicKey, signingKeyNameAlgorithm.GetHash(), h.Sum(nil),
+			if err := rsa.VerifyPSS(&key.PublicKey, data.input.signAlg.GetHash(), h.Sum(nil),
 				[]byte(dataout.AuthorizedPolicySignature.Signature.RSAPSS().Sig),
 				&rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash}); err != nil {
 				t.Errorf("Invalid authorized policy signature: %v", err)
@@ -612,6 +616,7 @@ func TestExecutePolicy(t *testing.T) {
 				t.Fatalf("computeStaticPolicy failed: %v", err)
 			}
 			data.input.key = key
+			data.input.signAlg = staticPolicyData.AuthorizeKeyPublic.NameAlg
 			dynamicPolicyData, err := computeDynamicPolicy(data.alg, &data.input)
 			if err != nil {
 				t.Fatalf("computeDynamicPolicy failed: %v", err)
