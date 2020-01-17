@@ -32,6 +32,10 @@ import (
 	"golang.org/x/xerrors"
 )
 
+const (
+	policyRevocationNvIndexNameAlgorithm tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
+)
+
 type dynamicPolicyComputeParams struct {
 	key                        *rsa.PrivateKey
 	secureBootPCRAlg           tpm2.HashAlgorithmId
@@ -63,12 +67,76 @@ type staticPolicyData struct {
 	PinIndexHandle     tpm2.Handle
 }
 
-func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte, session *tpm2.Session) (tpm2.ResourceContext, error) {
+func incrementPolicyRevocationNvIndex(tpm *tpm2.TPMContext, index tpm2.ResourceContext, key *rsa.PrivateKey, session *tpm2.Session) error {
+	// Begin a policy session to increment the index.
+	policySessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, policyRevocationNvIndexNameAlgorithm, nil)
+	if err != nil {
+		return xerrors.Errorf("cannot begin policy session: %w", err)
+	}
+	defer tpm.FlushContext(policySessionContext)
+
+	// Compute a digest for signing with our key
+	signDigest := tpm2.HashAlgorithmSHA256
+	h := signDigest.NewHash()
+	h.Write(policySessionContext.(tpm2.SessionContext).NonceTPM())
+	binary.Write(h, binary.BigEndian, int32(0))
+
+	// Sign the digest
+	sig, err := rsa.SignPSS(rand.Reader, key, signDigest.GetHash(), h.Sum(nil), &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash})
+	if err != nil {
+		return xerrors.Errorf("cannot sign authorization: %w", err)
+	}
+
+	// Load the public part of the key in to the TPM. There's no integrity protection for this command as if it's altered in
+	// transit then either the signature verification fails or the policy digest will not match the one associated with the NV
+	// index.
+	keyPublic := createPublicAreaForRSASigningKey(&key.PublicKey)
+	keyLoaded, _, err := tpm.LoadExternal(nil, keyPublic, tpm2.HandleEndorsement)
+	if err != nil {
+		return xerrors.Errorf("cannot load public part of key used to verify authorization signature: %w", err)
+	}
+	defer tpm.FlushContext(keyLoaded)
+
+	signature := tpm2.Signature{
+		SigAlg: tpm2.SigSchemeAlgRSAPSS,
+		Signature: tpm2.SignatureU{
+			Data: &tpm2.SignatureRSAPSS{
+				Hash: signDigest,
+				Sig:  tpm2.PublicKeyRSA(sig)}}}
+
+	// Execute the policy assertions
+	if err := tpm.PolicyCommandCode(policySessionContext, tpm2.CommandNVIncrement); err != nil {
+		return xerrors.Errorf("cannot execute PolicyCommandCode assertion: %w", err)
+	}
+	if _, _, err := tpm.PolicySigned(keyLoaded, policySessionContext, true, nil, nil, 0, &signature); err != nil {
+		return xerrors.Errorf("cannot execute PolicySigned assertion: %w", err)
+	}
+
+	// Increment the index.
+	if err := tpm.NVIncrement(index, index, &tpm2.Session{Context: policySessionContext}, session.AddAttrs(tpm2.AttrAudit)); err != nil {
+		return xerrors.Errorf("cannot increment NV index: %w", err)
+	}
+
+	return nil
+}
+
+func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, key *rsa.PrivateKey, ownerAuth []byte, session *tpm2.Session) (tpm2.ResourceContext, error) {
+	keyPublic := createPublicAreaForRSASigningKey(&key.PublicKey)
+	keyName, err := keyPublic.Name()
+	if err != nil {
+		return nil, xerrors.Errorf("cannot compute name of signing key for incrementing NV index: %w", err)
+	}
+
+	trial, _ := tpm2.ComputeAuthPolicy(tpm2.HashAlgorithmSHA256)
+	trial.PolicyCommandCode(tpm2.CommandNVIncrement)
+	trial.PolicySigned(keyName, nil)
+
 	public := tpm2.NVPublic{
-		Index:   handle,
-		NameAlg: tpm2.HashAlgorithmSHA256,
-		Attrs:   tpm2.MakeNVAttributes(tpm2.AttrNVAuthWrite|tpm2.AttrNVAuthRead, tpm2.NVTypeCounter),
-		Size:    8}
+		Index:      handle,
+		NameAlg:    policyRevocationNvIndexNameAlgorithm,
+		Attrs:      tpm2.MakeNVAttributes(tpm2.AttrNVPolicyWrite|tpm2.AttrNVAuthRead, tpm2.NVTypeCounter),
+		AuthPolicy: trial.GetDigest(),
+		Size:       8}
 
 	if err := tpm.NVDefineSpace(tpm2.HandleOwner, nil, &public, session.WithAuthValue(ownerAuth)); err != nil {
 		return nil, xerrors.Errorf("cannot define NV space: %w", err)
@@ -102,8 +170,8 @@ func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, own
 	}
 
 	// The name associated with context is the one associated with the index we created. Initialize the index
-	if err := tpm.NVIncrement(context, context, session); err != nil {
-		return nil, xerrors.Errorf("cannot increment new NV index: %w", err)
+	if err := incrementPolicyRevocationNvIndex(tpm, context, key, session); err != nil {
+		return nil, xerrors.Errorf("cannot initialize new NV index: %w", err)
 	}
 
 	succeeded = true

@@ -298,7 +298,11 @@ func TestExecutePolicy(t *testing.T) {
 		}
 	}()
 
-	policyRevokeIndex, err := createPolicyRevocationNvIndex(tpm.TPMContext, testCreationParams.PolicyRevocationHandle, nil, &session)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	policyRevokeIndex, err := createPolicyRevocationNvIndex(tpm.TPMContext, testCreationParams.PolicyRevocationHandle, key, nil, &session)
 	if err != nil {
 		t.Fatalf("createPolicyRevocationNvIndex failed: %v", err)
 	}
