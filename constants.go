@@ -32,9 +32,8 @@ const (
 	defaultSessionHashAlgorithm tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
 	sealedKeyNameAlgorithm      tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
 
-	secureBootPCR = 7
-	grubPCR       = 8
-	snapModelPCR  = 11
+	secureBootPCR       = 7
+	ubuntuBootParamsPCR = 12
 )
 
 var (
