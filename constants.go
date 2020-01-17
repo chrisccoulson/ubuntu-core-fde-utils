@@ -31,7 +31,7 @@ const (
 	// FIXME: Dynamically select algorithms based on what's available on the device
 	defaultSessionHashAlgorithm tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
 	sealedKeyNameAlgorithm      tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
-	signingKeyNameAlgorithm	    tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
+	signingKeyNameAlgorithm     tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
 
 	secureBootPCR       = 7
 	ubuntuBootParamsPCR = 12

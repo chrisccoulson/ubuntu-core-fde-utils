@@ -28,7 +28,7 @@ import (
 	"golang.org/x/xerrors"
 )
 
-func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string) ([]byte, error) {
+func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string, lock bool) ([]byte, error) {
 	// Check if the TPM is in lockout mode
 	props, err := tpm.GetCapabilityTPMProperties(tpm2.PropertyPermanent, 1)
 	if err != nil {
@@ -85,6 +85,12 @@ func UnsealKeyFromTPM(tpm *TPMConnection, buf io.Reader, pin string) ([]byte, er
 			return nil, InvalidKeyFileError{"the authorization policy check failed during unsealing"}
 		}
 		return nil, xerrors.Errorf("cannot unseal key: %w", err)
+	}
+
+	if lock {
+		if err := lockAccessUntilTPMReset(tpm.TPMContext, data.StaticPolicyData); err != nil {
+			return nil, fmt.Errorf("cannot lock sealed key object from further access: %v", err)
+		}
 	}
 
 	return key, nil

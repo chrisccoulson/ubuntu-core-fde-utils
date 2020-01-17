@@ -221,6 +221,11 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 	if !bytes.Equal(pinIndexName, pinIndex.Name()) {
 		return errors.New("invalid context for PIN NV index")
 	}
+	pinIndexPublic.Attrs &= ^tpm2.AttrNVReadLocked
+	pinIndexName, err = pinIndexPublic.Name()
+	if err != nil {
+		return xerrors.Errorf("cannot compute name of PIN NV index without read locked attribute: %w", err)
+	}
 
 	authKeyName, err := d.StaticPolicyData.AuthorizeKeyPublic.Name()
 	if err != nil {
@@ -236,7 +241,7 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 		return keyFileError{xerrors.Errorf("cannot determine if static authorization policy matches sealed key object: %w", err)}
 	}
 	trial.PolicyAuthorize(nil, authKeyName)
-	trial.PolicySecret(pinIndex.Name(), nil)
+	trial.PolicySecret(pinIndexName, nil)
 
 	if !bytes.Equal(trial.GetDigest(), d.KeyPublic.AuthPolicy) {
 		return keyFileError{errors.New("static authorization policy data doesn't match sealed key object")}

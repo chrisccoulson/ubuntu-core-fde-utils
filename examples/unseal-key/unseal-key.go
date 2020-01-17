@@ -80,7 +80,7 @@ func run() int {
 	}
 	defer tpm.Close()
 
-	key, err := fdeutil.UnsealKeyFromTPM(tpm, in, pin)
+	key, err := fdeutil.UnsealKeyFromTPM(tpm, in, pin, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot unseal key: %v\n", err)
 		return 1
