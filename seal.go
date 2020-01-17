@@ -20,7 +20,8 @@
 package fdeutil
 
 import (
-	"bytes"
+	"crypto"
+	_ "crypto/sha256"
 	"crypto/x509"
 	"fmt"
 	"io/ioutil"
@@ -132,24 +133,13 @@ type PolicyParams struct {
 }
 
 func computeKeyDynamicAuthPolicy(tpm *tpm2.TPMContext, privateData *privateKeyData, params *PolicyParams, session *tpm2.Session) (*dynamicPolicyData, func(*tpm2.Session) error, error) {
-	// Obtain a ResourceContext for the dynamic policy revocation NV index
-	policyRevokeIndex, err := tpm.WrapHandle(privateData.PolicyRevokeIndexHandle)
-	if err != nil {
-		if _, unavail := err.(tpm2.ResourceUnavailableError); unavail {
-			return nil, nil, InvalidKeyFileError{fmt.Sprintf("no policy revocation NV counter at handle 0x%08x",
-				privateData.PolicyRevokeIndexHandle)}
-		}
-		return nil, nil, xerrors.Errorf("cannot obtain context for policy revocation NV counter: %w", err)
-	}
-	if !bytes.Equal(privateData.PolicyRevokeIndexName, policyRevokeIndex.Name()) {
-		return nil, nil, InvalidKeyFileError{"the NV index used for policy revocation on the TPM doesn't match the original key data file"}
-	}
+	// Obtain a ResourceContext for the dynamic policy revocation NV index. Expect the
+	// caller to have already done this, so it can't fail
+	policyRevokeIndex, _ := tpm.WrapHandle(privateData.Data.PolicyRevokeIndexHandle)
 
-	// Parse the key for signing the dynamic authorization policy
-	authKey, err := x509.ParsePKCS1PrivateKey(privateData.AuthorizeKeyPrivate)
-	if err != nil {
-		return nil, nil, InvalidKeyFileError{fmt.Sprintf("cannot parse dynamic policy authorization key: %v", err)}
-	}
+	// Parse the key for signing the dynamic authorization policy. Expect the caller
+	// to have already made sure this parses correctly, so it can't fail
+	authKey, _ := x509.ParsePKCS1PrivateKey(privateData.Data.AuthorizeKeyPrivate)
 
 	// Obtain the revoke count for the new dynamic authorization policy
 	var nextPolicyRevokeCount uint64
@@ -158,6 +148,8 @@ func computeKeyDynamicAuthPolicy(tpm *tpm2.TPMContext, privateData *privateKeyDa
 	} else {
 		nextPolicyRevokeCount = c + 1
 	}
+
+	var err error
 
 	// Compute PCR digests
 	var secureBootDigests tpm2.DigestList
@@ -342,18 +334,28 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 			Data: &tpm2.KeyedHashParams{Scheme: tpm2.KeyedHashScheme{Scheme: tpm2.KeyedHashSchemeNull}}}}
 	sensitive := tpm2.SensitiveCreate{Data: key}
 
+	// Have the digest of the private data recorded in the creation data for the sealed data object.
+	var privateData privateKeyData
+	privateData.Data.AuthorizeKeyPrivate = x509.MarshalPKCS1PrivateKey(authKey)
+	privateData.Data.PolicyRevokeIndexHandle = policyRevokeIndex.Handle()
+	privateData.Data.PolicyRevokeIndexName = policyRevokeIndex.Name()
+
+	h := crypto.SHA256.New()
+	if err := tpm2.MarshalToWriter(h, &privateData.Data); err != nil {
+		panic(fmt.Sprintf("cannot marshal private data: %v", err))
+	}
+
 	// Now create the sealed key object. The command is integrity protected so if the object at the handle we expect the SRK to reside
 	// at has a different name (ie, if we're connected via a resource manager and somebody swapped the object with another one), this
 	// command will fail. We take advantage of parameter encryption here too.
-	priv, pub, _, _, _, err := tpm.Create(srkContext, &sensitive, &template, nil, nil, nil, session.AddAttrs(tpm2.AttrCommandEncrypt))
+	priv, pub, creationData, _, creationTicket, err :=
+		tpm.Create(srkContext, &sensitive, &template, h.Sum(nil), nil, nil, session.AddAttrs(tpm2.AttrCommandEncrypt))
 	if err != nil {
 		return xerrors.Errorf("cannot create sealed data object for key: %w", err)
 	}
 
-	privateData := privateKeyData{
-		AuthorizeKeyPrivate:     x509.MarshalPKCS1PrivateKey(authKey),
-		PolicyRevokeIndexHandle: policyRevokeIndex.Handle(),
-		PolicyRevokeIndexName:   policyRevokeIndex.Name()}
+	privateData.CreationData = creationData
+	privateData.CreationTicket = creationTicket
 
 	// Create a dynamic authorization policy
 	dynamicPolicyData, revoke, err := computeKeyDynamicAuthPolicy(tpm.TPMContext, &privateData, policy, session)
@@ -421,6 +423,14 @@ func UpdateKeyAuthPolicy(tpm *TPMConnection, keyPath, privatePath string, params
 	privateData, err := readPrivateData(f2)
 	if err != nil {
 		return InvalidKeyFileError{err.Error()}
+	}
+
+	if err := data.validate(tpm.TPMContext, privateData, session); err != nil {
+		switch e := err.(type) {
+		case keyFileError:
+			return InvalidKeyFileError{"integrity check failed: " + e.err.Error()}
+		}
+		return xerrors.Errorf("cannot integrity check key data file: %w", err)
 	}
 
 	// Compute a new dynamic authorization policy

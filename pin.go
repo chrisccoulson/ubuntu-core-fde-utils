@@ -181,16 +181,10 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 	return context, nil
 }
 
-func performPINChange(tpm *TPMConnection, handle tpm2.Handle, oldAuth, newAuth string) error {
+func performPINChange(tpm *TPMConnection, index tpm2.ResourceContext, oldAuth, newAuth string) error {
 	hmacSession := tpm.HmacSession()
 
-	pinIndexContext, err := tpm.WrapHandle(handle)
-	if err != nil {
-		return fmt.Errorf("cannot create context for PIN NV index: %v", err)
-	}
-
-	initAuthPolicy, err := tpm.NVRead(pinIndexContext, pinIndexContext, uint16(pinNvIndexNameAlgorithm.Size()), 0,
-		hmacSession.WithAuthValue([]byte(oldAuth)))
+	initAuthPolicy, err := tpm.NVRead(index, index, uint16(pinNvIndexNameAlgorithm.Size()), 0, hmacSession.WithAuthValue([]byte(oldAuth)))
 	if err != nil {
 		return xerrors.Errorf("cannot read PIN NV index contents: %w", err)
 	}
@@ -199,43 +193,53 @@ func performPINChange(tpm *TPMConnection, handle tpm2.Handle, oldAuth, newAuth s
 
 	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, pinNvIndexNameAlgorithm, nil)
 	if err != nil {
-		return fmt.Errorf("cannot start policy session: %v", err)
+		return xerrors.Errorf("cannot start policy session: %w", err)
 	}
 	defer tpm.FlushContext(sessionContext)
 
 	if err := tpm.PolicyCommandCode(sessionContext, tpm2.CommandNVChangeAuth); err != nil {
-		return fmt.Errorf("cannot execute PolicyCommandCode assertion: %v", err)
+		return xerrors.Errorf("cannot execute PolicyCommandCode assertion: %w", err)
 	}
 	if err := tpm.PolicyAuthValue(sessionContext); err != nil {
-		return fmt.Errorf("cannot execute PolicyAuthValue assertion: %v", err)
+		return xerrors.Errorf("cannot execute PolicyAuthValue assertion: %w", err)
 	}
 	if err := tpm.PolicyOR(sessionContext, policies); err != nil {
-		return fmt.Errorf("cannot execute PolicyOR assertion: %v", err)
+		return xerrors.Errorf("cannot execute PolicyOR assertion: %w", err)
 	}
 
 	session := tpm2.Session{
 		Context:   sessionContext,
 		AuthValue: []byte(oldAuth)}
-	if err := tpm.NVChangeAuth(pinIndexContext, tpm2.Auth(newAuth), &session, hmacSession.AddAttrs(tpm2.AttrCommandEncrypt)); err != nil {
-		return fmt.Errorf("cannot change authorization value for NV index: %v", err)
+	if err := tpm.NVChangeAuth(index, tpm2.Auth(newAuth), &session, hmacSession.AddAttrs(tpm2.AttrCommandEncrypt)); err != nil {
+		return xerrors.Errorf("cannot change authorization value for NV index: %w", err)
 	}
 
 	return nil
 }
 
 func ChangePIN(tpm *TPMConnection, path string, oldAuth, newAuth string) error {
+	// Open the key data file
 	f, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("cannot open key data file: %v", err)
+		return InvalidKeyFileError{fmt.Sprintf("cannot open key data file: %v", err)}
 	}
 	defer f.Close()
 
 	data, err := readKeyData(f)
 	if err != nil {
-		return fmt.Errorf("cannot load key data file: %v", err)
+		return InvalidKeyFileError{err.Error()}
 	}
 
-	if err := performPINChange(tpm, data.StaticPolicyData.PinIndexHandle, oldAuth, newAuth); err != nil {
+	if err := data.validate(tpm.TPMContext, nil, tpm.HmacSession()); err != nil {
+		switch e := err.(type) {
+		case keyFileError:
+			return InvalidKeyFileError{"integrity check failed: " + e.err.Error()}
+		}
+		return xerrors.Errorf("cannot integrity check key data file: %w", err)
+	}
+
+	pinIndex, _ := tpm.WrapHandle(data.StaticPolicyData.PinIndexHandle)
+	if err := performPINChange(tpm, pinIndex, oldAuth, newAuth); err != nil {
 		return err
 	}
 
