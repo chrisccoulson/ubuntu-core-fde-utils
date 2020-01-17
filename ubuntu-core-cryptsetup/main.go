@@ -34,11 +34,8 @@ import (
 
 	"github.com/chrisccoulson/ubuntu-core-fde-utils"
 
+	"golang.org/x/sys/unix"
 	"golang.org/x/xerrors"
-)
-
-const (
-	recoveryReasonFilePathTemplate = "/run/ucc-recovery-reason."
 )
 
 type recoveryReason uint8
@@ -190,19 +187,13 @@ Retry:
 			}
 			return err
 		}
+		if _, err := unix.AddKey("user", fmt.Sprintf("ubuntu-core-cryptsetup-recovery:%s:reason=%d", volume, reason), key.Bytes(), -4); err != nil {
+			fmt.Fprintf(os.Stderr, "Cannot add recovery key to user keyring: %v\n", err)
+		}
 		break
 	}
 
-	if lastErr != nil {
-		return lastErr
-	}
-
-	f, err := os.OpenFile(recoveryReasonFilePathTemplate+volume, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	if err == nil {
-		defer f.Close()
-		f.Write([]byte{byte(reason)})
-	}
-	return nil
+	return lastErr
 }
 
 func getPIN(sourceDevice, pinFilePath string) (string, error) {
@@ -294,7 +285,6 @@ func activateWithTPM(volume, sourceDevice, keyFilePath, ekCertFilePath, pinFileP
 		return err
 	}
 
-	os.Remove(recoveryReasonFilePathTemplate + volume)
 	return nil
 }
 
