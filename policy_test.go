@@ -276,7 +276,7 @@ func TestLockAccess(t *testing.T) {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultHashAlgorithm, nil)
+	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultSessionHashAlgorithm, nil)
 	if err != nil {
 		t.Fatalf("StartAuthSession failed: %v", err)
 	}
@@ -422,7 +422,7 @@ func TestExecutePolicy(t *testing.T) {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultHashAlgorithm, nil)
+	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultSessionHashAlgorithm, nil)
 	if err != nil {
 		t.Fatalf("StartAuthSession failed: %v", err)
 	}
