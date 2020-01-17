@@ -283,7 +283,7 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 	}
 
 	// Create NV indices
-	pinIndex, err := createPinNvIndex(tpm.TPMContext, create.PinHandle, create.OwnerAuth, session)
+	pinIndex, pinIndexKeyName, err := createPinNvIndex(tpm.TPMContext, create.PinHandle, create.OwnerAuth, session)
 	if err != nil {
 		switch {
 		case isNVIndexDefinedError(err):
@@ -368,6 +368,7 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 		KeyPrivate:        priv,
 		KeyPublic:         pub,
 		AskForPinHint:     false,
+		PinIndexKeyName:   pinIndexKeyName,
 		StaticPolicyData:  staticPolicyData,
 		DynamicPolicyData: dynamicPolicyData}
 
