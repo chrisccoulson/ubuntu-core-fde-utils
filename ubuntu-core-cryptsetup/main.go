@@ -214,7 +214,7 @@ func getPIN(sourceDevice, pinFilePath string) (string, error) {
 	return strings.TrimRight(string(pin), "\n"), nil
 }
 
-func activateWithTPM(volume, sourceDevice, keyFilePath, ekCertFilePath, pinFilePath string, insecure bool, tries int, activateOptions []string) error {
+func activateWithTPM(volume, sourceDevice, keyFilePath, ekCertFilePath, pinFilePath string, lock, insecure bool, tries int, activateOptions []string) error {
 	keyDataObject, err := fdeutil.LoadSealedKeyObject(keyFilePath)
 	if err != nil {
 		return xerrors.Errorf("cannot load sealed key object file: %w", err)
@@ -251,7 +251,7 @@ func activateWithTPM(volume, sourceDevice, keyFilePath, ekCertFilePath, pinFileP
 		}
 
 	RetryUnseal:
-		key, err = keyDataObject.UnsealFromTPM(tpm, pin, false)
+		key, err = keyDataObject.UnsealFromTPM(tpm, pin, lock)
 		if err != nil {
 			switch err {
 			case fdeutil.ErrProvisioning:
@@ -318,6 +318,7 @@ func run() int {
 		authFilePath = args[4]
 	}
 
+	var lock bool
 	var insecure bool
 	var forceRecovery bool
 	pinTries := 1
@@ -328,6 +329,8 @@ func run() int {
 		opts := strings.Split(args[5], ",")
 		for _, opt := range opts {
 			switch {
+			case opt == "lock":
+				lock = true
 			case opt == "insecure-tpm-connection":
 				insecure = true
 			case opt == "force-recovery":
@@ -366,7 +369,7 @@ func run() int {
 		return 0
 	}
 
-	if err := activateWithTPM(volume, sourceDevice, keyFilePath, ekCertFilePath, authFilePath, insecure, pinTries, filteredOptions); err != nil {
+	if err := activateWithTPM(volume, sourceDevice, keyFilePath, ekCertFilePath, authFilePath, lock, insecure, pinTries, filteredOptions); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot activate device %s with TPM: %v\n", sourceDevice, err)
 
 		var ikfe fdeutil.InvalidKeyFileError
