@@ -228,11 +228,6 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 	if !bytes.Equal(pinIndexName, pinIndex.Name()) {
 		return errors.New("invalid context for PIN NV index")
 	}
-	pinIndexPublic.Attrs &= ^tpm2.AttrNVReadLocked
-	pinIndexName, err = pinIndexPublic.Name()
-	if err != nil {
-		return xerrors.Errorf("cannot compute name of PIN NV index without read locked attribute: %w", err)
-	}
 
 	authKeyName, err := d.StaticPolicyData.AuthorizeKeyPublic.Name()
 	if err != nil {
