@@ -572,7 +572,7 @@ func (g *secureBootPolicyGen) computeAndExtendVariableMeasurement(varName *tcglo
 		UnicodeName:  unicodeName,
 		VariableData: varData}
 	hash := g.alg.NewHash()
-	if err := data.Encode(hash); err != nil {
+	if err := data.EncodeMeasuredBytes(hash); err != nil {
 		return xerrors.Errorf("cannot encode EFI_VARIABLE_DATA: %w", err)
 	}
 	g.extendMeasurement(hash.Sum(nil))
@@ -765,7 +765,7 @@ Outer:
 		UnicodeName:  rootDb.unicodeName,
 		VariableData: varData.Bytes()}
 	hash := g.alg.NewHash()
-	if err := eventData.Encode(hash); err != nil {
+	if err := eventData.EncodeMeasuredBytes(hash); err != nil {
 		return false, xerrors.Errorf("cannot encode EFI_VARIABLE_DATA: %w", err)
 	}
 	digest := hash.Sum(nil)
@@ -1312,7 +1312,7 @@ func computeSecureBootPolicyDigests(tpm *tpm2.TPMContext, alg tpm2.HashAlgorithm
 		}
 
 		// Detect the problem fixed by https://github.com/rhboot/shim/pull/178 in shim
-		if event.event.MeasuredTrailingBytes > 0 {
+		if event.event.MeasuredTrailingBytesCount > 0 {
 			return nil, fmt.Errorf("digest for secure boot policy %s event at index %d contains trailing bytes", event.event.Event.EventType,
 				event.event.Event.Index)
 		}

@@ -59,3 +59,24 @@ func createPublicAreaForRSASigningKey(key *rsa.PublicKey) *tpm2.Public {
 				Exponent:  uint32(key.E)}},
 		Unique: tpm2.PublicIDU{Data: tpm2.PublicKeyRSA(key.N.Bytes())}}
 }
+
+type pcr struct {
+	alg   tpm2.HashAlgorithmId
+	value tpm2.Digest
+}
+
+func (p *pcr) extend(d tpm2.Digest) {
+	if len(p.value) != len(d) {
+		panic("invalid digest length")
+	}
+
+	h := p.alg.NewHash()
+	h.Write(p.value)
+	h.Write(d)
+
+	copy(p.value, h.Sum(nil))
+}
+
+func newSimulatedPCR(alg tpm2.HashAlgorithmId) *pcr {
+	return &pcr{alg: alg, value: make(tpm2.Digest, alg.Size())}
+}
