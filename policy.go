@@ -368,13 +368,9 @@ func executePolicySession(tpm *TPMConnection, sessionContext tpm2.ResourceContex
 	return nil
 }
 
-func lockAccessUntilTPMReset(tpm *tpm2.TPMContext, input *staticPolicyData) error {
-	pinIndexContext, err := tpm.WrapHandle(input.PinIndexHandle)
-	if err != nil {
-		return xerrors.Errorf("cannot obtain context for pin NV index: %w", err)
-	}
-	if err := tpm.NVReadLock(pinIndexContext, pinIndexContext, nil); err != nil {
-		return xerrors.Errorf("cannot readlock pin NV index: %w", err)
+func lockAccessUntilTPMReset(tpm *TPMConnection) error {
+	if _, err := tpm.PCREvent(ubuntuBootParamsPCR, []byte{0x00, 0x00, 0x00, 0x00}, tpm.HmacSession()); err != nil {
+		return err
 	}
 	return nil
 }

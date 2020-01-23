@@ -681,8 +681,10 @@ func TestLockAccessAfterUnseal(t *testing.T) {
 	if err == nil {
 		t.Fatalf("UnsealFromTPM should have failed")
 	}
-	if _, ok := err.(InvalidKeyFileError); !ok || err.Error() != "invalid key data file: the authorization policy check failed "+
-		"during unsealing" {
+	if _, ok := err.(InvalidKeyFileError); !ok || err.Error() != "invalid key data file: encountered an error whilst executing the "+
+		"authorization policy assertions: cannot execute PCR assertions: cannot execute PolicyOR assertion after PolicyPCR assertion "+
+		"against PCR12: TPM returned an error for parameter 1 whilst executing command TPM_CC_PolicyOR: TPM_RC_VALUE (value is out of "+
+		"range or is not correct for the context)" {
 		t.Errorf("Unexpected error: %v", err)
 	}
 

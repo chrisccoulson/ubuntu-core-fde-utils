@@ -87,7 +87,7 @@ func (k *SealedKeyObject) UnsealFromTPM(tpm *TPMConnection, pin string, lock boo
 	}
 
 	if lock {
-		if err := lockAccessUntilTPMReset(tpm.TPMContext, k.data.StaticPolicyData); err != nil {
+		if err := lockAccessUntilTPMReset(tpm); err != nil {
 			return nil, fmt.Errorf("cannot lock sealed key object from further access: %v", err)
 		}
 	}
