@@ -42,7 +42,7 @@ func TestCreateAndUnseal(t *testing.T) {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestCreateAndUnseal_")
@@ -81,7 +81,7 @@ func TestCreateDoesntReplace(t *testing.T) {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestCreateDoesntReplace_")
@@ -153,7 +153,7 @@ func TestUpdateAndUnseal(t *testing.T) {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestUpdateAndUnseal_")
@@ -217,7 +217,7 @@ func TestUnsealWithPin(t *testing.T) {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestUnsealWithPin_")
@@ -262,7 +262,7 @@ func TestUnsealRevoked(t *testing.T) {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestUnsealRevoked_")
@@ -325,7 +325,7 @@ func TestUnsealWithWrongPin(t *testing.T) {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestUnsealWithWrongPin_")
@@ -369,7 +369,7 @@ func TestUnsealPolicyFail(t *testing.T) {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestUnsealPolicyFail_")
@@ -415,7 +415,7 @@ func TestUnsealLockout(t *testing.T) {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestUnsealLockout_")
@@ -459,7 +459,10 @@ func TestUnsealLockout(t *testing.T) {
 }
 
 func TestSealWithProvisioningError(t *testing.T) {
-	key := make([]byte, 64)
+	tpm := openTPMForTesting(t)
+	defer closeTPM(t, tpm)
+
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestSealWithProvisioningError_")
@@ -546,7 +549,7 @@ func TestUnsealProvisioningError(t *testing.T) {
 	}
 	prepare(t)
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestUnsealProvisioningError_")
@@ -655,7 +658,7 @@ func TestLockAccessAfterUnseal(t *testing.T) {
 	efivarsPathForTesting = "testdata/efivars1"
 	replayLogToTPM(t, tpm, tcti, eventLog)
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestLockAccessAfterUnseal_")
@@ -949,7 +952,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 			eventLogPathForTesting = data.creationLogPath
 			efivarsPathForTesting = data.efivars
 
-			key := make([]byte, 64)
+			key := make([]byte, 32)
 			rand.Read(key)
 
 			tmpDir, err := ioutil.TempDir("", "_TestCreateAndUnsealWithParams_"+data.desc+"_")

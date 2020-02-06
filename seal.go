@@ -228,8 +228,8 @@ type CreationParams struct {
 // ProvisionTPM, the owner authorization is empty and the nil value can be passed here.
 func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *CreationParams, policy *PolicyParams, key []byte) error {
 	// Check that the key is the correct length
-	if len(key) != 64 {
-		return fmt.Errorf("expected a key length of 512 bits (got %d)", len(key)*8)
+	if len(key) != 32 {
+		return fmt.Errorf("expected a key length of 256 bits (got %d)", len(key)*8)
 	}
 
 	// Use the HMAC session created when the connection was opened rather than creating a new one.
