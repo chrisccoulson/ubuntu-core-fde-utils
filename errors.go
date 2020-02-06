@@ -27,10 +27,12 @@ import (
 )
 
 var (
-	ErrClearRequiresPPI    = errors.New("clearing requires the use of the Physical Presence Interface")
-	ErrRequiresLockoutAuth = errors.New("the TPM indicates the lockout hierarchy has an authorization value, but one hasn't " +
-		"been provided")
+	// ErrClearRequiresPPI is returned from ProvisionTPM and indicates that clearing the TPM must be performed via
+	// the Physical Presence Interface.
+	ErrClearRequiresPPI = errors.New("clearing requires the use of the Physical Presence Interface")
 
+	// ErrProvisioning indicates that the TPM is not provisioned correctly for the requested operation. Please note
+	// that other errors may also indicate an issue with incomplete provisioning.
 	ErrProvisioning = errors.New("the TPM is not correctly provisioned")
 
 	// ErrLockout is returned from any function when the TPM is in dictionary-attack lockout mode. Until
@@ -42,6 +44,8 @@ var (
 	ErrPinFail = errors.New("the provided PIN is incorrect")
 )
 
+// TPMResourceExistsError is returned from any function that creates a persistent TPM resource if a resource already exists
+// at the specified handle.
 type TPMResourceExistsError struct {
 	Handle tpm2.Handle
 }
@@ -50,6 +54,9 @@ func (e TPMResourceExistsError) Error() string {
 	return fmt.Sprintf("a resource already exists on the TPM at handle 0x%08x", e.Handle)
 }
 
+// InvalidKeyFileError indicates that the provided key data file is invalid. This error may also be returned in some
+// scenarious where the TPM is incorrectly provisioned, but it isn't possible to determine whether the error is with
+// the provisioning status or because the key data file is invalid.
 type InvalidKeyFileError struct {
 	msg string
 }
@@ -58,7 +65,12 @@ func (e InvalidKeyFileError) Error() string {
 	return fmt.Sprintf("invalid key data file: %s", e.msg)
 }
 
-// AuthFailError is returned when an authorization fails.
+// AuthFailError is returned when an authorization check fails. The provided handle indicates the resource for which authorization
+// failed. Whilst the error normally indicates that the provided authorization value is incorrect, it may also be returned
+// for other reasons that would cause a HMAC check failure, such as a communication failure between the host CPU and the TPM
+// or the name of a resource on the TPM not matching the name of the ResourceContext passed to the function that failed - this
+// latter issue can occur when using a resource manager if another process accesses the TPM and makes changes to persistent
+// resources.
 type AuthFailError struct {
 	Handle tpm2.Handle
 }

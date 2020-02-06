@@ -155,7 +155,8 @@ func run() int {
 			return 1
 		}
 
-		createParams := fdeutil.CreationParams{PolicyRevocationHandle: policyRevokeHandle, PinHandle: pinHandle, OwnerAuth: []byte(ownerAuth)}
+		createParams := fdeutil.CreationParams{PolicyRevocationHandle: policyRevokeHandle, PinHandle: pinHandle}
+		tpm.OwnerHandleContext().SetAuthValue([]byte(ownerAuth))
 
 		if err := fdeutil.SealKeyToTPM(tpm, keyFile, privFile, &createParams, policyParams, key); err != nil {
 			fmt.Fprintf(os.Stderr, "Cannot seal key to TPM: %v\n", err)
