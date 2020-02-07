@@ -46,6 +46,11 @@ func isLockoutError(err error) bool {
 	return xerrors.As(err, &warning) && warning.Code == tpm2.WarningLockout
 }
 
+func isNVIndexDefinedError(err error) bool {
+	var tpmErr *tpm2.TPMError
+	return xerrors.As(err, &tpmErr) && tpmErr.Code == tpm2.ErrorNVDefined
+}
+
 func createPublicAreaForRSASigningKey(key *rsa.PublicKey) *tpm2.Public {
 	return &tpm2.Public{
 		Type:    tpm2.ObjectTypeRSA,

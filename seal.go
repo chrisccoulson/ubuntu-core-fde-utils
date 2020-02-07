@@ -37,20 +37,6 @@ const (
 	pcrAlgorithm tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
 )
 
-func isNVIndexDefinedError(err error) bool {
-	var tpmError *tpm2.TPMError
-	if !xerrors.As(err, &tpmError) {
-		return false
-	}
-	if tpmError.Code != tpm2.ErrorNVDefined {
-		return false
-	}
-	if tpmError.Command != tpm2.CommandNVDefineSpace {
-		return false
-	}
-	return true
-}
-
 type OSComponentImage interface {
 	fmt.Stringer
 	ReadAll() ([]byte, error)

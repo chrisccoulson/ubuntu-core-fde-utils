@@ -43,14 +43,13 @@ func pinNvIndexAuthPolicies(alg tpm2.HashAlgorithmId, keyName tpm2.Name) tpm2.Di
 }
 
 func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, hmacSession tpm2.SessionContext) (*tpm2.NVPublic, tpm2.Name, error) {
-	// To prevent someone with knowledge of the owner authorization (which is empty unless someone has taken
-	// ownership of the TPM) from resetting the PIN by just undefining and redifining a new NV index with the
-	// same properties, require the NV index to be written to and only allow writes with a signed
-	// authorization policy. This works because the name of the signing key is included in the authorization
-	// policy digest for the NV index, and the authorization policy digest and written attribute is included
-	// in the name of the NV index. The name of the NV index is included in the authorization policy for the
-	// sealed key object. Without the private part of the signing key, it is impossible to create a new NV
-	// index with the same name.
+	// To prevent someone with knowledge of the owner authorization (which is empty unless someone has taken ownership of the TPM) from
+	// resetting the PIN by just undefining and redifining a new NV index with the same properties, we need a way to prevent someone
+	// from being able to create an index with the same name. To do this, we require the NV index to be written to and only allow writes
+	// with a signed authorization policy. This works because the name of the signing key is included in the authorization policy digest
+	// for the NV index, and the authorization policy digest and written attribute is included in the name of the NV index. Without the
+	// private part of the signing key, it is impossible to create a new NV index with the same name, and so, if this NV index is
+	// undefined then it becomes impossible to satisfy the authorization policy for the sealed key object.
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

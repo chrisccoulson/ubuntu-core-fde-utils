@@ -69,6 +69,8 @@ const (
 	// doesn't necessarily mean that the authorization value is the same one that was originally provided
 	// to TPM - it could have been changed outside of our control.
 	AttrLockoutAuthSet
+
+	AttrLockNVIndex
 )
 
 const (
@@ -239,6 +241,14 @@ func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte)
 	}
 	tpm.provisionedSrkContext = srkContext
 
+	// Provision a lock NV index
+	if err := createLockNVIndex(tpm.TPMContext, session); err != nil {
+		if isNVIndexDefinedError(err) {
+			return TPMResourceExistsError{lockHandle}
+		}
+		return xerrors.Errorf("cannot create lock NV index: %w", err)
+	}
+
 	if mode == ProvisionModeWithoutLockout {
 		return nil
 	}
@@ -390,6 +400,16 @@ func ProvisionStatus(tpm *TPMConnection) (ProvisionStatusAttributes, error) {
 	}
 	if tpm2.PermanentAttributes(props[0].Value)&tpm2.AttrLockoutAuthSet > 0 {
 		out |= AttrLockoutAuthSet
+	}
+
+	if lockIndex, err := tpm.CreateResourceContextFromTPM(lockHandle, session); err != nil {
+		if _, unavail := err.(tpm2.ResourceUnavailableError); !unavail {
+			return 0, err
+		}
+	} else if ok, err := isSafeLockNVIndex(tpm.TPMContext, lockIndex, session); err != nil {
+		return 0, xerrors.Errorf("cannot determine if NV index is global lock index: %w", err)
+	} else if ok {
+		out |= AttrLockNVIndex
 	}
 
 	return out, nil
