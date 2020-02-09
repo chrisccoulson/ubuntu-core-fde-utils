@@ -459,9 +459,6 @@ func TestUnsealLockout(t *testing.T) {
 }
 
 func TestSealWithProvisioningError(t *testing.T) {
-	tpm := openTPMForTesting(t)
-	defer closeTPM(t, tpm)
-
 	key := make([]byte, 32)
 	rand.Read(key)
 
@@ -705,8 +702,9 @@ func TestLockAccessAfterUnseal(t *testing.T) {
 	if err == nil {
 		t.Fatalf("UnsealFromTPM should have failed")
 	}
-	if _, ok := err.(InvalidKeyFileError); !ok || err.Error() != "invalid key data file: the authorization policy check failed "+
-		"during unsealing" {
+	if _, ok := err.(InvalidKeyFileError); !ok || err.Error() != "invalid key data file: encountered an error whilst executing the " +
+		"authorization policy assertions: policy lock check failed: TPM returned an error whilst executing command TPM_CC_PolicyNV: " +
+		"TPM_RC_NV_LOCKED (NV access locked)" {
 		t.Errorf("Unexpected error: %v", err)
 	}
 

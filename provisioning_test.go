@@ -536,7 +536,10 @@ func TestProvisionWithInvalidEkCert(t *testing.T) {
 
 func TestProvisionStatus(t *testing.T) {
 	tpm, _ := openTPMSimulatorForTesting(t)
-	defer closeTPM(t, tpm)
+	defer func () {
+		clearTPMWithPlatformAuth(t, tpm)
+		closeTPM(t, tpm)
+	}()
 
 	clearTPMWithPlatformAuth(t, tpm)
 
@@ -558,7 +561,24 @@ func TestProvisionStatus(t *testing.T) {
 	if err != nil {
 		t.Errorf("ProvisionStatus failed: %v", err)
 	}
-	expected := AttrValidEK | AttrValidSRK | AttrDAParamsOK | AttrOwnerClearDisabled | AttrLockoutAuthSet
+	expected := AttrValidEK | AttrValidSRK | AttrDAParamsOK | AttrOwnerClearDisabled | AttrLockoutAuthSet | AttrLockNVIndex
+	if status != expected {
+		t.Errorf("Unexpected status %d", status)
+	}
+
+	lockIndex, err := tpm.CreateResourceContextFromTPM(lockNVHandle)
+	if err != nil {
+		t.Fatalf("CreateResourceContextFromTPM failed: %v", err)
+	}
+	if err := tpm.NVUndefineSpace(tpm.OwnerHandleContext(), lockIndex, nil); err != nil {
+		t.Errorf("NVUndefineSpace failed: %v", err)
+	}
+
+	status, err = ProvisionStatus(tpm)
+	if err != nil {
+		t.Errorf("ProvisionStatus failed: %v", err)
+	}
+	expected = AttrValidEK | AttrValidSRK | AttrDAParamsOK | AttrOwnerClearDisabled | AttrLockoutAuthSet
 	if status != expected {
 		t.Errorf("Unexpected status %d", status)
 	}

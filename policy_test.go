@@ -55,6 +55,14 @@ func TestComputeStaticPolicy(t *testing.T) {
 		Size:       0}
 	pinName, _ := pinIndexPub.Name()
 
+	lockIndexPub := tpm2.NVPublic{
+		Index:      lockNVHandle,
+		NameAlg:    tpm2.HashAlgorithmSHA256,
+		Attrs:      tpm2.MakeNVAttributes(tpm2.AttrNVPolicyWrite|tpm2.AttrNVAuthRead|tpm2.AttrNVNoDA|tpm2.AttrNVReadStClear|tpm2.AttrNVWritten, tpm2.NVTypeOrdinary),
+		AuthPolicy: make(tpm2.Digest, tpm2.HashAlgorithmSHA256.Size()),
+		Size:       0}
+	lockName, _ := lockIndexPub.Name()
+
 	for _, data := range []struct {
 		desc string
 		alg  tpm2.HashAlgorithmId
@@ -69,7 +77,7 @@ func TestComputeStaticPolicy(t *testing.T) {
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {
-			dataout, key, policy, err := computeStaticPolicy(data.alg, &staticPolicyComputeParams{pinIndexPub: pinIndexPub})
+			dataout, key, policy, err := computeStaticPolicy(data.alg, &staticPolicyComputeParams{pinIndexPub: pinIndexPub, lockIndexName: lockName})
 			if err != nil {
 				t.Fatalf("computeStaticPolicy failed: %v", err)
 			}
@@ -111,6 +119,7 @@ func TestComputeStaticPolicy(t *testing.T) {
 			trial, _ := tpm2.ComputeAuthPolicy(data.alg)
 			trial.PolicyAuthorize(nil, keyName)
 			trial.PolicySecret(pinName, nil)
+			trial.PolicyNV(lockName, nil, 0, tpm2.OpEq)
 
 			if !bytes.Equal(trial.GetDigest(), policy) {
 				t.Errorf("Unexpected policy digest")
@@ -281,6 +290,11 @@ func TestLockAccess(t *testing.T) {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
+	lockIndex, err := tpm.CreateResourceContextFromTPM(lockNVHandle)
+	if err != nil {
+		t.Fatalf("CreateResourceContextFromTPM failed: %v", err)
+	}
+
 	session, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultSessionHashAlgorithm)
 	if err != nil {
 		t.Fatalf("StartAuthSession failed: %v", err)
@@ -309,7 +323,7 @@ func TestLockAccess(t *testing.T) {
 	}()
 
 	staticPolicyData, key, policy, err :=
-		computeStaticPolicy(tpm2.HashAlgorithmSHA256, &staticPolicyComputeParams{pinIndexPub: pinIndexPub})
+		computeStaticPolicy(tpm2.HashAlgorithmSHA256, &staticPolicyComputeParams{pinIndexPub: pinIndexPub, lockIndexName: lockIndex.Name()})
 	if err != nil {
 		t.Fatalf("computeStaticPolicy failed: %v", err)
 	}
@@ -373,6 +387,13 @@ func TestLockAccess(t *testing.T) {
 				}
 			}
 
+			sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultSessionHashAlgorithm)
+			if err != nil {
+				t.Fatalf("StartAuthSession failed: %v", err)
+			}
+			sessionContext.SetAttrs(tpm2.AttrContinueSession)
+			defer flushContext(t, tpm, sessionContext)
+
 			policySessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, tpm2.HashAlgorithmSHA256)
 			if err != nil {
 				t.Fatalf("StartAuthSession failed: %v", err)
@@ -393,7 +414,7 @@ func TestLockAccess(t *testing.T) {
 				t.Errorf("Unexpected digests")
 			}
 
-			if err := lockAccessUntilTPMReset(tpm.TPMContext, staticPolicyData); err != nil {
+			if err := lockAccessToSealedKeysUntilTPMReset(tpm.TPMContext, sessionContext); err != nil {
 				t.Errorf("lockAccessUntilTPMReset failed: %v", err)
 			}
 
@@ -402,8 +423,11 @@ func TestLockAccess(t *testing.T) {
 			}
 
 			err = executePolicySession(tpm, policySessionContext, staticPolicyData, dynamicPolicyData, "")
-			if err != nil {
-				t.Errorf("executePolicySession failed: %v", err)
+			if err == nil {
+				t.Fatalf("executePolicySession should have failed")
+			}
+			if err.Error() != "policy lock check failed: TPM returned an error whilst executing command TPM_CC_PolicyNV: TPM_RC_NV_LOCKED (NV access locked)" {
+				t.Errorf("executePolicySession failed with an unexpected error: %v", err)
 			}
 
 			digest, err = tpm.PolicyGetDigest(policySessionContext)
@@ -763,7 +787,12 @@ func TestExecutePolicy(t *testing.T) {
 		t.Run(data.desc, func(t *testing.T) {
 			resetTPMSimulator(t, tpm, tcti)
 
-			staticPolicyData, key, policy, err := computeStaticPolicy(data.alg, &staticPolicyComputeParams{pinIndexPub: pinIndexPub})
+			lockIndex, err := tpm.CreateResourceContextFromTPM(lockNVHandle)
+			if err != nil {
+				t.Fatalf("CreateResourceContextFromTPM failed: %v", err)
+			}
+
+			staticPolicyData, key, policy, err := computeStaticPolicy(data.alg, &staticPolicyComputeParams{pinIndexPub: pinIndexPub, lockIndexName: lockIndex.Name()})
 			if err != nil {
 				t.Fatalf("computeStaticPolicy failed: %v", err)
 			}

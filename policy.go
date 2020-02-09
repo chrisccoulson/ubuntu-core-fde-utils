@@ -33,11 +33,14 @@ import (
 )
 
 const (
+	lockNVDataHandle tpm2.Handle = 0x01801101
+
 	lockNVIndexVersion uint8 = 0
+	lockNVIndexGraceTime = 5000
 )
 
 var (
-	lockNVIndexAttrs = tpm2.MakeNVAttributes(tpm2.AttrNVPolicyWrite|tpm2.AttrNVAuthRead|tpm2.AttrNVReadStClear, tpm2.NVTypeOrdinary)
+	lockNVIndexAttrs = tpm2.MakeNVAttributes(tpm2.AttrNVPolicyWrite|tpm2.AttrNVAuthRead|tpm2.AttrNVNoDA|tpm2.AttrNVReadStClear, tpm2.NVTypeOrdinary)
 )
 
 type dynamicPolicyComputeParams struct {
@@ -64,6 +67,7 @@ type dynamicPolicyData struct {
 
 type staticPolicyComputeParams struct {
 	pinIndexPub *tpm2.NVPublic
+	lockIndexName tpm2.Name
 }
 
 type staticPolicyData struct {
@@ -178,36 +182,40 @@ func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, key
 	return public, nil
 }
 
-func createLockNVIndex(tpm *tpm2.TPMContext, session tpm2.SessionContext) error {
+func ensureLockNVIndex(tpm *tpm2.TPMContext, session tpm2.SessionContext) error {
 	// We use a globally defined NV index created at provisioning time for locking the authorization policy of any sealed key objects we
 	// create, which works by enabling the read lock bit. As this changes the name of the index until the next TPM reset or restart, it
 	// makes any authorization policy that depends on it un-satisfiable. We do this rather than extending an extra value to a PCR, as it
 	// decouples the PCR policy from the locking feature and allows for the option of having more flexible and owner-customizable PCR
 	// policies in the future.
 	//
-	// To prevent someone with knowledge of the owner authorization (which is empty unless someone as taken ownership of the TPM) from
-	// clearing the read lock bit by just undefining and redifining a new NV index with the same properties, we need a way to make it
-	// impossible to create the same index.
 	// To prevent someone with knowledge of the owner authorization (which is empty unless someone has taken ownership of the TPM) from
 	// clearing the read lock bit by just undefining and redifining a new NV index with the same properties, we need a way to prevent
 	// someone from being able to create an index with the same name. To do this, we require the NV index to be written to and only allow
-	// writes with a signed authorization policy. This works because the name of the signing key is included in the authorization policy
-	// digest for the NV index, and the authorization policy digest and written attribute is included in the name of the NV index. Without
-	// the private part of the signing key, it is impossible to create a new NV index with the same name, and so, if this NV index is
-	// undefined then it becomes impossible to satisfy the authorization policy for any sealed key objects we've created already.
+	// writes with a signed authorization policy. Once initialized, the signing key is discarded. This works because the name of the
+	// signing key is included in the authorization policy digest for the NV index, and the authorization policy digest and written
+	// attribute is included in the name of the NV index. Without the private part of the signing key, it is impossible to create a new
+	// NV index with the same name, and so, if this NV index is undefined then it becomes impossible to satisfy the authorization policy
+	// for any sealed key objects we've created already.
 	//
 	// The issue here though is that the globally defined NV index is created at provisioning time, and it may be possible to seal a new
-	// key to the TPM at any point in the future without provisioning a new global NV index here. In time time between provisioning and
+	// key to the TPM at any point in the future without provisioning a new global NV index here. In the time between provisioning and
 	// sealing a key to the TPM, a bad actor may have created a new NV index with a policy that only allows writes with a signed
-	// authorization, written to it, but then retained the private part of the key. This allows them to undefine and redefine a new NV
+	// authorization, initialized it, but then retained the private part of the key. This allows them to undefine and redefine a new NV
 	// index with the same name in the future in order to remove the read lock bit. To mitigate this, we include another assertion in
-	// the authorization policy that disallows writes once the TPM's clock has advanced past a certain point in the future. As the
-	// parameters of this assertion are included in the authorization policy digest, it becomes impossible even for someone with the
-	// private part of the key to create and initialize a NV index with the same name once the TPM's clock has advanced past that
-	// point, without performing a clear of the TPM.
+	// the authorization policy that only allows writes for a limited amount of time (sufficient to initialize the index after it is
+	// created), and disallows writes once the TPM's clock has advanced past that time. As the parameters of this assertion are included
+	// in the authorization policy digest, it becomes impossible even for someone with the private part of the key to create and
+	// initialize a NV index with the same name once the TPM's clock has advanced past that point, without performing a clear of the TPM.
 	//
-	// The time beyond which writes cannot be performed is recorded in the NV index, which makes it possible to verify at key sealing
-	// time that the NV index is not able to be recreated, even by somebody with the private part of the key.
+	// The signing key name and the time beyond which writes cannot be performed are recorded in another NV index so that it is possible
+	// to use those to determine whether the lock NV index has a valid authorization policy.
+
+	if existing, err := tpm.CreateResourceContextFromTPM(lockNVHandle); err == nil {
+		if pub, _ := getLockNVIndexPublic(tpm, existing, session); pub != nil {
+			return nil
+		}
+	}
 
 	// Create signing key.
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -226,8 +234,8 @@ func createLockNVIndex(tpm *tpm2.TPMContext, session tpm2.SessionContext) error 
 	if err != nil {
 		return xerrors.Errorf("cannot read current time: %w", err)
 	}
-	// Give us a window of 10 seconds, beyond which the index cannot be written to without a change in TPM owner.
-	time.ClockInfo.Clock += 10000
+	// Give us a small window in which to initialize the index, beyond which the index cannot be written to without a change in TPM owner.
+	time.ClockInfo.Clock += lockNVIndexGraceTime
 	clockBytes := make(tpm2.Operand, binary.Size(time.ClockInfo.Clock))
 	binary.BigEndian.PutUint64(clockBytes, time.ClockInfo.Clock)
 
@@ -239,20 +247,14 @@ func createLockNVIndex(tpm *tpm2.TPMContext, session tpm2.SessionContext) error 
 	trial.PolicyCounterTimer(clockBytes, 8, tpm2.OpUnsignedLT)
 	trial.PolicySigned(keyName, nil)
 
-	// Marshal key name and cut-off time for writing to the NV index so that they can be used for verification in the future.
-	contents, err := tpm2.MarshalToBytes(lockNVIndexVersion, keyName, clockBytes)
-	if err != nil {
-		panic(fmt.Sprintf("cannot marshal contents for NV index: %v", err))
-	}
-
 	// Create the index.
-	public := tpm2.NVPublic{
-		Index:      lockHandle,
+	public := &tpm2.NVPublic{
+		Index:      lockNVHandle,
 		NameAlg:    nameAlg,
 		Attrs:      lockNVIndexAttrs,
 		AuthPolicy: trial.GetDigest(),
-		Size:       uint16(len(contents))}
-	context, err := tpm.NVDefineSpace(tpm.OwnerHandleContext(), nil, &public, session)
+		Size:       0}
+	index, err := tpm.NVDefineSpace(tpm.OwnerHandleContext(), nil, public, session)
 	if err != nil {
 		return xerrors.Errorf("cannot create NV index: %w", err)
 	}
@@ -262,7 +264,7 @@ func createLockNVIndex(tpm *tpm2.TPMContext, session tpm2.SessionContext) error 
 		if succeeded {
 			return
 		}
-		tpm.NVUndefineSpace(tpm.OwnerHandleContext(), context, session)
+		tpm.NVUndefineSpace(tpm.OwnerHandleContext(), index, session)
 	}()
 
 	// Begin a session to initialize the index.
@@ -312,73 +314,115 @@ func createLockNVIndex(tpm *tpm2.TPMContext, session tpm2.SessionContext) error 
 	}
 
 	// Initialize the index
-	if err := tpm.NVWrite(context, context, contents, 0, policySession, session.IncludeAttrs(tpm2.AttrAudit)); err != nil {
+	if err := tpm.NVWrite(index, index, nil, 0, policySession, session.IncludeAttrs(tpm2.AttrAudit)); err != nil {
 		return xerrors.Errorf("cannot initialize NV index: %w", err)
+	}
+
+	// Marshal key name and cut-off time for writing to the NV index so that they can be used for verification in the future.
+	data, err := tpm2.MarshalToBytes(lockNVIndexVersion, keyName, clockBytes)
+	if err != nil {
+		panic(fmt.Sprintf("cannot marshal contents for data NV index: %v", err))
+	}
+
+	// Create the data index.
+	dataPublic := tpm2.NVPublic{
+		Index:      lockNVDataHandle,
+		NameAlg:    tpm2.HashAlgorithmSHA256,
+		Attrs:      tpm2.MakeNVAttributes(tpm2.AttrNVAuthWrite|tpm2.AttrNVWriteDefine|tpm2.AttrNVAuthRead|tpm2.AttrNVNoDA, tpm2.NVTypeOrdinary),
+		Size:       uint16(len(data))}
+	dataIndex, err := tpm.NVDefineSpace(tpm.OwnerHandleContext(), nil, &dataPublic, session)
+	if err != nil {
+		return xerrors.Errorf("cannot create data NV index: %w", err)
+	}
+
+	defer func() {
+		if succeeded {
+			return
+		}
+		tpm.NVUndefineSpace(tpm.OwnerHandleContext(), dataIndex, session)
+	}()
+
+	// Initialize the index
+	if err := tpm.NVWrite(dataIndex, dataIndex, data, 0, session); err != nil {
+		return xerrors.Errorf("cannot initialize data NV index: %w", err)
+	}
+	if err := tpm.NVWriteLock(dataIndex, dataIndex, session); err != nil {
+		return xerrors.Errorf("cannot write lock data NV index: %w", err)
 	}
 
 	succeeded = true
 	return nil
 }
 
-func isSafeLockNVIndex(tpm *tpm2.TPMContext, context tpm2.ResourceContext, session tpm2.SessionContext) (bool, error) {
-	// Read the public area of the index.
-	pub, _, err := tpm.NVReadPublic(context, session.IncludeAttrs(tpm2.AttrAudit))
+func getLockNVIndexPublic(tpm *tpm2.TPMContext, index tpm2.ResourceContext, session tpm2.SessionContext) (*tpm2.NVPublic, error) {
+	// Obtain the data recorded alongside the lock NV index for validating that the lock NV index has a valid
+	// authorization policy.
+	dataIndex, err := tpm.CreateResourceContextFromTPM(lockNVDataHandle)
 	if err != nil {
-		return false, xerrors.Errorf("cannot read public area of NV index: %w", err)
+		return nil, xerrors.Errorf("cannot obtain context for data NV index: %w", err)
+	}
+	dataPub, _, err := tpm.NVReadPublic(dataIndex)
+	if err != nil {
+		return nil, xerrors.Errorf("cannot read public area of data NV index: %w", err)
+	}
+	data, err := tpm.NVRead(dataIndex, dataIndex, dataPub.Size, 0, nil)
+	if err != nil {
+		return nil, xerrors.Errorf("cannot read data NV index contents: %w", err)
 	}
 
-	// Read the contents of the index.
-	contents, err := tpm.NVRead(context, context, pub.Size, 0, session)
-	if err != nil {
-		return false, xerrors.Errorf("cannot read NV index contents: %w", err)
-	}
-
-	// Unmarshal the contents
+	// Unmarshal the data
 	var version uint8
 	var keyName tpm2.Name
 	var clockBytes []byte
-	if _, err := tpm2.UnmarshalFromBytes(contents, &version, &keyName, &clockBytes); err != nil {
-		return false, xerrors.Errorf("cannot unmarshal NV index contents: %w", err)
+	if _, err := tpm2.UnmarshalFromBytes(data, &version, &keyName, &clockBytes); err != nil {
+		return nil, xerrors.Errorf("cannot unmarshal NV index contents: %w", err)
 	}
 
 	// Allow for future changes to the public attributes or auth policy configuration.
 	if version != lockNVIndexVersion {
-		return false, nil
+		return nil, nil
 	}
 
-	// Validate its attributes.
-	if pub.Attrs&^tpm2.AttrNVReadLocked != lockNVIndexAttrs|tpm2.AttrNVWritten {
-		return false, nil
+	// Read the current TPM clock.
+	time, err := tpm.ReadClock(session.IncludeAttrs(tpm2.AttrAudit))
+	if err != nil {
+		return nil, xerrors.Errorf("cannot read current time: %w", err)
 	}
 
-	// Compute the expected authorization policy from the contents of the index, and make sure this matches the public area.
+	// Make sure the window beyond which this index can be written has passed.
+	policyClock := binary.BigEndian.Uint64(clockBytes)
+	if time.ClockInfo.Clock + lockNVIndexGraceTime < policyClock {
+		return nil, nil
+	}
+
+	// Read the public area of the lock NV index.
+	pub, _, err := tpm.NVReadPublic(index, session.IncludeAttrs(tpm2.AttrAudit))
+	if err != nil {
+		return nil, xerrors.Errorf("cannot read public area of NV index: %w", err)
+	}
+
+	pub.Attrs &^=tpm2.AttrNVReadLocked
+	// Validate its attributes
+	if pub.Attrs != lockNVIndexAttrs|tpm2.AttrNVWritten {
+		return nil, nil
+	}
+
+	// Compute the expected authorization policy from the contents of the data index, and make sure this matches the public area.
+	// This verifies that the lock NV index has a valid authorization policy.
 	trial, err := tpm2.ComputeAuthPolicy(pub.NameAlg)
 	if err != nil {
-		return false, nil
+		return nil, nil
 	}
 	trial.PolicyCommandCode(tpm2.CommandNVWrite)
 	trial.PolicyCounterTimer(clockBytes, 8, tpm2.OpUnsignedLT)
 	trial.PolicySigned(keyName, nil)
 
 	if !bytes.Equal(trial.GetDigest(), pub.AuthPolicy) {
-		return false, nil
-	}
-
-	// Read the current TPM clock.
-	time, err := tpm.ReadClock(session.IncludeAttrs(tpm2.AttrAudit))
-	if err != nil {
-		return false, xerrors.Errorf("cannot read current time: %w", err)
-	}
-
-	// Make sure the window beyond which this index can be written has passed.
-	policyClock := binary.BigEndian.Uint64(clockBytes)
-	if time.ClockInfo.Clock < policyClock {
-		return false, nil
+		return nil, nil
 	}
 
 	// This is a valid global lock NV index that cannot be recreated!
-
-	return true, nil
+	return pub, nil
 }
 
 func ensureSufficientORDigests(digests tpm2.DigestList) tpm2.DigestList {
@@ -429,6 +473,7 @@ func computeStaticPolicy(alg tpm2.HashAlgorithmId, input *staticPolicyComputePar
 
 	trial.PolicyAuthorize(nil, keyName)
 	trial.PolicySecret(pinIndexName, nil)
+	trial.PolicyNV(input.lockIndexName, nil, 0, tpm2.OpEq)
 
 	return &staticPolicyData{
 		Algorithm:          alg,
@@ -540,7 +585,7 @@ func executePolicySession(tpm *TPMConnection, policySession tpm2.SessionContext,
 
 	operandB := make([]byte, 8)
 	binary.BigEndian.PutUint64(operandB, dynamicInput.PolicyRevokeCount)
-	if err := tpm.PolicyNV(policyRevokeContext, policyRevokeContext, policySession, operandB, 0, tpm2.OpUnsignedLE, nil); err != nil {
+	if err := tpm.PolicyNV(policyRevokeContext, policyRevokeContext, policySession, operandB, 0, tpm2.OpUnsignedLE, tpm.HmacSession()); err != nil {
 		return xerrors.Errorf("dynamic authorization policy revocation check failed: %w", err)
 	}
 
@@ -575,15 +620,37 @@ func executePolicySession(tpm *TPMConnection, policySession tpm2.SessionContext,
 		return xerrors.Errorf("cannot execute PolicySecret assertion: %w", err)
 	}
 
+	lockIndex, err := tpm.CreateResourceContextFromTPM(lockNVHandle)
+	if err != nil {
+		return xerrors.Errorf("cannot obtain context for lock NV index: %w", err)
+	}
+	if err := tpm.PolicyNV(lockIndex, lockIndex, policySession, nil, 0, tpm2.OpEq, tpm.HmacSession()); err != nil {
+		return xerrors.Errorf("policy lock check failed: %w", err)
+	}
+
 	return nil
 }
 
-func lockAccessUntilTPMReset(tpm *tpm2.TPMContext, input *staticPolicyData) error {
-	pinIndexContext, err := tpm.CreateResourceContextFromTPM(input.PinIndexHandle)
+func lockAccessToSealedKeysUntilTPMReset(tpm *tpm2.TPMContext, session tpm2.SessionContext) error {
+	handles, err := tpm.GetCapabilityHandles(lockNVHandle, 1, session.IncludeAttrs(tpm2.AttrAudit))
 	if err != nil {
-		return xerrors.Errorf("cannot obtain context for pin NV index: %w", err)
+		return xerrors.Errorf("cannot obtain handles from TPM: %w", err)
 	}
-	if err := tpm.NVReadLock(pinIndexContext, pinIndexContext, nil); err != nil {
+	if len(handles) == 0|| handles[0] != lockNVHandle {
+		// Not provisioned, so no keys to protect.
+		return nil
+	}
+	lock, err := tpm.CreateResourceContextFromTPM(lockNVHandle)
+	if err != nil {
+		return xerrors.Errorf("cannot obtain context for lock NV index: %w", err)
+	}
+	if err := tpm.NVReadLock(lock, lock, session); err != nil {
+		var hErr *tpm2.TPMHandleError
+		if xerrors.As(err, &hErr) && hErr.Index == 2 && hErr.Code() == tpm2.ErrorAttributes {
+			// Not provisioned with a valid lock NV index, so no keys created by this package can
+			// be unsealed on this TPM anyway.
+			return nil
+		}
 		return xerrors.Errorf("cannot readlock pin NV index: %w", err)
 	}
 	return nil

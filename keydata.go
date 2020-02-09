@@ -220,15 +220,6 @@ func (d *keyData) validate(tpm *TPMConnection, privateData *privateKeyData) erro
 		}
 		return xerrors.Errorf("cannot create context for PIN NV index: %w", err)
 	}
-	pinIndexPublic, _, err := tpm.NVReadPublic(pinIndex, session.IncludeAttrs(tpm2.AttrAudit))
-	if err != nil {
-		return xerrors.Errorf("cannot read public area for PIN NV index: %w", err)
-	}
-	pinIndexPublic.Attrs &= ^tpm2.AttrNVReadLocked
-	pinIndexName, err := pinIndexPublic.Name()
-	if err != nil {
-		return xerrors.Errorf("cannot compute name of PIN NV index without read locked attribute: %w", err)
-	}
 
 	authKeyName, err := d.StaticPolicyData.AuthorizeKeyPublic.Name()
 	if err != nil {
@@ -238,13 +229,30 @@ func (d *keyData) validate(tpm *TPMConnection, privateData *privateKeyData) erro
 		return keyFileError{errors.New("public area of dynamic authorization policy signing key has the wrong type")}
 	}
 
+	lockIndex, err := tpm.CreateResourceContextFromTPM(lockNVHandle)
+	if err != nil {
+		return xerrors.Errorf("cannot create context for lock NV index: %v", err)
+	}
+	lockIndexPub, err := getLockNVIndexPublic(tpm.TPMContext, lockIndex, session)
+	if err != nil {
+		return xerrors.Errorf("cannot determine if NV index at 0x%08x is global lock index: %w", lockNVHandle, err)
+	}
+	if lockIndexPub == nil {
+		return xerrors.Errorf("NV index at 0x%08x is not a valid global lock index", lockNVHandle)
+	}
+	lockIndexName, err := lockIndexPub.Name()
+	if err != nil {
+		return xerrors.Errorf("cannot compute name of lock NV index: %w", err)
+	}
+
 	// Make sure that the static authorization policy data is consistent with the sealed key object's policy.
 	trial, err := tpm2.ComputeAuthPolicy(d.KeyPublic.NameAlg)
 	if err != nil {
 		return keyFileError{xerrors.Errorf("cannot determine if static authorization policy matches sealed key object: %w", err)}
 	}
 	trial.PolicyAuthorize(nil, authKeyName)
-	trial.PolicySecret(pinIndexName, nil)
+	trial.PolicySecret(pinIndex.Name(), nil)
+	trial.PolicyNV(lockIndexName, nil, 0, tpm2.OpEq)
 
 	if !bytes.Equal(trial.GetDigest(), d.KeyPublic.AuthPolicy) {
 		return keyFileError{errors.New("static authorization policy data doesn't match sealed key object")}
@@ -252,6 +260,10 @@ func (d *keyData) validate(tpm *TPMConnection, privateData *privateKeyData) erro
 
 	// Make sure that the name of the key used to initialize the PIN NV index is consistent with the public area of the index.
 	// We've already verified that the NV index is correct in the previous step.
+	pinIndexPublic, _, err := tpm.NVReadPublic(pinIndex, session.IncludeAttrs(tpm2.AttrAudit))
+	if err != nil {
+		return xerrors.Errorf("cannot read public area for PIN NV index: %w", err)
+	}
 	if !pinIndexPublic.NameAlg.Supported() {
 		return keyFileError{errors.New("cannot determine if PIN NV index key name is consistent with public area: invalid algorithm")}
 	}
