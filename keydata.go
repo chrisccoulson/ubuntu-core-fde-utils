@@ -55,8 +55,7 @@ const (
 type privateKeyData struct {
 	Data struct {
 		AuthorizeKeyPrivate     []byte
-		PolicyRevokeIndexHandle tpm2.Handle
-		PolicyRevokeIndexName   tpm2.Name
+		PolicyRevokeIndexPublic *tpm2.NVPublic
 	}
 	CreationData   *tpm2.CreationData
 	CreationTicket *tpm2.TkCreation
@@ -131,13 +130,13 @@ func readKeyData(buf io.Reader) (*keyData, error) {
 	return &d, nil
 }
 
-func (d *keyData) load(tpm *tpm2.TPMContext, session *tpm2.Session) (tpm2.ResourceContext, error) {
-	srkContext, err := tpm.WrapHandle(srkHandle)
+func (d *keyData) load(tpm *TPMConnection) (tpm2.ResourceContext, error) {
+	srkContext, err := tpm.CreateResourceContextFromTPM(srkHandle)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot create context for SRK: %w", err)
 	}
 
-	keyContext, _, err := tpm.Load(srkContext, d.KeyPrivate, d.KeyPublic, nil, session.AddAttrs(tpm2.AttrAudit))
+	keyContext, err := tpm.Load(srkContext, d.KeyPrivate, d.KeyPublic, tpm.HmacSession())
 	if err != nil {
 		invalidObject := false
 		switch e := err.(type) {
@@ -180,14 +179,16 @@ func (d *keyData) writeToFileAtomic(dest string) error {
 	return nil
 }
 
-func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, session *tpm2.Session) error {
-	srkContext, err := tpm.WrapHandle(srkHandle)
+func (d *keyData) validate(tpm *TPMConnection, privateData *privateKeyData) error {
+	srkContext, err := tpm.CreateResourceContextFromTPM(srkHandle)
 	if err != nil {
 		return xerrors.Errorf("cannot create context for SRK: %w", err)
 	}
 
+	session := tpm.HmacSession()
+
 	// Load the sealed data object in to the TPM for integrity checking
-	keyContext, _, err := tpm.Load(srkContext, d.KeyPrivate, d.KeyPublic, nil, session.AddAttrs(tpm2.AttrAudit))
+	keyContext, err := tpm.Load(srkContext, d.KeyPrivate, d.KeyPublic, session)
 	if err != nil {
 		invalidObject := false
 		switch e := err.(type) {
@@ -207,29 +208,24 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 	// It's loaded ok, so we know that the private and public parts are consistent.
 	defer tpm.FlushContext(keyContext)
 
-	// Obtain a ResourceContext for the PIN NV index. Go-tpm2 uses TPM2_NV_ReadPublic without any integrity protection here to
-	// initialize the ResourceContext.
+	// Obtain a ResourceContext for the PIN NV index. Go-tpm2 calls TPM2_NV_ReadPublic twice here - the second time
+	// with a session so that we know that the returned ResourceContext corresponds to an actual entity on the TPM.
 	if d.StaticPolicyData.PinIndexHandle.Type() != tpm2.HandleTypeNVIndex {
 		return keyFileError{errors.New("PIN NV index handle is invalid")}
 	}
-	pinIndex, err := tpm.WrapHandle(d.StaticPolicyData.PinIndexHandle)
+	pinIndex, err := tpm.CreateResourceContextFromTPM(d.StaticPolicyData.PinIndexHandle, session.IncludeAttrs(tpm2.AttrAudit))
 	if err != nil {
 		if _, unavail := err.(tpm2.ResourceUnavailableError); unavail {
 			return keyFileError{errors.New("PIN NV index is unavailable")}
 		}
 		return xerrors.Errorf("cannot create context for PIN NV index: %w", err)
 	}
-	// Call TPM2_NV_ReadPublic with an audit session for integrity protection purposes and make sure that the returned name matches
-	// the name read back when initializing the ResourceContext.
-	pinIndexPublic, pinIndexName, err := tpm.NVReadPublic(pinIndex, session.AddAttrs(tpm2.AttrAudit))
+	pinIndexPublic, _, err := tpm.NVReadPublic(pinIndex, session.IncludeAttrs(tpm2.AttrAudit))
 	if err != nil {
 		return xerrors.Errorf("cannot read public area for PIN NV index: %w", err)
 	}
-	if !bytes.Equal(pinIndexName, pinIndex.Name()) {
-		return errors.New("invalid context for PIN NV index")
-	}
 	pinIndexPublic.Attrs &= ^tpm2.AttrNVReadLocked
-	pinIndexName, err = pinIndexPublic.Name()
+	pinIndexName, err := pinIndexPublic.Name()
 	if err != nil {
 		return xerrors.Errorf("cannot compute name of PIN NV index without read locked attribute: %w", err)
 	}
@@ -281,7 +277,7 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 	}
 
 	if _, _, err := tpm.CertifyCreation(nil, keyContext, nil, h.Sum(nil), nil, privateData.CreationTicket, nil,
-		session.AddAttrs(tpm2.AttrAudit)); err != nil {
+		session.IncludeAttrs(tpm2.AttrAudit)); err != nil {
 		switch e := err.(type) {
 		case *tpm2.TPMParameterError:
 			if e.Index == 4 {
@@ -305,28 +301,23 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, privateData *privateKeyData, se
 		return keyFileError{xerrors.Errorf("cannot parse dynamic policy authorization key: %w", err)}
 	}
 
-	if privateData.Data.PolicyRevokeIndexHandle.Type() != tpm2.HandleTypeNVIndex {
+	if privateData.Data.PolicyRevokeIndexPublic.Index.Type() != tpm2.HandleTypeNVIndex {
 		return keyFileError{errors.New("dynamic authorization policy revocation NV index handle is invalid")}
 	}
-	// Obtain a ResourceContext for the policy revocation NV index. Go-tpm2 uses TPM2_NV_ReadPublic without any integrity protection
-	// here to initialize the ResourceContext.
-	policyRevokeIndex, err := tpm.WrapHandle(privateData.Data.PolicyRevokeIndexHandle)
+	// Obtain a ResourceContext for the policy revocation NV index. Go-tpm2 calls TPM2_NV_ReadPublic twice here - the second time
+	// with a session so that we know that the returned ResourceContext corresponds to an actual entity on the TPM.
+	policyRevokeIndex, err := tpm.CreateResourceContextFromTPM(privateData.Data.PolicyRevokeIndexPublic.Index, session.IncludeAttrs(tpm2.AttrAudit))
 	if err != nil {
 		if _, unavail := err.(tpm2.ResourceUnavailableError); unavail {
 			return keyFileError{errors.New("dynamic authorization policy revocation NV index is unavailable")}
 		}
 		return xerrors.Errorf("cannot create context for dynamic authorization policy revocation NV index: %w", err)
 	}
-	// Call TPM2_NV_ReadPublic with an audit session for integrity protection purposes and make sure that the returned name matches
-	// the name read back when initializing the ResourceContext.
-	_, policyRevokeIndexName, err := tpm.NVReadPublic(policyRevokeIndex, session.AddAttrs(tpm2.AttrAudit))
+	policyRevokeIndexName, err := privateData.Data.PolicyRevokeIndexPublic.Name()
 	if err != nil {
-		return xerrors.Errorf("cannot read public area for dynamic authorization policy revocation NV index: %w", err)
+		return xerrors.Errorf("cannot compute expected name of dynamic authorization policy revocation NV index: %w", err)
 	}
 	if !bytes.Equal(policyRevokeIndexName, policyRevokeIndex.Name()) {
-		return errors.New("invalid context for dynamic authorization policy revocation NV index")
-	}
-	if !bytes.Equal(privateData.Data.PolicyRevokeIndexName, policyRevokeIndex.Name()) {
 		return keyFileError{errors.New("dynamic authorization policy revocation NV index has the wrong name")}
 	}
 

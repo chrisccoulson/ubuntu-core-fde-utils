@@ -47,10 +47,13 @@ func (c *mockResourceContext) Handle() tpm2.Handle {
 }
 
 func TestComputeStaticPolicy(t *testing.T) {
-	h := tpm2.HashAlgorithmSHA256.NewHash()
-	h.Write([]byte("PIN"))
-	pinName, _ := tpm2.MarshalToBytes(tpm2.HashAlgorithmSHA256, tpm2.RawBytes(h.Sum(nil)))
-	pinIndex := &mockResourceContext{pinName, testCreationParams.PinHandle}
+	pinIndexPub := &tpm2.NVPublic{
+		Index:      testCreationParams.PinHandle,
+		NameAlg:    tpm2.HashAlgorithmSHA256,
+		Attrs:      tpm2.MakeNVAttributes(tpm2.AttrNVPolicyWrite|tpm2.AttrNVAuthRead|tpm2.AttrNVReadStClear, tpm2.NVTypeOrdinary),
+		AuthPolicy: make(tpm2.Digest, tpm2.HashAlgorithmSHA256.Size()),
+		Size:       0}
+	pinName, _ := pinIndexPub.Name()
 
 	for _, data := range []struct {
 		desc string
@@ -66,7 +69,7 @@ func TestComputeStaticPolicy(t *testing.T) {
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {
-			dataout, key, policy, err := computeStaticPolicy(data.alg, &staticPolicyComputeParams{pinIndex: pinIndex})
+			dataout, key, policy, err := computeStaticPolicy(data.alg, &staticPolicyComputeParams{pinIndexPub: pinIndexPub})
 			if err != nil {
 				t.Fatalf("computeStaticPolicy failed: %v", err)
 			}
@@ -122,10 +125,12 @@ func TestComputeDynamicPolicy(t *testing.T) {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
-	h := tpm2.HashAlgorithmSHA256.NewHash()
-	h.Write([]byte("REVOKE"))
-	revokeIndexName, _ := tpm2.MarshalToBytes(tpm2.HashAlgorithmSHA256, tpm2.RawBytes(h.Sum(nil)))
-	revokeIndex := &mockResourceContext{revokeIndexName, testCreationParams.PolicyRevocationHandle}
+	revokeIndexPub := &tpm2.NVPublic{
+		Index:      testCreationParams.PolicyRevocationHandle,
+		NameAlg:    tpm2.HashAlgorithmSHA256,
+		Attrs:      tpm2.MakeNVAttributes(tpm2.AttrNVPolicyWrite|tpm2.AttrNVAuthRead, tpm2.NVTypeCounter),
+		AuthPolicy: make(tpm2.Digest, tpm2.HashAlgorithmSHA256.Size()),
+		Size:       8}
 
 	digestMatrix := make(map[tpm2.HashAlgorithmId]tpm2.DigestList)
 
@@ -153,11 +158,11 @@ func TestComputeDynamicPolicy(t *testing.T) {
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
 				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
-				policyRevokeIndex:          revokeIndex,
+				policyRevokeIndexPub:       revokeIndexPub,
 				policyRevokeCount:          10,
 			},
-			policy: tpm2.Digest{0xd0, 0xe4, 0xba, 0x2f, 0xbc, 0xc6, 0xf0, 0xd5, 0x84, 0xc2, 0xeb, 0xdf, 0xa6, 0x8d, 0x6b, 0xa3, 0x6a, 0x3b,
-				0xf4, 0xbf, 0x51, 0x4a, 0x16, 0x5a, 0xef, 0xfd, 0x62, 0x77, 0x7d, 0x53, 0xb3, 0xff},
+			policy: tpm2.Digest{0x89, 0x1e, 0x22, 0xa2, 0xab, 0x4c, 0x3e, 0x3d, 0x80, 0xfa, 0x5b, 0x16, 0x90, 0x2f, 0xb2, 0x19, 0xaf, 0xee,
+				0x81, 0xb5, 0x85, 0x67, 0xdd, 0x0b, 0x06, 0xf1, 0x20, 0x1d, 0xff, 0x1a, 0x8d, 0x8d},
 		},
 		{
 			desc: "SHA1Session",
@@ -169,11 +174,11 @@ func TestComputeDynamicPolicy(t *testing.T) {
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][3]},
 				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][2]},
-				policyRevokeIndex:          revokeIndex,
+				policyRevokeIndexPub:       revokeIndexPub,
 				policyRevokeCount:          4551,
 			},
-			policy: tpm2.Digest{0xd6, 0xe3, 0xfa, 0xd2, 0xc2, 0xfa, 0x72, 0x4f, 0x22, 0x67, 0xf6, 0x1d, 0x96, 0xea, 0x53, 0x6b, 0xf5, 0xe1,
-				0xc7, 0x50},
+			policy: tpm2.Digest{0xf1, 0xb6, 0x44, 0x98, 0xba, 0xb5, 0x47, 0x14, 0x1a, 0x8f, 0xd8, 0x29, 0x02, 0xbb, 0x72, 0xd1, 0x00, 0xc1,
+				0x20, 0xc6},
 		},
 		{
 			desc: "SHA256SessionWithSHA512PCRs",
@@ -185,11 +190,11 @@ func TestComputeDynamicPolicy(t *testing.T) {
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA512,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA512][0]},
 				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA512][1]},
-				policyRevokeIndex:          revokeIndex,
+				policyRevokeIndexPub:       revokeIndexPub,
 				policyRevokeCount:          403,
 			},
-			policy: tpm2.Digest{0x3e, 0x43, 0x91, 0x11, 0xfd, 0x5c, 0xb6, 0xbb, 0x00, 0x41, 0x93, 0xec, 0xd4, 0xc1, 0xc6, 0x5e, 0x5b, 0x09,
-				0x0b, 0x22, 0xeb, 0xe5, 0x71, 0x67, 0x86, 0x6d, 0xf5, 0xe5, 0x1f, 0x1c, 0x6d, 0x62},
+			policy: tpm2.Digest{0x45, 0x98, 0x03, 0xc0, 0x34, 0xdb, 0x89, 0x99, 0x7e, 0x72, 0xe7, 0xdb, 0xad, 0xc8, 0x89, 0xef, 0x55, 0xaf,
+				0x2b, 0x73, 0xa7, 0x3e, 0x72, 0x7e, 0x59, 0xc2, 0x17, 0x55, 0x0e, 0x1c, 0x39, 0xa7},
 		},
 		{
 			desc: "MultiplePCRValues",
@@ -205,11 +210,11 @@ func TestComputeDynamicPolicy(t *testing.T) {
 				ubuntuBootParamsPCRDigests: tpm2.DigestList{
 					digestMatrix[tpm2.HashAlgorithmSHA256][3],
 					digestMatrix[tpm2.HashAlgorithmSHA256][2]},
-				policyRevokeIndex: revokeIndex,
-				policyRevokeCount: 5,
+				policyRevokeIndexPub: revokeIndexPub,
+				policyRevokeCount:    5,
 			},
-			policy: tpm2.Digest{0xd3, 0x65, 0x88, 0x91, 0xd4, 0x93, 0x8a, 0x49, 0x3c, 0xbb, 0xe0, 0x7f, 0xc7, 0x5e, 0x94, 0x16, 0x65, 0x04,
-				0x74, 0xff, 0xd9, 0xfa, 0xab, 0xab, 0xa9, 0xcf, 0x5f, 0xcf, 0xa6, 0x45, 0x6e, 0xbb},
+			policy: tpm2.Digest{0xc3, 0xa9, 0x69, 0x64, 0xa2, 0x66, 0x3c, 0xd0, 0xa7, 0xa8, 0xc8, 0xad, 0xa7, 0xa8, 0x14, 0x24, 0x37, 0x29,
+				0x13, 0x08, 0xcc, 0xe2, 0x3f, 0x4f, 0x30, 0xa1, 0xe6, 0x9b, 0xfa, 0xbb, 0xa4, 0xe7},
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {
@@ -229,7 +234,7 @@ func TestComputeDynamicPolicy(t *testing.T) {
 			if len(dataout.UbuntuBootParamsORDigests) != len(data.input.ubuntuBootParamsPCRDigests) {
 				t.Errorf("Unexpected number of ubuntu boot params OR digests")
 			}
-			if dataout.PolicyRevokeIndexHandle != data.input.policyRevokeIndex.Handle() {
+			if dataout.PolicyRevokeIndexHandle != data.input.policyRevokeIndexPub.Index {
 				t.Errorf("Unexpected policy revocation NV index handle")
 			}
 			if dataout.PolicyRevokeCount != data.input.policyRevokeCount {
@@ -272,11 +277,11 @@ func TestLockAccess(t *testing.T) {
 	tpm, tcti := openTPMSimulatorForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultSessionHashAlgorithm, nil)
+	session, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultSessionHashAlgorithm)
 	if err != nil {
 		t.Fatalf("StartAuthSession failed: %v", err)
 	}
@@ -285,41 +290,40 @@ func TestLockAccess(t *testing.T) {
 		if sessionFlushed {
 			return
 		}
-		flushContext(t, tpm, sessionContext)
+		flushContext(t, tpm, session)
 	}()
+	session.SetAttrs(tpm2.AttrContinueSession)
 
-	session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrContinueSession}
-
-	pinIndex, _, err := createPinNvIndex(tpm.TPMContext, testCreationParams.PinHandle, nil, &session)
+	pinIndexPub, _, err := createPinNvIndex(tpm.TPMContext, testCreationParams.PinHandle, session)
 	if err != nil {
 		t.Fatalf("createPinNvIndex failed: %v", err)
 	}
 	defer func() {
-		context, err := tpm.WrapHandle(testCreationParams.PinHandle)
+		index, err := tpm2.CreateNVIndexResourceContextFromPublic(pinIndexPub)
 		if err != nil {
-			t.Fatalf("WrapHandle failed: %v", err)
+			t.Fatalf("CreateNVIndexResourceContextFromPublic failed: %v", err)
 		}
-		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, context, nil); err != nil {
+		if err := tpm.NVUndefineSpace(tpm.OwnerHandleContext(), index, nil); err != nil {
 			t.Errorf("NVUndefineSpace failed: %v", err)
 		}
 	}()
 
 	staticPolicyData, key, policy, err :=
-		computeStaticPolicy(tpm2.HashAlgorithmSHA256, &staticPolicyComputeParams{pinIndex: pinIndex})
+		computeStaticPolicy(tpm2.HashAlgorithmSHA256, &staticPolicyComputeParams{pinIndexPub: pinIndexPub})
 	if err != nil {
 		t.Fatalf("computeStaticPolicy failed: %v", err)
 	}
 
-	policyRevokeIndex, err := createPolicyRevocationNvIndex(tpm.TPMContext, testCreationParams.PolicyRevocationHandle, key, nil, &session)
+	policyRevokeIndexPub, err := createPolicyRevocationNvIndex(tpm.TPMContext, testCreationParams.PolicyRevocationHandle, key, session)
 	if err != nil {
 		t.Fatalf("createPolicyRevocationNvIndex failed: %v", err)
 	}
+	policyRevokeIndex, err := tpm2.CreateNVIndexResourceContextFromPublic(policyRevokeIndexPub)
+	if err != nil {
+		t.Fatalf("CreateNVIndexResourceContextFromPublic failed: %v", err)
+	}
 	defer func() {
-		context, err := tpm.WrapHandle(testCreationParams.PolicyRevocationHandle)
-		if err != nil {
-			t.Fatalf("WrapHandle failed: %v", err)
-		}
-		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, context, nil); err != nil {
+		if err := tpm.NVUndefineSpace(tpm.OwnerHandleContext(), policyRevokeIndex, nil); err != nil {
 			t.Errorf("NVUndefineSpace failed: %v", err)
 		}
 	}()
@@ -348,7 +352,7 @@ func TestLockAccess(t *testing.T) {
 		ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
 		secureBootPCRDigests:       tpm2.DigestList{pcrDigest},
 		ubuntuBootParamsPCRDigests: tpm2.DigestList{pcrDigest},
-		policyRevokeIndex:          policyRevokeIndex,
+		policyRevokeIndexPub:       policyRevokeIndexPub,
 		policyRevokeCount:          policyRevokeCount}
 
 	dynamicPolicyData, err := computeDynamicPolicy(tpm2.HashAlgorithmSHA256, &dynamicPolicyParams)
@@ -356,20 +360,20 @@ func TestLockAccess(t *testing.T) {
 		t.Fatalf("computeDynamicPolicy failed: %v", err)
 	}
 
-	flushContext(t, tpm, sessionContext)
+	flushContext(t, tpm, session)
 	sessionFlushed = true
 
 	for i := 0; i < 2; i++ {
 		func() {
 			resetTPMSimulator(t, tpm, tcti)
 
-			for _, p := range []tpm2.Handle{secureBootPCR, ubuntuBootParamsPCR} {
-				if _, err := tpm.PCREvent(p, event, nil); err != nil {
+			for _, p := range []int{secureBootPCR, ubuntuBootParamsPCR} {
+				if _, err := tpm.PCREvent(tpm.PCRHandleContext(p), event, nil); err != nil {
 					t.Fatalf("PCREvent failed: %v", err)
 				}
 			}
 
-			policySessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, tpm2.HashAlgorithmSHA256, nil)
+			policySessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, tpm2.HashAlgorithmSHA256)
 			if err != nil {
 				t.Fatalf("StartAuthSession failed: %v", err)
 			}
@@ -418,11 +422,11 @@ func TestExecutePolicy(t *testing.T) {
 	tpm, tcti := openTPMSimulatorForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultSessionHashAlgorithm, nil)
+	session, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypeHMAC, nil, defaultSessionHashAlgorithm)
 	if err != nil {
 		t.Fatalf("StartAuthSession failed: %v", err)
 	}
@@ -431,21 +435,20 @@ func TestExecutePolicy(t *testing.T) {
 		if sessionFlushed {
 			return
 		}
-		flushContext(t, tpm, sessionContext)
+		flushContext(t, tpm, session)
 	}()
+	session.SetAttrs(tpm2.AttrContinueSession)
 
-	session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrContinueSession}
-
-	_, pinIndexKeyName, err := createPinNvIndex(tpm.TPMContext, testCreationParams.PinHandle, nil, &session)
+	pinIndexPub, pinIndexKeyName, err := createPinNvIndex(tpm.TPMContext, testCreationParams.PinHandle, session)
 	if err != nil {
 		t.Fatalf("createPinNvIndex failed: %v", err)
 	}
 	defer func() {
-		context, err := tpm.WrapHandle(testCreationParams.PinHandle)
+		index, err := tpm2.CreateNVIndexResourceContextFromPublic(pinIndexPub)
 		if err != nil {
-			t.Fatalf("WrapHandle failed: %v", err)
+			t.Fatalf("CreateNVIndexResourceContextFromPublic failed: %v", err)
 		}
-		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, context, nil); err != nil {
+		if err := tpm.NVUndefineSpace(tpm.OwnerHandleContext(), index, nil); err != nil {
 			t.Errorf("NVUndefineSpace failed: %v", err)
 		}
 	}()
@@ -454,20 +457,20 @@ func TestExecutePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
-	policyRevokeIndex, err := createPolicyRevocationNvIndex(tpm.TPMContext, testCreationParams.PolicyRevocationHandle, key, nil, &session)
+	policyRevokeIndexPub, err := createPolicyRevocationNvIndex(tpm.TPMContext, testCreationParams.PolicyRevocationHandle, key, session)
 	if err != nil {
 		t.Fatalf("createPolicyRevocationNvIndex failed: %v", err)
 	}
+	policyRevokeIndex, err := tpm2.CreateNVIndexResourceContextFromPublic(policyRevokeIndexPub)
+	if err != nil {
+		t.Fatalf("CreateNVIndexResourceContextFromPublic failed: %v", err)
+	}
 	defer func() {
-		context, err := tpm.WrapHandle(testCreationParams.PolicyRevocationHandle)
-		if err != nil {
-			t.Fatalf("WrapHandle failed: %v", err)
-		}
-		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, context, nil); err != nil {
+		if err := tpm.NVUndefineSpace(tpm.OwnerHandleContext(), policyRevokeIndex, nil); err != nil {
 			t.Errorf("NVUndefineSpace failed: %v", err)
 		}
 	}()
-	flushContext(t, tpm, sessionContext)
+	flushContext(t, tpm, session)
 	sessionFlushed = true
 
 	var policyRevokeCount uint64
@@ -516,6 +519,7 @@ func TestExecutePolicy(t *testing.T) {
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
 				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
+				policyRevokeIndexPub:       policyRevokeIndexPub,
 				policyRevokeCount:          policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
@@ -538,6 +542,7 @@ func TestExecutePolicy(t *testing.T) {
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
 				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
+				policyRevokeIndexPub:       policyRevokeIndexPub,
 				policyRevokeCount:          policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
@@ -560,6 +565,7 @@ func TestExecutePolicy(t *testing.T) {
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA1,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA1][0]},
 				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA1][1]},
+				policyRevokeIndexPub:       policyRevokeIndexPub,
 				policyRevokeCount:          policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
@@ -582,6 +588,7 @@ func TestExecutePolicy(t *testing.T) {
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
 				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
+				policyRevokeIndexPub:       policyRevokeIndexPub,
 				policyRevokeCount:          policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
@@ -606,6 +613,7 @@ func TestExecutePolicy(t *testing.T) {
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
 				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
+				policyRevokeIndexPub:       policyRevokeIndexPub,
 				policyRevokeCount:          policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
@@ -632,7 +640,8 @@ func TestExecutePolicy(t *testing.T) {
 					digestMatrix[tpm2.HashAlgorithmSHA256][0]},
 				ubuntuBootParamsPCRDigests: tpm2.DigestList{
 					digestMatrix[tpm2.HashAlgorithmSHA256][1]},
-				policyRevokeCount: policyRevokeCount,
+				policyRevokeIndexPub: policyRevokeIndexPub,
+				policyRevokeCount:    policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -658,7 +667,8 @@ func TestExecutePolicy(t *testing.T) {
 				ubuntuBootParamsPCRDigests: tpm2.DigestList{
 					digestMatrix[tpm2.HashAlgorithmSHA256][1],
 					digestMatrix[tpm2.HashAlgorithmSHA256][3]},
-				policyRevokeCount: policyRevokeCount,
+				policyRevokeIndexPub: policyRevokeIndexPub,
+				policyRevokeCount:    policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -684,7 +694,8 @@ func TestExecutePolicy(t *testing.T) {
 				ubuntuBootParamsPCRDigests: tpm2.DigestList{
 					digestMatrix[tpm2.HashAlgorithmSHA256][1],
 					digestMatrix[tpm2.HashAlgorithmSHA256][3]},
-				policyRevokeCount: policyRevokeCount,
+				policyRevokeIndexPub: policyRevokeIndexPub,
+				policyRevokeCount:    policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -710,7 +721,8 @@ func TestExecutePolicy(t *testing.T) {
 				ubuntuBootParamsPCRDigests: tpm2.DigestList{
 					digestMatrix[tpm2.HashAlgorithmSHA256][1],
 					digestMatrix[tpm2.HashAlgorithmSHA256][3]},
-				policyRevokeCount: policyRevokeCount,
+				policyRevokeIndexPub: policyRevokeIndexPub,
+				policyRevokeCount:    policyRevokeCount,
 			},
 			pcrEvents: []pcrEvent{
 				{
@@ -732,6 +744,7 @@ func TestExecutePolicy(t *testing.T) {
 				ubuntuBootParamsPCRAlg:     tpm2.HashAlgorithmSHA256,
 				secureBootPCRDigests:       tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][0]},
 				ubuntuBootParamsPCRDigests: tpm2.DigestList{digestMatrix[tpm2.HashAlgorithmSHA256][1]},
+				policyRevokeIndexPub:       policyRevokeIndexPub,
 				policyRevokeCount:          policyRevokeCount - 1,
 			},
 			pcrEvents: []pcrEvent{
@@ -749,17 +762,8 @@ func TestExecutePolicy(t *testing.T) {
 	} {
 		t.Run(data.desc, func(t *testing.T) {
 			resetTPMSimulator(t, tpm, tcti)
-			pinIndex, err := tpm.WrapHandle(testCreationParams.PinHandle)
-			if err != nil {
-				t.Fatalf("WrapHandle failed: %v", err)
-			}
-			policyRevokeIndex, err := tpm.WrapHandle(testCreationParams.PolicyRevocationHandle)
-			if err != nil {
-				t.Fatalf("WrapHandle failed: %v", err)
-			}
-			data.input.policyRevokeIndex = policyRevokeIndex
 
-			staticPolicyData, key, policy, err := computeStaticPolicy(data.alg, &staticPolicyComputeParams{pinIndex: pinIndex})
+			staticPolicyData, key, policy, err := computeStaticPolicy(data.alg, &staticPolicyComputeParams{pinIndexPub: pinIndexPub})
 			if err != nil {
 				t.Fatalf("computeStaticPolicy failed: %v", err)
 			}
@@ -771,31 +775,34 @@ func TestExecutePolicy(t *testing.T) {
 			}
 
 			for _, event := range data.pcrEvents {
-				if _, err := tpm.PCREvent(tpm2.Handle(event.index),
-					[]byte(event.data), nil); err != nil {
+				if _, err := tpm.PCREvent(tpm.PCRHandleContext(event.index), []byte(event.data), nil); err != nil {
 					t.Fatalf("PCREvent failed: %v", err)
 				}
 			}
 
 			if data.pinDefine != "" {
-				if err := performPINChange(tpm, pinIndex, pinIndexKeyName, "", data.pinDefine); err != nil {
+				pinIndex, err := tpm2.CreateNVIndexResourceContextFromPublic(pinIndexPub)
+				if err != nil {
+					t.Fatalf("CreateNVIndexResourceContextFromPublic failed: %v", err)
+				}
+				if err := performPINChange(tpm, pinIndex, pinIndexKeyName, data.pinDefine); err != nil {
 					t.Fatalf("performPINChange failed: %v", err)
 				}
 				defer func() {
-					if err := performPINChange(tpm, pinIndex, pinIndexKeyName, data.pinDefine, ""); err != nil {
+					pinIndex.SetAuthValue([]byte(data.pinDefine))
+					if err := performPINChange(tpm, pinIndex, pinIndexKeyName, ""); err != nil {
 						t.Errorf("Resetting PIN failed: %v", err)
 					}
 				}()
 			}
 
-			sessionContext, err :=
-				tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, data.alg, nil)
+			session, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, data.alg)
 			if err != nil {
 				t.Fatalf("StartAuthSession failed: %v", err)
 			}
-			defer flushContext(t, tpm, sessionContext)
+			defer flushContext(t, tpm, session)
 
-			err = executePolicySession(tpm, sessionContext, staticPolicyData, dynamicPolicyData, data.pinInput)
+			err = executePolicySession(tpm, session, staticPolicyData, dynamicPolicyData, data.pinInput)
 			if data.input.policyRevokeCount < policyRevokeCount {
 				if err == nil {
 					t.Fatalf("Expected an error")
@@ -824,7 +831,7 @@ func TestExecutePolicy(t *testing.T) {
 				t.Errorf("Failed to execute policy session: %v", err)
 			}
 
-			digest, err := tpm.PolicyGetDigest(sessionContext)
+			digest, err := tpm.PolicyGetDigest(session)
 			if err != nil {
 				t.Errorf("PolicyGetDigest failed: %v", err)
 			}

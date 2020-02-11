@@ -31,7 +31,7 @@ func TestChangePIN(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 

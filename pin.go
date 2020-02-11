@@ -20,11 +20,9 @@
 package fdeutil
 
 import (
-	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"os"
 
@@ -44,7 +42,7 @@ func pinNvIndexAuthPolicies(alg tpm2.HashAlgorithmId, keyName tpm2.Name) tpm2.Di
 	return tpm2.DigestList{trial1.GetDigest(), trial2.GetDigest()}
 }
 
-func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte, hmacSession *tpm2.Session) (tpm2.ResourceContext, tpm2.Name, error) {
+func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, hmacSession tpm2.SessionContext) (*tpm2.NVPublic, tpm2.Name, error) {
 	// To prevent someone with knowledge of the owner authorization (which is empty unless someone has taken
 	// ownership of the TPM) from resetting the PIN by just undefining and redifining a new NV index with the
 	// same properties, require the NV index to be written to and only allow writes with a signed
@@ -75,55 +73,40 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 	trial.PolicyOR(authPolicies)
 
 	// Define the NV index
-	nvPublic := tpm2.NVPublic{
+	nvPublic := &tpm2.NVPublic{
 		Index:      handle,
 		NameAlg:    nameAlg,
 		Attrs:      tpm2.MakeNVAttributes(tpm2.AttrNVPolicyWrite|tpm2.AttrNVAuthRead|tpm2.AttrNVReadStClear, tpm2.NVTypeOrdinary),
 		AuthPolicy: trial.GetDigest(),
 		Size:       0}
 
-	if err := tpm.NVDefineSpace(tpm2.HandleOwner, nil, &nvPublic, hmacSession.WithAuthValue(ownerAuth)); err != nil {
+	context, err := tpm.NVDefineSpace(tpm.OwnerHandleContext(), nil, nvPublic, hmacSession)
+	if err != nil {
 		return nil, nil, xerrors.Errorf("cannot define NV space: %w", err)
 	}
 
 	// NVDefineSpace was integrity protected, so we know that we have an index with the expected public area at the handle we specified
 	// at this point.
 
-	context, err := tpm.WrapHandle(handle)
-	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot obtain context for new NV index: %w", err)
-	}
-
 	succeeded := false
 	defer func() {
 		if succeeded {
 			return
 		}
-		tpm.NVUndefineSpace(tpm2.HandleOwner, context, hmacSession.WithAuthValue(ownerAuth))
+		tpm.NVUndefineSpace(tpm.OwnerHandleContext(), context, hmacSession)
 	}()
 
-	// The name associated with context is read back from the TPM with no integrity protection, so we don't know if it's correct yet.
-	// We need to check that it's consistent with the NV index we created before adding it to an authorization policy.
-
-	expectedName, err := nvPublic.Name()
-	if err != nil {
-		panic(fmt.Sprintf("cannot compute name of NV index: %v", err))
-	}
-	if !bytes.Equal(expectedName, context.Name()) {
-		return nil, nil, errors.New("context for new NV index has unexpected name")
-	}
-
 	// Begin a session to initialize the index.
-	policySessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, nameAlg, nil)
+	policySession, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, nameAlg)
 	if err != nil {
 		return nil, nil, xerrors.Errorf("cannot begin policy session to initialize NV index: %w", err)
 	}
-	defer tpm.FlushContext(policySessionContext)
+	defer tpm.FlushContext(policySession)
 
 	// Compute a digest for signing with our key
 	signDigest := tpm2.HashAlgorithmSHA256
 	h := signDigest.NewHash()
-	h.Write(policySessionContext.(tpm2.SessionContext).NonceTPM())
+	h.Write(policySession.NonceTPM())
 	binary.Write(h, binary.BigEndian, int32(0))
 
 	// Sign the digest
@@ -135,7 +118,7 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 	// Load the public part of the key in to the TPM. There's no integrity protection for this command as if it's altered in
 	// transit then either the signature verification fails or the policy digest will not match the one associated with the NV
 	// index.
-	keyLoaded, _, err := tpm.LoadExternal(nil, keyPublic, tpm2.HandleEndorsement)
+	keyLoaded, err := tpm.LoadExternal(nil, keyPublic, tpm2.HandleEndorsement)
 	if err != nil {
 		return nil, nil, xerrors.Errorf("cannot load public part of key used to initialize NV index to the TPM: %w", err)
 	}
@@ -149,67 +132,56 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, ownerAuth []byte
 				Sig:  tpm2.PublicKeyRSA(sig)}}}
 
 	// Execute the policy assertions
-	if err := tpm.PolicyCommandCode(policySessionContext, tpm2.CommandNVWrite); err != nil {
+	if err := tpm.PolicyCommandCode(policySession, tpm2.CommandNVWrite); err != nil {
 		return nil, nil, xerrors.Errorf("cannot execute PolicyCommandCode assertion: %w", err)
 	}
-	if _, _, err := tpm.PolicySigned(keyLoaded, policySessionContext, true, nil, nil, 0, &signature); err != nil {
+	if _, _, err := tpm.PolicySigned(keyLoaded, policySession, true, nil, nil, 0, &signature); err != nil {
 		return nil, nil, xerrors.Errorf("cannot execute PolicySigned assertion to initialize NV index: %w", err)
 	}
-	if err := tpm.PolicyOR(policySessionContext, authPolicies); err != nil {
+	if err := tpm.PolicyOR(policySession, authPolicies); err != nil {
 		return nil, nil, xerrors.Errorf("cannot execute PolicyOR assertion to initialize NV index: %w", err)
 	}
 
 	// Initialize the index
-	if err := tpm.NVWrite(context, context, nil, 0, &tpm2.Session{Context: policySessionContext}); err != nil {
+	if err := tpm.NVWrite(context, context, nil, 0, policySession, hmacSession.IncludeAttrs(tpm2.AttrAudit)); err != nil {
 		return nil, nil, xerrors.Errorf("cannot initialize NV index: %w", err)
 	}
 
-	// Verify that the index now has the written attribute - if it doesn't for some reason, then it would be trivial for someone
-	// to recreate the index with the same properties in order to remove the PIN. Pass a session in here for integrity protection.
-	// This really should never actually fail, as the HMAC check success from the previous NVWrite is a guarantee that the command
-	// executed on the TPM.
-	nvPub, _, err := tpm.NVReadPublic(context, hmacSession.AddAttrs(tpm2.AttrAudit))
-	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot read NV index public area: %w", err)
-	}
-	if nvPub.Attrs&tpm2.AttrNVWritten == 0 {
-		return nil, nil, errors.New("the NV index does not indicate that it has been initialized correctly")
-	}
+	// The index has a different name now that it has been written, so update the public area we return so that it can
+	// be used to construct a ResourceContext that will work for it.
+	nvPublic.Attrs |= tpm2.AttrNVWritten
 
 	succeeded = true
-	return context, keyName, nil
+	return nvPublic, keyName, nil
 }
 
-func performPINChange(tpm *TPMConnection, index tpm2.ResourceContext, keyName tpm2.Name, oldAuth, newAuth string) error {
+func performPINChange(tpm *TPMConnection, index tpm2.ResourceContext, keyName tpm2.Name, newAuth string) error {
 	hmacSession := tpm.HmacSession()
 
-	nvPub, _, err := tpm.NVReadPublic(index, hmacSession.AddAttrs(tpm2.AttrAudit))
+	nvPub, _, err := tpm.NVReadPublic(index, hmacSession.IncludeAttrs(tpm2.AttrAudit))
 	if err != nil {
 		return xerrors.Errorf("cannot read public area of NV index: %w", err)
 	}
 
 	policies := pinNvIndexAuthPolicies(nvPub.NameAlg, keyName)
 
-	sessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, nvPub.NameAlg, nil)
+	policySession, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, nvPub.NameAlg)
 	if err != nil {
 		return xerrors.Errorf("cannot start policy session: %w", err)
 	}
-	defer tpm.FlushContext(sessionContext)
+	defer tpm.FlushContext(policySession)
 
-	if err := tpm.PolicyCommandCode(sessionContext, tpm2.CommandNVChangeAuth); err != nil {
+	if err := tpm.PolicyCommandCode(policySession, tpm2.CommandNVChangeAuth); err != nil {
 		return xerrors.Errorf("cannot execute PolicyCommandCode assertion: %w", err)
 	}
-	if err := tpm.PolicyAuthValue(sessionContext); err != nil {
+	if err := tpm.PolicyAuthValue(policySession); err != nil {
 		return xerrors.Errorf("cannot execute PolicyAuthValue assertion: %w", err)
 	}
-	if err := tpm.PolicyOR(sessionContext, policies); err != nil {
+	if err := tpm.PolicyOR(policySession, policies); err != nil {
 		return xerrors.Errorf("cannot execute PolicyOR assertion: %w", err)
 	}
 
-	session := tpm2.Session{
-		Context:   sessionContext,
-		AuthValue: []byte(oldAuth)}
-	if err := tpm.NVChangeAuth(index, tpm2.Auth(newAuth), &session, hmacSession.AddAttrs(tpm2.AttrCommandEncrypt)); err != nil {
+	if err := tpm.NVChangeAuth(index, tpm2.Auth(newAuth), policySession, hmacSession.IncludeAttrs(tpm2.AttrCommandEncrypt)); err != nil {
 		return xerrors.Errorf("cannot change authorization value for NV index: %w", err)
 	}
 
@@ -229,7 +201,7 @@ func ChangePIN(tpm *TPMConnection, path string, oldAuth, newAuth string) error {
 		return InvalidKeyFileError{err.Error()}
 	}
 
-	if err := data.validate(tpm.TPMContext, nil, tpm.HmacSession()); err != nil {
+	if err := data.validate(tpm, nil); err != nil {
 		switch e := err.(type) {
 		case keyFileError:
 			return InvalidKeyFileError{"integrity check failed: " + e.err.Error()}
@@ -237,8 +209,12 @@ func ChangePIN(tpm *TPMConnection, path string, oldAuth, newAuth string) error {
 		return xerrors.Errorf("cannot integrity check key data file: %w", err)
 	}
 
-	pinIndex, _ := tpm.WrapHandle(data.StaticPolicyData.PinIndexHandle)
-	if err := performPINChange(tpm, pinIndex, data.PinIndexKeyName, oldAuth, newAuth); err != nil {
+	// FIXME: With the refactor-locking branch where we don't use read locking of the PIN NV index, have
+	// validate() return the ResourceContext for this initialized from the validated public area, rather
+	// than reading a public area from the TPM again.
+	pinIndex, _ := tpm.CreateResourceContextFromTPM(data.StaticPolicyData.PinIndexHandle)
+	pinIndex.SetAuthValue([]byte(oldAuth))
+	if err := performPINChange(tpm, pinIndex, data.PinIndexKeyName, newAuth); err != nil {
 		return err
 	}
 

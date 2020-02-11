@@ -86,18 +86,16 @@ func run() int {
 		mode = fdeutil.ProvisionModeFull
 	}
 
-	if err := fdeutil.ProvisionTPM(tpm, mode, []byte(newLockoutAuth), &fdeutil.ProvisionAuths{Owner: []byte(ownerAuth),
-		Endorsement: []byte(endorsementAuth), Lockout: []byte(lockoutAuth)}); err != nil {
+	tpm.OwnerHandleContext().SetAuthValue([]byte(ownerAuth))
+	tpm.EndorsementHandleContext().SetAuthValue([]byte(endorsementAuth))
+	tpm.LockoutHandleContext().SetAuthValue([]byte(lockoutAuth))
+
+	if err := fdeutil.ProvisionTPM(tpm, mode, []byte(newLockoutAuth)); err != nil {
 		switch err {
 		case fdeutil.ErrClearRequiresPPI:
 			fmt.Fprintf(os.Stderr,
 				"Clearing requires the use of the physical presence interface. Re-run with "+
 					"-request-clear\n")
-		case fdeutil.ErrRequiresLockoutAuth:
-			fmt.Fprintf(os.Stderr,
-				"The TPM indicates that the lockout hierarchy has an authorization value. "+
-					"Either re-run with -lockout-auth <auth> or request to clear the TPM "+
-					"with -request-clear if the authorization value isn't known\n")
 		case fdeutil.ErrLockout:
 			fmt.Fprintf(os.Stderr,
 				"The lockout hierarchy is in dictionary attack lockout mode. Either wait for "+

@@ -20,12 +20,10 @@
 package fdeutil
 
 import (
-	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/binary"
 	"errors"
-	"fmt"
 
 	"github.com/chrisccoulson/go-tpm2"
 
@@ -39,7 +37,7 @@ type dynamicPolicyComputeParams struct {
 	ubuntuBootParamsPCRAlg     tpm2.HashAlgorithmId
 	secureBootPCRDigests       tpm2.DigestList
 	ubuntuBootParamsPCRDigests tpm2.DigestList
-	policyRevokeIndex          tpm2.ResourceContext
+	policyRevokeIndexPub       *tpm2.NVPublic
 	policyRevokeCount          uint64
 }
 
@@ -55,7 +53,7 @@ type dynamicPolicyData struct {
 }
 
 type staticPolicyComputeParams struct {
-	pinIndex tpm2.ResourceContext
+	pinIndexPub *tpm2.NVPublic
 }
 
 type staticPolicyData struct {
@@ -64,23 +62,23 @@ type staticPolicyData struct {
 	PinIndexHandle     tpm2.Handle
 }
 
-func incrementPolicyRevocationNvIndex(tpm *tpm2.TPMContext, index tpm2.ResourceContext, key *rsa.PrivateKey, keyPublic *tpm2.Public, session *tpm2.Session) error {
-	nvPub, _, err := tpm.NVReadPublic(index, session.AddAttrs(tpm2.AttrAudit))
+func incrementPolicyRevocationNvIndex(tpm *tpm2.TPMContext, index tpm2.ResourceContext, key *rsa.PrivateKey, keyPublic *tpm2.Public, hmacSession tpm2.SessionContext) error {
+	nvPub, _, err := tpm.NVReadPublic(index, hmacSession.IncludeAttrs(tpm2.AttrAudit))
 	if err != nil {
 		return xerrors.Errorf("cannot read public area of NV index: %w", err)
 	}
 
 	// Begin a policy session to increment the index.
-	policySessionContext, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, nvPub.NameAlg, nil)
+	policySession, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, nvPub.NameAlg, nil)
 	if err != nil {
 		return xerrors.Errorf("cannot begin policy session: %w", err)
 	}
-	defer tpm.FlushContext(policySessionContext)
+	defer tpm.FlushContext(policySession)
 
 	// Compute a digest for signing with our key
 	signDigest := tpm2.HashAlgorithmSHA256
 	h := signDigest.NewHash()
-	h.Write(policySessionContext.(tpm2.SessionContext).NonceTPM())
+	h.Write(policySession.NonceTPM())
 	binary.Write(h, binary.BigEndian, int32(0))
 
 	// Sign the digest
@@ -92,7 +90,7 @@ func incrementPolicyRevocationNvIndex(tpm *tpm2.TPMContext, index tpm2.ResourceC
 	// Load the public part of the key in to the TPM. There's no integrity protection for this command as if it's altered in
 	// transit then either the signature verification fails or the policy digest will not match the one associated with the NV
 	// index.
-	keyLoaded, _, err := tpm.LoadExternal(nil, keyPublic, tpm2.HandleEndorsement)
+	keyLoaded, err := tpm.LoadExternal(nil, keyPublic, tpm2.HandleEndorsement)
 	if err != nil {
 		return xerrors.Errorf("cannot load public part of key used to verify authorization signature: %w", err)
 	}
@@ -106,22 +104,22 @@ func incrementPolicyRevocationNvIndex(tpm *tpm2.TPMContext, index tpm2.ResourceC
 				Sig:  tpm2.PublicKeyRSA(sig)}}}
 
 	// Execute the policy assertions
-	if err := tpm.PolicyCommandCode(policySessionContext, tpm2.CommandNVIncrement); err != nil {
+	if err := tpm.PolicyCommandCode(policySession, tpm2.CommandNVIncrement); err != nil {
 		return xerrors.Errorf("cannot execute PolicyCommandCode assertion: %w", err)
 	}
-	if _, _, err := tpm.PolicySigned(keyLoaded, policySessionContext, true, nil, nil, 0, &signature); err != nil {
+	if _, _, err := tpm.PolicySigned(keyLoaded, policySession, true, nil, nil, 0, &signature); err != nil {
 		return xerrors.Errorf("cannot execute PolicySigned assertion: %w", err)
 	}
 
 	// Increment the index.
-	if err := tpm.NVIncrement(index, index, &tpm2.Session{Context: policySessionContext}, session.AddAttrs(tpm2.AttrAudit)); err != nil {
+	if err := tpm.NVIncrement(index, index, policySession, hmacSession.IncludeAttrs(tpm2.AttrAudit)); err != nil {
 		return xerrors.Errorf("cannot increment NV index: %w", err)
 	}
 
 	return nil
 }
 
-func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, key *rsa.PrivateKey, ownerAuth []byte, session *tpm2.Session) (tpm2.ResourceContext, error) {
+func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, key *rsa.PrivateKey, session tpm2.SessionContext) (*tpm2.NVPublic, error) {
 	keyPublic := createPublicAreaForRSASigningKey(&key.PublicKey)
 	keyName, err := keyPublic.Name()
 	if err != nil {
@@ -134,51 +132,40 @@ func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, key
 	trial.PolicyCommandCode(tpm2.CommandNVIncrement)
 	trial.PolicySigned(keyName, nil)
 
-	public := tpm2.NVPublic{
+	public := &tpm2.NVPublic{
 		Index:      handle,
 		NameAlg:    nameAlg,
 		Attrs:      tpm2.MakeNVAttributes(tpm2.AttrNVPolicyWrite|tpm2.AttrNVAuthRead, tpm2.NVTypeCounter),
 		AuthPolicy: trial.GetDigest(),
 		Size:       8}
 
-	if err := tpm.NVDefineSpace(tpm2.HandleOwner, nil, &public, session.WithAuthValue(ownerAuth)); err != nil {
+	context, err := tpm.NVDefineSpace(tpm.OwnerHandleContext(), nil, public, session)
+	if err != nil {
 		return nil, xerrors.Errorf("cannot define NV space: %w", err)
 	}
 
 	// NVDefineSpace was integrity protected, so we know that we have an index with the expected public area at the handle we specified
 	// at this point.
 
-	context, err := tpm.WrapHandle(handle)
-	if err != nil {
-		return nil, xerrors.Errorf("cannot obtain context for new NV index: %w", err)
-	}
-
 	succeeded := false
 	defer func() {
 		if succeeded {
 			return
 		}
-		tpm.NVUndefineSpace(tpm2.HandleOwner, context, session.WithAuthValue(ownerAuth))
+		tpm.NVUndefineSpace(tpm.OwnerHandleContext(), context, session)
 	}()
 
-	// The name associated with context is read back from the TPM with no integrity protection, so we don't know if it's correct yet.
-	// We need to check that it's consistent with the NV index we created before adding it to an authorization policy.
-
-	expectedName, err := public.Name()
-	if err != nil {
-		panic(fmt.Sprintf("cannot compute name of NV index: %v", err))
-	}
-	if !bytes.Equal(expectedName, context.Name()) {
-		return nil, errors.New("context for new NV index has unexpected name")
-	}
-
-	// The name associated with context is the one associated with the index we created. Initialize the index
+	// Initialize the index.
 	if err := incrementPolicyRevocationNvIndex(tpm, context, key, keyPublic, session); err != nil {
 		return nil, xerrors.Errorf("cannot initialize new NV index: %w", err)
 	}
 
+	// The index has a different name now that it has been written, so update the public area we return so that it can
+	// be used to construct a ResourceContext that will work for it.
+	public.Attrs |= tpm2.AttrNVWritten
+
 	succeeded = true
-	return context, nil
+	return public, nil
 }
 
 func ensureSufficientORDigests(digests tpm2.DigestList) tpm2.DigestList {
@@ -222,13 +209,18 @@ func computeStaticPolicy(alg tpm2.HashAlgorithmId, input *staticPolicyComputePar
 		return nil, nil, nil, xerrors.Errorf("cannot compute name of signing key for policy authorization: %w", err)
 	}
 
+	pinIndexName, err := input.pinIndexPub.Name()
+	if err != nil {
+		return nil, nil, nil, xerrors.Errorf("cannot compute name of PIN NV index: %w", err)
+	}
+
 	trial.PolicyAuthorize(nil, keyName)
-	trial.PolicySecret(input.pinIndex.Name(), nil)
+	trial.PolicySecret(pinIndexName, nil)
 
 	return &staticPolicyData{
 		Algorithm:          alg,
 		AuthorizeKeyPublic: keyPublic,
-		PinIndexHandle:     input.pinIndex.Handle()}, key, trial.GetDigest(), nil
+		PinIndexHandle:     input.pinIndexPub.Index}, key, trial.GetDigest(), nil
 }
 
 func computeDynamicPolicy(alg tpm2.HashAlgorithmId, input *dynamicPolicyComputeParams) (*dynamicPolicyData, error) {
@@ -258,9 +250,14 @@ func computeDynamicPolicy(alg tpm2.HashAlgorithmId, input *dynamicPolicyComputeP
 	trial, _ := tpm2.ComputeAuthPolicy(alg)
 	trial.PolicyOR(ensureSufficientORDigests(ubuntuBootParamsORDigests))
 
+	policyRevokeIndexName, err := input.policyRevokeIndexPub.Name()
+	if err != nil {
+		return nil, xerrors.Errorf("cannot compute name of policy revocation NV index: %w", err)
+	}
+
 	operandB := make([]byte, 8)
 	binary.BigEndian.PutUint64(operandB, input.policyRevokeCount)
-	trial.PolicyNV(input.policyRevokeIndex.Name(), operandB, 0, tpm2.OpUnsignedLE)
+	trial.PolicyNV(policyRevokeIndexName, operandB, 0, tpm2.OpUnsignedLE)
 
 	authorizedPolicy := trial.GetDigest()
 
@@ -287,7 +284,7 @@ func computeDynamicPolicy(alg tpm2.HashAlgorithmId, input *dynamicPolicyComputeP
 		UbuntuBootParamsPCRAlg:    input.ubuntuBootParamsPCRAlg,
 		SecureBootORDigests:       secureBootORDigests,
 		UbuntuBootParamsORDigests: ubuntuBootParamsORDigests,
-		PolicyRevokeIndexHandle:   input.policyRevokeIndex.Handle(),
+		PolicyRevokeIndexHandle:   input.policyRevokeIndexPub.Index,
 		PolicyRevokeCount:         input.policyRevokeCount,
 		AuthorizedPolicy:          authorizedPolicy,
 		AuthorizedPolicySignature: &signature}, nil
@@ -301,40 +298,40 @@ func wrapPolicyPCRError(err error, index int) error {
 	return xerrors.Errorf("cannot execute PolicyPCR assertion against PCR%d: %w", index, err)
 }
 
-func executePolicySessionPCRAssertions(tpm *tpm2.TPMContext, sessionContext tpm2.ResourceContext, input *dynamicPolicyData) error {
-	if err := tpm.PolicyPCR(sessionContext, nil, makePCRSelectionList(input.SecureBootPCRAlg, secureBootPCR)); err != nil {
+func executePolicySessionPCRAssertions(tpm *tpm2.TPMContext, session tpm2.SessionContext, input *dynamicPolicyData) error {
+	if err := tpm.PolicyPCR(session, nil, makePCRSelectionList(input.SecureBootPCRAlg, secureBootPCR)); err != nil {
 		return wrapPolicyPCRError(err, secureBootPCR)
 	}
-	if err := tpm.PolicyOR(sessionContext, ensureSufficientORDigests(input.SecureBootORDigests)); err != nil {
+	if err := tpm.PolicyOR(session, ensureSufficientORDigests(input.SecureBootORDigests)); err != nil {
 		return wrapPolicyORError(err, secureBootPCR)
 	}
-	if err := tpm.PolicyPCR(sessionContext, nil, makePCRSelectionList(input.UbuntuBootParamsPCRAlg, ubuntuBootParamsPCR)); err != nil {
+	if err := tpm.PolicyPCR(session, nil, makePCRSelectionList(input.UbuntuBootParamsPCRAlg, ubuntuBootParamsPCR)); err != nil {
 		return wrapPolicyPCRError(err, ubuntuBootParamsPCR)
 	}
-	if err := tpm.PolicyOR(sessionContext, ensureSufficientORDigests(input.UbuntuBootParamsORDigests)); err != nil {
+	if err := tpm.PolicyOR(session, ensureSufficientORDigests(input.UbuntuBootParamsORDigests)); err != nil {
 		return wrapPolicyORError(err, ubuntuBootParamsPCR)
 	}
 	return nil
 }
 
-func executePolicySession(tpm *TPMConnection, sessionContext tpm2.ResourceContext, staticInput *staticPolicyData,
+func executePolicySession(tpm *TPMConnection, policySession tpm2.SessionContext, staticInput *staticPolicyData,
 	dynamicInput *dynamicPolicyData, pin string) error {
-	if err := executePolicySessionPCRAssertions(tpm.TPMContext, sessionContext, dynamicInput); err != nil {
+	if err := executePolicySessionPCRAssertions(tpm.TPMContext, policySession, dynamicInput); err != nil {
 		return xerrors.Errorf("cannot execute PCR assertions: %w", err)
 	}
 
-	policyRevokeContext, err := tpm.WrapHandle(dynamicInput.PolicyRevokeIndexHandle)
+	policyRevokeContext, err := tpm.CreateResourceContextFromTPM(dynamicInput.PolicyRevokeIndexHandle)
 	if err != nil {
 		return xerrors.Errorf("cannot create context for dynamic authorization policy revocation NV index: %w", err)
 	}
 
 	operandB := make([]byte, 8)
 	binary.BigEndian.PutUint64(operandB, dynamicInput.PolicyRevokeCount)
-	if err := tpm.PolicyNV(policyRevokeContext, policyRevokeContext, sessionContext, operandB, 0, tpm2.OpUnsignedLE, nil); err != nil {
+	if err := tpm.PolicyNV(policyRevokeContext, policyRevokeContext, policySession, operandB, 0, tpm2.OpUnsignedLE, nil); err != nil {
 		return xerrors.Errorf("dynamic authorization policy revocation check failed: %w", err)
 	}
 
-	authorizeKeyContext, authorizeKeyName, err := tpm.LoadExternal(nil, staticInput.AuthorizeKeyPublic, tpm2.HandleOwner)
+	authorizeKeyContext, err := tpm.LoadExternal(nil, staticInput.AuthorizeKeyPublic, tpm2.HandleOwner)
 	if err != nil {
 		return xerrors.Errorf("cannot load public area for dynamic authorization policy signature verification key: %w", err)
 	}
@@ -351,17 +348,17 @@ func executePolicySession(tpm *TPMConnection, sessionContext tpm2.ResourceContex
 		return xerrors.Errorf("dynamic authorization policy signature verification failed: %w", err)
 	}
 
-	if err := tpm.PolicyAuthorize(sessionContext, dynamicInput.AuthorizedPolicy, nil, authorizeKeyName, authorizeTicket); err != nil {
+	if err := tpm.PolicyAuthorize(policySession, dynamicInput.AuthorizedPolicy, nil, authorizeKeyContext.Name(), authorizeTicket); err != nil {
 		return xerrors.Errorf("dynamic authorization policy check failed: %w", err)
 	}
 
-	pinIndexContext, err := tpm.WrapHandle(staticInput.PinIndexHandle)
+	pinIndexContext, err := tpm.CreateResourceContextFromTPM(staticInput.PinIndexHandle)
 	if err != nil {
 		return xerrors.Errorf("cannot obtain context for PIN NV index: %w", err)
 	}
+	pinIndexContext.SetAuthValue([]byte(pin))
 	// Use the HMAC session created when the connection was opened rather than creating a new one.
-	pinSession := tpm.HmacSession()
-	if _, _, err := tpm.PolicySecret(pinIndexContext, sessionContext, nil, nil, 0, pinSession.WithAuthValue([]byte(pin))); err != nil {
+	if _, _, err := tpm.PolicySecret(pinIndexContext, policySession, nil, nil, 0, tpm.HmacSession()); err != nil {
 		return xerrors.Errorf("cannot execute PolicySecret assertion: %w", err)
 	}
 
@@ -369,7 +366,7 @@ func executePolicySession(tpm *TPMConnection, sessionContext tpm2.ResourceContex
 }
 
 func lockAccessUntilTPMReset(tpm *tpm2.TPMContext, input *staticPolicyData) error {
-	pinIndexContext, err := tpm.WrapHandle(input.PinIndexHandle)
+	pinIndexContext, err := tpm.CreateResourceContextFromTPM(input.PinIndexHandle)
 	if err != nil {
 		return xerrors.Errorf("cannot obtain context for pin NV index: %w", err)
 	}
