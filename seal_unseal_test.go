@@ -459,9 +459,6 @@ func TestUnsealLockout(t *testing.T) {
 }
 
 func TestSealWithProvisioningError(t *testing.T) {
-	tpm := openTPMForTesting(t)
-	defer closeTPM(t, tpm)
-
 	key := make([]byte, 32)
 	rand.Read(key)
 
