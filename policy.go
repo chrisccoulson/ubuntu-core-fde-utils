@@ -186,8 +186,8 @@ func ensureLockNVIndex(tpm *tpm2.TPMContext, session tpm2.SessionContext) error 
 	// We use a globally defined NV index created at provisioning time for locking the authorization policy of any sealed key objects we
 	// create, which works by enabling the read lock bit. As this changes the name of the index until the next TPM reset or restart, it
 	// makes any authorization policy that depends on it un-satisfiable. We do this rather than extending an extra value to a PCR, as it
-	// decouples the PCR policy from the locking feature and allows for the option of having more flexible and owner-customizable PCR
-	// policies in the future.
+	// decouples the PCR policy from the locking feature and allows for the option of having more flexible, owner-customizable and maybe
+	// device-specific PCR policies in the future.
 	//
 	// To prevent someone with knowledge of the owner authorization (which is empty unless someone has taken ownership of the TPM) from
 	// clearing the read lock bit by just undefining and redifining a new NV index with the same properties, we need a way to prevent
@@ -195,7 +195,7 @@ func ensureLockNVIndex(tpm *tpm2.TPMContext, session tpm2.SessionContext) error 
 	// that they can only increment and are initialized with a value larger than the largest count value seen on the TPM. Whilst it
 	// would be possible to recreate a counter with the same name, it wouldn't be possible to recreate one with the same value. Keys
 	// sealed by this package can then execute an assertion that the counter is equal to a certain value. One problem with this is that
-	// the current value needs to be known at key sealing time (as it forms part of the authorization value), and the read lock bit will
+	// the current value needs to be known at key sealing time (as it forms part of the authorization policy), and the read lock bit will
 	// prevent the count value from being read from the TPM. Also, the number of counters available is extremely limited, and we already
 	// use one per sealed key.
 	//
