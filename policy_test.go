@@ -34,6 +34,69 @@ import (
 	"golang.org/x/xerrors"
 )
 
+func validateLockNVIndex(t *testing.T, tpm *tpm2.TPMContext) {
+	index, err := tpm.CreateResourceContextFromTPM(lockNVHandle)
+	if err != nil {
+		t.Fatalf("Cannot create context for lock NV index: %v", err)
+	}
+
+	// Validate the properties of the index
+	pub, _, err := tpm.NVReadPublic(index)
+	if err != nil {
+		t.Fatalf("NVReadPublic failed: %v", err)
+	}
+
+	if pub.NameAlg != tpm2.HashAlgorithmSHA256 {
+		t.Errorf("Lock NV index has the wrong name algorithm")
+	}
+	if pub.Attrs.Type() != tpm2.NVTypeOrdinary {
+		t.Errorf("Lock NV index has the wrong type")
+	}
+	if pub.Attrs.AttrsOnly() != tpm2.AttrNVPolicyWrite|tpm2.AttrNVAuthRead|tpm2.AttrNVNoDA|tpm2.AttrNVReadStClear|tpm2.AttrNVWritten {
+		t.Errorf("Lock NV index has the wrong attributes")
+	}
+	if pub.Size != uint16(0) {
+		t.Errorf("Lock NV index has the wrong size")
+	}
+
+	dataIndex, err := tpm.CreateResourceContextFromTPM(lockNVDataHandle)
+	if err != nil {
+		t.Fatalf("Cannot create context for lock policy data NV index: %v", err)
+	}
+
+	dataPub, _, err := tpm.NVReadPublic(dataIndex)
+	if err != nil {
+		t.Fatalf("NVReadPublic failed: %v", err)
+	}
+	data, err := tpm.NVRead(dataIndex, dataIndex, dataPub.Size, 0, nil)
+	if err != nil {
+		t.Fatalf("NVRead failed: %v", err)
+	}
+
+	var version uint8
+	var keyName tpm2.Name
+	var clock uint64
+	if _, err := tpm2.UnmarshalFromBytes(data, &version, &keyName, &clock); err != nil {
+		t.Fatalf("UnmarshalFromBytes failed: %v", err)
+	}
+
+	if version != 0 {
+		t.Errorf("Unexpected version for lock NV index policy")
+	}
+
+	clockBytes := make([]byte, binary.Size(clock))
+	binary.BigEndian.PutUint64(clockBytes, clock)
+
+	trial, _ := tpm2.ComputeAuthPolicy(tpm2.HashAlgorithmSHA256)
+	trial.PolicyCommandCode(tpm2.CommandNVWrite)
+	trial.PolicyCounterTimer(clockBytes, 8, tpm2.OpUnsignedLT)
+	trial.PolicySigned(keyName, nil)
+
+	if !bytes.Equal(trial.GetDigest(), pub.AuthPolicy) {
+		t.Errorf("Lock NV index has the wrong authorization policy")
+	}
+}
+
 func TestEnsureLockNVIndex(t *testing.T) {
 	tpm, _ := openTPMSimulatorForTesting(t)
 	defer closeTPM(t, tpm)
@@ -44,20 +107,13 @@ func TestEnsureLockNVIndex(t *testing.T) {
 		t.Errorf("ensureLockNVIndex failed: %v", err)
 	}
 
+	validateLockNVIndex(t, tpm.TPMContext)
+
 	index, err := tpm.CreateResourceContextFromTPM(lockNVHandle)
 	if err != nil {
 		t.Fatalf("No lock NV index created")
 	}
 	origName := index.Name()
-
-	public, _, err := tpm.NVReadPublic(index)
-	if err != nil {
-		t.Fatalf("NVReadPublic failed: %v", err)
-	}
-
-	if public.Attrs != lockNVIndexAttrs|tpm2.AttrNVWritten {
-		t.Errorf("incorrect lock NV index attributes")
-	}
 
 	if err := ensureLockNVIndex(tpm.TPMContext, tpm.HmacSession()); err != nil {
 		t.Errorf("ensureLockNVIndex failed: %v", err)

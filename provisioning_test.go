@@ -153,6 +153,7 @@ func TestProvisionNewTPM(t *testing.T) {
 
 			validateEK(t, tpm)
 			validateSRK(t, tpm)
+			validateLockNVIndex(t, tpm.TPMContext)
 
 			// Validate the DA parameters
 			props, err := tpm.GetCapabilityTPMProperties(tpm2.PropertyMaxAuthFail, 3)
@@ -367,7 +368,7 @@ func TestRecreateEK(t *testing.T) {
 
 			lockoutAuth := []byte("1234")
 
-			if err := ProvisionTPM(tpm, data.mode, lockoutAuth); err != nil {
+			if err := ProvisionTPM(tpm, ProvisionModeFull, lockoutAuth); err != nil {
 				t.Fatalf("ProvisionTPM failed: %v", err)
 			}
 
@@ -440,7 +441,7 @@ func TestRecreateSRK(t *testing.T) {
 
 			lockoutAuth := []byte("1234")
 
-			if err := ProvisionTPM(tpm, ProvisionModeClear, lockoutAuth); err != nil {
+			if err := ProvisionTPM(tpm, ProvisionModeFull, lockoutAuth); err != nil {
 				t.Fatalf("ProvisionTPM failed: %v", err)
 			}
 
