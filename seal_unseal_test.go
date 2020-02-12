@@ -568,14 +568,7 @@ func TestUnsealProvisioningError(t *testing.T) {
 		if err != nil {
 			t.Errorf("No PIN NV index: %v", err)
 		}
-		policyRevokeContext, err := tpm.CreateResourceContextFromTPM(testCreationParams.PolicyRevocationHandle)
-		if err != nil {
-			t.Errorf("No policy revocation NV index: %v", err)
-		}
 		if err := tpm.NVUndefineSpace(tpm.OwnerHandleContext(), pinContext, nil); err != nil {
-			t.Errorf("NVUndefineSpace failed: %v", err)
-		}
-		if err := tpm.NVUndefineSpace(tpm.OwnerHandleContext(), policyRevokeContext, nil); err != nil {
 			t.Errorf("NVUndefineSpace failed: %v", err)
 		}
 	}()

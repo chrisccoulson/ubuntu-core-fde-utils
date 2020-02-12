@@ -42,7 +42,7 @@ func (k *SealedKeyObject) UnsealFromTPM(tpm *TPMConnection, pin string, lock boo
 	hmacSession := tpm.HmacSession()
 
 	// Load the key data
-	keyContext, err := k.data.load(tpm)
+	keyContext, err := k.data.load(tpm.TPMContext, hmacSession)
 	if err != nil {
 		var kfErr keyFileError
 		var ruErr tpm2.ResourceUnavailableError
@@ -79,7 +79,7 @@ func (k *SealedKeyObject) UnsealFromTPM(tpm *TPMConnection, pin string, lock boo
 	}
 	defer tpm.FlushContext(policySession)
 
-	if err := executePolicySession(tpm, policySession, k.data.StaticPolicyData, k.data.DynamicPolicyData, pin); err != nil {
+	if err := executePolicySession(tpm.TPMContext, policySession, k.data.StaticPolicyData, k.data.DynamicPolicyData, pin, hmacSession); err != nil {
 		var tpmsErr *tpm2.TPMSessionError
 		if xerrors.As(err, &tpmsErr) && tpmsErr.Code() == tpm2.ErrorAuthFail && tpmsErr.Command() == tpm2.CommandPolicySecret {
 			return nil, ErrPinFail

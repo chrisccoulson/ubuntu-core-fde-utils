@@ -21,6 +21,8 @@ package fdeutil
 
 import (
 	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
 	_ "crypto/sha256"
 	"crypto/x509"
 	"fmt"
@@ -118,26 +120,19 @@ type PolicyParams struct {
 	SecureBootDbKeystores []string
 }
 
-func computeKeyDynamicAuthPolicy(tpm *tpm2.TPMContext, alg, signAlg tpm2.HashAlgorithmId, privateData *privateKeyData,
-	params *PolicyParams, session tpm2.SessionContext) (*dynamicPolicyData, error) {
-	// Parse the key for signing the dynamic authorization policy.
-	authKey, err := x509.ParsePKCS1PrivateKey(privateData.Data.AuthorizeKeyPrivate)
+func computeSealedKeyDynamicAuthPolicy(tpm *tpm2.TPMContext, alg, signAlg tpm2.HashAlgorithmId, authKey *rsa.PrivateKey,
+	countIndexPub *tpm2.NVPublic, countIndexAuthPolicies tpm2.DigestList, params *PolicyParams,
+	session tpm2.SessionContext) (*dynamicPolicyData, error) {
+	// Obtain the count for the new dynamic authorization policy
+	nextPolicyCount, err := readDynamicPolicyCounter(tpm, countIndexPub, countIndexAuthPolicies, session)
 	if err != nil {
-		return nil, xerrors.Errorf("cannot parse authorization key: %w", err)
+		return nil, xerrors.Errorf("cannot read dynamic policy counter: %w", err)
 	}
+	nextPolicyCount += 1
 
-	policyRevokeIndexPub := privateData.Data.PolicyRevokeIndexPublic
-	policyRevokeIndex, err := tpm2.CreateNVIndexResourceContextFromPublic(policyRevokeIndexPub)
+	countIndexName, _ := countIndexPub.Name()
 	if err != nil {
-		return nil, xerrors.Errorf("cannot create context for dynamic authorization policy revocation NV index: %w", err)
-	}
-
-	// Obtain the revoke count for the new dynamic authorization policy
-	var nextPolicyRevokeCount uint64
-	if c, err := tpm.NVReadCounter(policyRevokeIndex, policyRevokeIndex, session); err != nil {
-		return nil, xerrors.Errorf("cannot read revocation counter: %w", err)
-	} else {
-		nextPolicyRevokeCount = c + 1
+		return nil, xerrors.Errorf("cannot compute name of dynamic policy counter: %w", err)
 	}
 
 	// Compute PCR digests
@@ -172,8 +167,8 @@ func computeKeyDynamicAuthPolicy(tpm *tpm2.TPMContext, alg, signAlg tpm2.HashAlg
 		ubuntuBootParamsPCRAlg:     pcrAlgorithm,
 		secureBootPCRDigests:       secureBootDigests,
 		ubuntuBootParamsPCRDigests: ubuntuBootParamsDigests,
-		policyRevokeIndexPub:       policyRevokeIndexPub,
-		policyRevokeCount:          nextPolicyRevokeCount}
+		policyCountIndexName:       countIndexName,
+		policyCount:                nextPolicyCount}
 
 	policyData, err := computeDynamicPolicy(alg, &policyParams)
 	if err != nil {
@@ -184,8 +179,7 @@ func computeKeyDynamicAuthPolicy(tpm *tpm2.TPMContext, alg, signAlg tpm2.HashAlg
 }
 
 type CreationParams struct {
-	PolicyRevocationHandle tpm2.Handle
-	PinHandle              tpm2.Handle
+	PinHandle tpm2.Handle
 }
 
 // SealKeyToTPM seals the provided disk encryption key to the storage hierarchy of the TPM. The caller is required to provide a
@@ -204,14 +198,14 @@ type CreationParams struct {
 // If there is already a file at either specified path, a wrapped *os.PathError error will be returned with an underlying error of
 // syscall.EEXIST.
 //
-// The caller is expected to provide handles at which NV indices should be created for policy revocation and PIN support via the
-// PolicyRevocationHandle and PinHandle fields of the CreationParams struct. If either handle is already in use, a
-// TPMResourceExistsError error will be returned. The handles must be valid NV index handles (MSO == 0x01), and the choice of handle
-// should take in to consideration the reserved indices from the "Registry of reserved TPM 2.0 handles and localities" specification.
-// It is recommended that the handles are in the block reserved for owner objects (0x01800000 - 0x01bfffff). The owner authorization
-// is also required, provided by calling TPMConnection.OwnerHandleContext().SetAuthValue() prior to calling this function. If the
-// provided owner authorization is incorrect, a AuthFailError error will be returned. On a TPM that has been newly provisioned with
-// ProvisionTPM, the owner authorization is empty and the nil value can be passed here.
+// The caller is expected to provide a handle at which a NV index should be created for dynamic authorization policy revocation and
+// PIN support via the PinHandle field of the CreationParams struct. If the handle is already in use, a TPMResourceExistsError error
+// will be returned. The handle must be a valid NV index handle (MSO == 0x01), and the choice of handle should take in to
+// consideration the reserved indices from the "Registry of reserved TPM 2.0 handles and localities" specification. It is recommended
+// that the handle is in the block reserved for owner objects (0x01800000 - 0x01bfffff). The owner authorization is also required,
+// provided by calling TPMConnection.OwnerHandleContext().SetAuthValue() prior to calling this function. If the provided owner
+// authorization is incorrect, a AuthFailError error will be returned. On a TPM that has been newly provisioned with ProvisionTPM,
+// the owner authorization is empty and the nil value can be passed here.
 func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *CreationParams, policy *PolicyParams, key []byte) error {
 	// Check that the key is the correct length
 	if len(key) != 32 {
@@ -292,8 +286,15 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 		}()
 	}
 
+	// Create an asymmetric key for signing authorization policy updates, and authorizing dynamic auhtorization
+	// policy revocations.
+	authKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return xerrors.Errorf("cannot generate RSA key pair for signing dynamic authorization policies: %w", err)
+	}
+
 	// Create pin NV index
-	pinIndexPub, pinIndexKeyName, err := createPinNvIndex(tpm.TPMContext, create.PinHandle, session)
+	pinIndexPub, pinIndexAuthPolicies, err := createPinNvIndex(tpm.TPMContext, create.PinHandle, &authKey.PublicKey, session)
 	if err != nil {
 		switch {
 		case isNVIndexDefinedError(err):
@@ -317,33 +318,14 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 	sealedKeyNameAlg := tpm2.HashAlgorithmSHA256
 
 	// Compute the static policy - this never changes for the lifetime of this key file
-	staticPolicyData, authKey, authPolicy, err :=
-		computeStaticPolicy(sealedKeyNameAlg, &staticPolicyComputeParams{pinIndexPub: pinIndexPub, lockIndexName: lockIndexName})
+	staticPolicyData, authPolicy, err := computeStaticPolicy(sealedKeyNameAlg, &staticPolicyComputeParams{
+		key:                  &authKey.PublicKey,
+		pinIndexPub:          pinIndexPub,
+		pinIndexAuthPolicies: pinIndexAuthPolicies,
+		lockIndexName:        lockIndexName})
 	if err != nil {
 		return xerrors.Errorf("cannot compute static authorization policy: %w", err)
 	}
-
-	// Create dynamic authorization policy revocation index
-	policyRevokeIndexPub, err := createPolicyRevocationNvIndex(tpm.TPMContext, create.PolicyRevocationHandle, authKey, session)
-	if err != nil {
-		switch {
-		case isNVIndexDefinedError(err):
-			return TPMResourceExistsError{create.PolicyRevocationHandle}
-		case isAuthFailError(err):
-			return AuthFailError{tpm2.HandleOwner}
-		}
-		return xerrors.Errorf("cannot create dynamic authorization policy revocation NV counter: %w", err)
-	}
-	defer func() {
-		if succeeded {
-			return
-		}
-		index, err := tpm2.CreateNVIndexResourceContextFromPublic(policyRevokeIndexPub)
-		if err != nil {
-			return
-		}
-		tpm.NVUndefineSpace(tpm.OwnerHandleContext(), index, session)
-	}()
 
 	// Define the template for the sealed key object, using the computed policy digest
 	template := tpm2.Public{
@@ -358,7 +340,6 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 	// Have the digest of the private data recorded in the creation data for the sealed data object.
 	var privateData privateKeyData
 	privateData.Data.AuthorizeKeyPrivate = x509.MarshalPKCS1PrivateKey(authKey)
-	privateData.Data.PolicyRevokeIndexPublic = policyRevokeIndexPub
 
 	h := crypto.SHA256.New()
 	if err := tpm2.MarshalToWriter(h, &privateData.Data); err != nil {
@@ -379,7 +360,8 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 
 	// Create a dynamic authorization policy
 	dynamicPolicyData, err :=
-		computeKeyDynamicAuthPolicy(tpm.TPMContext, sealedKeyNameAlg, staticPolicyData.AuthorizeKeyPublic.NameAlg, &privateData, policy, session)
+		computeSealedKeyDynamicAuthPolicy(tpm.TPMContext, sealedKeyNameAlg, staticPolicyData.AuthorizeKeyPublic.NameAlg, authKey,
+			pinIndexPub, pinIndexAuthPolicies, policy, session)
 	if err != nil {
 		return err
 	}
@@ -389,7 +371,6 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 		KeyPrivate:        priv,
 		KeyPublic:         pub,
 		AuthModeHint:      AuthModeNone,
-		PinIndexKeyName:   pinIndexKeyName,
 		StaticPolicyData:  staticPolicyData,
 		DynamicPolicyData: dynamicPolicyData}
 
@@ -404,13 +385,9 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 		}
 	}
 
-	policyRevokeIndex, err := tpm2.CreateNVIndexResourceContextFromPublic(policyRevokeIndexPub)
-	if err != nil {
-		return xerrors.Errorf("cannot increment dynamic policy revocation NV counter: cannot create context for NV index: %w", err)
-	}
-	if err := incrementPolicyRevocationNvIndex(tpm.TPMContext, policyRevokeIndex, authKey, data.StaticPolicyData.AuthorizeKeyPublic,
-		session); err != nil {
-		return xerrors.Errorf("cannot increment dynamic policy revocation NV counter: %w", err)
+	if err := incrementDynamicPolicyCounter(tpm.TPMContext, pinIndexPub, pinIndexAuthPolicies, authKey,
+		data.StaticPolicyData.AuthorizeKeyPublic, session); err != nil {
+		return xerrors.Errorf("cannot increment dynamic policy counter: %w", err)
 	}
 
 	succeeded = true
@@ -430,41 +407,39 @@ func UpdateKeyAuthPolicy(tpm *TPMConnection, keyPath, privatePath string, params
 	// Use the HMAC session created when the connection was opened rather than creating a new one.
 	session := tpm.HmacSession()
 
-	// Open and read the key data file
-	f1, err := os.Open(keyPath)
+	// Open the key data file
+	keyFile, err := os.Open(keyPath)
 	if err != nil {
-		return xerrors.Errorf("cannot open existing key data file to update: %w", err)
+		return xerrors.Errorf("cannot open key data file: %w", err)
 	}
-	defer f1.Close()
-	data, err := readKeyData(f1)
-	if err != nil {
-		return InvalidKeyFileError{err.Error()}
-	}
+	defer keyFile.Close()
 
-	// Open and read the private data file
-	f2, err := os.Open(privatePath)
+	// Open the private data file
+	privateFile, err := os.Open(privatePath)
 	if err != nil {
-		return xerrors.Errorf("cannot open existing private data file: %w", err)
+		return xerrors.Errorf("cannot open private data file: %w", err)
 	}
-	defer f2.Close()
-	privateData, err := readPrivateData(f2)
-	if err != nil {
-		return InvalidKeyFileError{err.Error()}
-	}
+	defer privateFile.Close()
 
-	if err := data.validate(tpm, privateData); err != nil {
-		switch e := err.(type) {
-		case keyFileError:
-			return InvalidKeyFileError{"integrity check failed: " + e.err.Error()}
+	data, privateData, pinIndexPublic, err := readAndValidateKeyData(tpm.TPMContext, keyFile, privateFile, session)
+	if err != nil {
+		var kfErr keyFileError
+		if xerrors.As(err, &kfErr) {
+			return InvalidKeyFileError{err.Error()}
 		}
 		// FIXME: Turn the missing lock NV index in to ErrProvisioning
-		return xerrors.Errorf("cannot integrity check key data file: %w", err)
+		return xerrors.Errorf("cannot read and validate key data file: %w", err)
+	}
+
+	authKey, err := x509.ParsePKCS1PrivateKey(privateData.Data.AuthorizeKeyPrivate)
+	if err != nil {
+		return xerrors.Errorf("cannot parse authorization key: %w", err)
 	}
 
 	// Compute a new dynamic authorization policy
 	policyData, err :=
-		computeKeyDynamicAuthPolicy(tpm.TPMContext, data.KeyPublic.NameAlg, data.StaticPolicyData.AuthorizeKeyPublic.NameAlg, privateData,
-			params, session)
+		computeSealedKeyDynamicAuthPolicy(tpm.TPMContext, data.KeyPublic.NameAlg, data.StaticPolicyData.AuthorizeKeyPublic.NameAlg, authKey,
+			pinIndexPublic, data.StaticPolicyData.PinIndexAuthPolicies, params, session)
 	if err != nil {
 		return err
 	}
@@ -476,17 +451,9 @@ func UpdateKeyAuthPolicy(tpm *TPMConnection, keyPath, privatePath string, params
 		return xerrors.Errorf("cannot write key data file: %v", err)
 	}
 
-	policyRevokeIndex, err := tpm2.CreateNVIndexResourceContextFromPublic(privateData.Data.PolicyRevokeIndexPublic)
-	if err != nil {
-		return xerrors.Errorf("cannot revoke old authorization policies: cannot create context for policy revocation NV index: %w", err)
-	}
-	authKey, err := x509.ParsePKCS1PrivateKey(privateData.Data.AuthorizeKeyPrivate)
-	if err != nil {
-		return xerrors.Errorf("cannot revoke old authorization policies: cannot parse authorization key: %w", err)
-	}
-	if err := incrementPolicyRevocationNvIndex(tpm.TPMContext, policyRevokeIndex, authKey, data.StaticPolicyData.AuthorizeKeyPublic,
-		session); err != nil {
-		return xerrors.Errorf("cannot revoke old authorization policies: %w", err)
+	if err := incrementDynamicPolicyCounter(tpm.TPMContext, pinIndexPublic, data.StaticPolicyData.PinIndexAuthPolicies, authKey,
+		data.StaticPolicyData.AuthorizeKeyPublic, session); err != nil {
+		return xerrors.Errorf("cannot revoke old dynamic authorization policies: %w", err)
 	}
 
 	return nil
@@ -514,7 +481,7 @@ func DeleteKey(tpm *TPMConnection, path string) error {
 		return InvalidKeyFileError{err.Error()}
 	}
 
-	keyContext, err := data.load(tpm)
+	keyContext, err := data.load(tpm.TPMContext, session)
 	if err != nil {
 		var kfErr keyFileError
 		var ruErr tpm2.ResourceUnavailableError
@@ -527,15 +494,6 @@ func DeleteKey(tpm *TPMConnection, path string) error {
 		return xerrors.Errorf("cannot load existing key data file: %w", err)
 	}
 	tpm.FlushContext(keyContext)
-
-	if policyRevokeContext, err := tpm.CreateResourceContextFromTPM(data.DynamicPolicyData.PolicyRevokeIndexHandle); err == nil {
-		if err := tpm.NVUndefineSpace(tpm.OwnerHandleContext(), policyRevokeContext, session); err != nil {
-			if isAuthFailError(err) {
-				return AuthFailError{tpm2.HandleOwner}
-			}
-			return xerrors.Errorf("cannot undefine policy revocation NV index: %w", err)
-		}
-	}
 
 	if pinContext, err := tpm.CreateResourceContextFromTPM(data.StaticPolicyData.PinIndexHandle); err == nil {
 		if err := tpm.NVUndefineSpace(tpm.OwnerHandleContext(), pinContext, session); err != nil {
