@@ -162,8 +162,8 @@ func TestReadAndValidateLockNVIndexPublic(t *testing.T) {
 		}
 		var version uint8
 		var keyName tpm2.Name
-		var clockBytes []byte
-		if _, err := tpm2.UnmarshalFromBytes(data, &version, &keyName, &clockBytes); err != nil {
+		var clock uint64
+		if _, err := tpm2.UnmarshalFromBytes(data, &version, &keyName, &clock); err != nil {
 			t.Fatalf("UnmarshalFromBytes failed: %v", err)
 		}
 
@@ -171,9 +171,8 @@ func TestReadAndValidateLockNVIndexPublic(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ReadClock failed: %v", err)
 		}
-		binary.BigEndian.PutUint64(clockBytes, time.ClockInfo.Clock+3600000)
 
-		data, err = tpm2.MarshalToBytes(version, keyName, clockBytes)
+		data, err = tpm2.MarshalToBytes(version, keyName, time.ClockInfo.Clock+3600000)
 		if err != nil {
 			t.Errorf("MarshalToBytes failed: %v", err)
 		}
@@ -289,8 +288,7 @@ func TestReadAndValidateLockNVIndexPublic(t *testing.T) {
 			t.Errorf("NVWrite failed: %v", err)
 		}
 
-		binary.BigEndian.PutUint64(clockBytes, time.ClockInfo.Clock)
-		data, err := tpm2.MarshalToBytes(uint8(0), keyName, clockBytes)
+		data, err := tpm2.MarshalToBytes(uint8(0), keyName, time.ClockInfo.Clock)
 		if err != nil {
 			t.Fatalf("MarshalToBytes failed: %v", err)
 		}

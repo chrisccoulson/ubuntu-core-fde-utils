@@ -319,7 +319,7 @@ func ensureLockNVIndex(tpm *tpm2.TPMContext, session tpm2.SessionContext) error 
 	}
 
 	// Marshal key name and cut-off time for writing to the NV index so that they can be used for verification in the future.
-	data, err := tpm2.MarshalToBytes(lockNVIndexVersion, keyName, clockBytes)
+	data, err := tpm2.MarshalToBytes(lockNVIndexVersion, keyName, time.ClockInfo.Clock)
 	if err != nil {
 		panic(fmt.Sprintf("cannot marshal contents for data NV index: %v", err))
 	}
@@ -373,8 +373,8 @@ func readAndValidateLockNVIndexPublic(tpm *tpm2.TPMContext, index tpm2.ResourceC
 	// Unmarshal the data
 	var version uint8
 	var keyName tpm2.Name
-	var clockBytes []byte
-	if _, err := tpm2.UnmarshalFromBytes(data, &version, &keyName, &clockBytes); err != nil {
+	var clock uint64
+	if _, err := tpm2.UnmarshalFromBytes(data, &version, &keyName, &clock); err != nil {
 		return nil, xerrors.Errorf("cannot unmarshal policy data: %w", err)
 	}
 
@@ -389,9 +389,8 @@ func readAndValidateLockNVIndexPublic(tpm *tpm2.TPMContext, index tpm2.ResourceC
 		return nil, xerrors.Errorf("cannot read current time: %w", err)
 	}
 
-	// Make sure the window beyond which this index can be written has passed.
-	policyClock := binary.BigEndian.Uint64(clockBytes)
-	if time.ClockInfo.Clock+lockNVIndexGraceTime < policyClock {
+	// Make sure the window beyond which this index can be written has passed or about to pass.
+	if time.ClockInfo.Clock+lockNVIndexGraceTime < clock {
 		return nil, errors.New("unexpected clock value in policy data")
 	}
 
@@ -406,6 +405,9 @@ func readAndValidateLockNVIndexPublic(tpm *tpm2.TPMContext, index tpm2.ResourceC
 	if pub.Attrs != lockNVIndexAttrs|tpm2.AttrNVWritten {
 		return nil, errors.New("unexpected NV index attributes")
 	}
+
+	clockBytes := make([]byte, binary.Size(clock))
+	binary.BigEndian.PutUint64(clockBytes, clock)
 
 	// Compute the expected authorization policy from the contents of the data index, and make sure this matches the public area.
 	// This verifies that the lock NV index has a valid authorization policy.
