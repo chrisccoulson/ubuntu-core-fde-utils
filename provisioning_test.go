@@ -536,7 +536,7 @@ func TestProvisionWithInvalidEkCert(t *testing.T) {
 
 func TestProvisionStatus(t *testing.T) {
 	tpm, _ := openTPMSimulatorForTesting(t)
-	defer func () {
+	defer func() {
 		clearTPMWithPlatformAuth(t, tpm)
 		closeTPM(t, tpm)
 	}()

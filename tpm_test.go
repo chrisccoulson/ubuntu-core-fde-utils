@@ -275,7 +275,7 @@ func certifyTPM(tpm *tpm2.TPMContext) error {
 		nvPub := tpm2.NVPublic{
 			Index:   ekCertHandle,
 			NameAlg: tpm2.HashAlgorithmSHA256,
-			Attrs:   tpm2.MakeNVAttributes(tpm2.AttrNVPPWrite|tpm2.AttrNVAuthRead|tpm2.AttrNVNoDA|tpm2.AttrNVPlatformCreate, tpm2.NVTypeOrdinary),
+			Attrs:   tpm2.NVTypeOrdinary.WithAttrs(tpm2.AttrNVPPWrite | tpm2.AttrNVAuthRead | tpm2.AttrNVNoDA | tpm2.AttrNVPlatformCreate),
 			Size:    uint16(len(cert))}
 		index, err := tpm.NVDefineSpace(tpm.PlatformHandleContext(), nil, &nvPub, nil)
 		if err != nil {

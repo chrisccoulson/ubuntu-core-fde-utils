@@ -35,12 +35,12 @@ import (
 const (
 	lockNVDataHandle tpm2.Handle = 0x01801101
 
-	lockNVIndexVersion uint8 = 0
-	lockNVIndexGraceTime = 5000
+	lockNVIndexVersion   uint8 = 0
+	lockNVIndexGraceTime       = 5000
 )
 
 var (
-	lockNVIndexAttrs = tpm2.MakeNVAttributes(tpm2.AttrNVPolicyWrite|tpm2.AttrNVAuthRead|tpm2.AttrNVNoDA|tpm2.AttrNVReadStClear, tpm2.NVTypeOrdinary)
+	lockNVIndexAttrs = tpm2.NVTypeOrdinary.WithAttrs(tpm2.AttrNVPolicyWrite | tpm2.AttrNVAuthRead | tpm2.AttrNVNoDA | tpm2.AttrNVReadStClear)
 )
 
 type dynamicPolicyComputeParams struct {
@@ -66,7 +66,7 @@ type dynamicPolicyData struct {
 }
 
 type staticPolicyComputeParams struct {
-	pinIndexPub *tpm2.NVPublic
+	pinIndexPub   *tpm2.NVPublic
 	lockIndexName tpm2.Name
 }
 
@@ -149,7 +149,7 @@ func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, key
 	public := &tpm2.NVPublic{
 		Index:      handle,
 		NameAlg:    nameAlg,
-		Attrs:      tpm2.MakeNVAttributes(tpm2.AttrNVPolicyWrite|tpm2.AttrNVAuthRead, tpm2.NVTypeCounter),
+		Attrs:      tpm2.NVTypeCounter.WithAttrs(tpm2.AttrNVPolicyWrite | tpm2.AttrNVAuthRead),
 		AuthPolicy: trial.GetDigest(),
 		Size:       8}
 
@@ -212,7 +212,7 @@ func ensureLockNVIndex(tpm *tpm2.TPMContext, session tpm2.SessionContext) error 
 	// to use those to determine whether the lock NV index has a valid authorization policy.
 
 	if existing, err := tpm.CreateResourceContextFromTPM(lockNVHandle); err == nil {
-		if pub, _ := readAndValidateLockNVIndexPublic(tpm, existing, session); pub != nil {
+		if _, err := readAndValidateLockNVIndexPublic(tpm, existing, session); err == nil {
 			return nil
 		}
 	}
@@ -326,10 +326,10 @@ func ensureLockNVIndex(tpm *tpm2.TPMContext, session tpm2.SessionContext) error 
 
 	// Create the data index.
 	dataPublic := tpm2.NVPublic{
-		Index:      lockNVDataHandle,
-		NameAlg:    tpm2.HashAlgorithmSHA256,
-		Attrs:      tpm2.MakeNVAttributes(tpm2.AttrNVAuthWrite|tpm2.AttrNVWriteDefine|tpm2.AttrNVAuthRead|tpm2.AttrNVNoDA, tpm2.NVTypeOrdinary),
-		Size:       uint16(len(data))}
+		Index:   lockNVDataHandle,
+		NameAlg: tpm2.HashAlgorithmSHA256,
+		Attrs:   tpm2.NVTypeOrdinary.WithAttrs(tpm2.AttrNVAuthWrite | tpm2.AttrNVWriteDefine | tpm2.AttrNVAuthRead | tpm2.AttrNVNoDA),
+		Size:    uint16(len(data))}
 	dataIndex, err := tpm.NVDefineSpace(tpm.OwnerHandleContext(), nil, &dataPublic, session)
 	if err != nil {
 		return xerrors.Errorf("cannot create data NV index: %w", err)
@@ -359,15 +359,15 @@ func readAndValidateLockNVIndexPublic(tpm *tpm2.TPMContext, index tpm2.ResourceC
 	// authorization policy.
 	dataIndex, err := tpm.CreateResourceContextFromTPM(lockNVDataHandle)
 	if err != nil {
-		return nil, xerrors.Errorf("cannot obtain context for data NV index: %w", err)
+		return nil, xerrors.Errorf("cannot obtain context for policy data NV index: %w", err)
 	}
 	dataPub, _, err := tpm.NVReadPublic(dataIndex)
 	if err != nil {
-		return nil, xerrors.Errorf("cannot read public area of data NV index: %w", err)
+		return nil, xerrors.Errorf("cannot read public area of policy data NV index: %w", err)
 	}
 	data, err := tpm.NVRead(dataIndex, dataIndex, dataPub.Size, 0, nil)
 	if err != nil {
-		return nil, xerrors.Errorf("cannot read data NV index contents: %w", err)
+		return nil, xerrors.Errorf("cannot read policy data: %w", err)
 	}
 
 	// Unmarshal the data
@@ -375,12 +375,12 @@ func readAndValidateLockNVIndexPublic(tpm *tpm2.TPMContext, index tpm2.ResourceC
 	var keyName tpm2.Name
 	var clockBytes []byte
 	if _, err := tpm2.UnmarshalFromBytes(data, &version, &keyName, &clockBytes); err != nil {
-		return nil, xerrors.Errorf("cannot unmarshal NV index contents: %w", err)
+		return nil, xerrors.Errorf("cannot unmarshal policy data: %w", err)
 	}
 
 	// Allow for future changes to the public attributes or auth policy configuration.
 	if version != lockNVIndexVersion {
-		return nil, nil
+		return nil, errors.New("unrecognized version for policy data")
 	}
 
 	// Read the current TPM clock.
@@ -391,8 +391,8 @@ func readAndValidateLockNVIndexPublic(tpm *tpm2.TPMContext, index tpm2.ResourceC
 
 	// Make sure the window beyond which this index can be written has passed.
 	policyClock := binary.BigEndian.Uint64(clockBytes)
-	if time.ClockInfo.Clock + lockNVIndexGraceTime < policyClock {
-		return nil, nil
+	if time.ClockInfo.Clock+lockNVIndexGraceTime < policyClock {
+		return nil, errors.New("unexpected clock value in policy data")
 	}
 
 	// Read the public area of the lock NV index.
@@ -401,24 +401,24 @@ func readAndValidateLockNVIndexPublic(tpm *tpm2.TPMContext, index tpm2.ResourceC
 		return nil, xerrors.Errorf("cannot read public area of NV index: %w", err)
 	}
 
-	pub.Attrs &^=tpm2.AttrNVReadLocked
+	pub.Attrs &^= tpm2.AttrNVReadLocked
 	// Validate its attributes
 	if pub.Attrs != lockNVIndexAttrs|tpm2.AttrNVWritten {
-		return nil, nil
+		return nil, errors.New("unexpected NV index attributes")
 	}
 
 	// Compute the expected authorization policy from the contents of the data index, and make sure this matches the public area.
 	// This verifies that the lock NV index has a valid authorization policy.
 	trial, err := tpm2.ComputeAuthPolicy(pub.NameAlg)
 	if err != nil {
-		return nil, nil
+		return nil, xerrors.Errorf("cannot compute expected policy for NV index: %w", err)
 	}
 	trial.PolicyCommandCode(tpm2.CommandNVWrite)
 	trial.PolicyCounterTimer(clockBytes, 8, tpm2.OpUnsignedLT)
 	trial.PolicySigned(keyName, nil)
 
 	if !bytes.Equal(trial.GetDigest(), pub.AuthPolicy) {
-		return nil, nil
+		return nil, errors.New("incorrect policy for NV index")
 	}
 
 	// This is a valid global lock NV index that cannot be recreated!
@@ -636,7 +636,7 @@ func lockAccessToSealedKeysUntilTPMReset(tpm *tpm2.TPMContext, session tpm2.Sess
 	if err != nil {
 		return xerrors.Errorf("cannot obtain handles from TPM: %w", err)
 	}
-	if len(handles) == 0|| handles[0] != lockNVHandle {
+	if len(handles) == 0 || handles[0] != lockNVHandle {
 		// Not provisioned, so no keys to protect.
 		return nil
 	}

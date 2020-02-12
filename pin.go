@@ -76,7 +76,7 @@ func createPinNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, hmacSession tpm2
 	nvPublic := &tpm2.NVPublic{
 		Index:      handle,
 		NameAlg:    nameAlg,
-		Attrs:      tpm2.MakeNVAttributes(tpm2.AttrNVPolicyWrite|tpm2.AttrNVAuthRead, tpm2.NVTypeOrdinary),
+		Attrs:      tpm2.NVTypeOrdinary.WithAttrs(tpm2.AttrNVPolicyWrite | tpm2.AttrNVAuthRead),
 		AuthPolicy: trial.GetDigest(),
 		Size:       0}
 

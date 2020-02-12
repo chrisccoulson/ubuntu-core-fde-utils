@@ -407,9 +407,7 @@ func ProvisionStatus(tpm *TPMConnection) (ProvisionStatusAttributes, error) {
 		if _, unavail := err.(tpm2.ResourceUnavailableError); !unavail {
 			return 0, err
 		}
-	} else if pub, err := readAndValidateLockNVIndexPublic(tpm.TPMContext, lockIndex, session); err != nil {
-		return 0, xerrors.Errorf("cannot determine if NV index at 0x%08x is global lock index: %w", lockNVHandle, err)
-	} else if pub != nil {
+	} else if _, err := readAndValidateLockNVIndexPublic(tpm.TPMContext, lockIndex, session); err == nil {
 		out |= AttrLockNVIndex
 	}
 
