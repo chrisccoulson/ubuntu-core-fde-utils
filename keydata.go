@@ -233,7 +233,7 @@ func (d *keyData) validate(tpm *TPMConnection, privateData *privateKeyData) erro
 	if err != nil {
 		return xerrors.Errorf("cannot create context for lock NV index: %v", err)
 	}
-	lockIndexPub, err := getLockNVIndexPublic(tpm.TPMContext, lockIndex, session)
+	lockIndexPub, err := readAndValidateLockNVIndexPublic(tpm.TPMContext, lockIndex, session)
 	if err != nil {
 		return xerrors.Errorf("cannot determine if NV index at 0x%08x is global lock index: %w", lockNVHandle, err)
 	}

@@ -243,21 +243,18 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 		}
 	}
 
-	lockIndexPub := tpm.provisionedLockNVIndexPub
-	if lockIndexPub == nil {
-		lockIndex, err := tpm.CreateResourceContextFromTPM(lockNVHandle)
-		if err != nil {
-			if _, unavail := err.(tpm2.ResourceUnavailableError); unavail {
-				return ErrProvisioning
-			}
-			return xerrors.Errorf("cannot create context for lock NV index: %w", err)
-		}
-		lockIndexPub, err = getLockNVIndexPublic(tpm.TPMContext, lockIndex, session)
-		if err != nil {
-			return xerrors.Errorf("cannot determine if NV index is global lock index: %w", err)
-		} else if lockIndexPub == nil {
+	lockIndex, err := tpm.CreateResourceContextFromTPM(lockNVHandle)
+	if err != nil {
+		if _, unavail := err.(tpm2.ResourceUnavailableError); unavail {
 			return ErrProvisioning
 		}
+		return xerrors.Errorf("cannot create context for lock NV index: %w", err)
+	}
+	lockIndexPub, err := readAndValidateLockNVIndexPublic(tpm.TPMContext, lockIndex, session)
+	if err != nil {
+		return xerrors.Errorf("cannot determine if NV index is global lock index: %w", err)
+	} else if lockIndexPub == nil {
+		return ErrProvisioning
 	}
 	lockIndexName, err := lockIndexPub.Name()
 	if err != nil {

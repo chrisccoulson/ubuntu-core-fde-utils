@@ -212,7 +212,7 @@ func ensureLockNVIndex(tpm *tpm2.TPMContext, session tpm2.SessionContext) error 
 	// to use those to determine whether the lock NV index has a valid authorization policy.
 
 	if existing, err := tpm.CreateResourceContextFromTPM(lockNVHandle); err == nil {
-		if pub, _ := getLockNVIndexPublic(tpm, existing, session); pub != nil {
+		if pub, _ := readAndValidateLockNVIndexPublic(tpm, existing, session); pub != nil {
 			return nil
 		}
 	}
@@ -354,7 +354,7 @@ func ensureLockNVIndex(tpm *tpm2.TPMContext, session tpm2.SessionContext) error 
 	return nil
 }
 
-func getLockNVIndexPublic(tpm *tpm2.TPMContext, index tpm2.ResourceContext, session tpm2.SessionContext) (*tpm2.NVPublic, error) {
+func readAndValidateLockNVIndexPublic(tpm *tpm2.TPMContext, index tpm2.ResourceContext, session tpm2.SessionContext) (*tpm2.NVPublic, error) {
 	// Obtain the data recorded alongside the lock NV index for validating that the lock NV index has a valid
 	// authorization policy.
 	dataIndex, err := tpm.CreateResourceContextFromTPM(lockNVDataHandle)
