@@ -191,25 +191,35 @@ func ensureLockNVIndex(tpm *tpm2.TPMContext, session tpm2.SessionContext) error 
 	//
 	// To prevent someone with knowledge of the owner authorization (which is empty unless someone has taken ownership of the TPM) from
 	// clearing the read lock bit by just undefining and redifining a new NV index with the same properties, we need a way to prevent
-	// someone from being able to create an index with the same name. To do this, we require the NV index to be written to and only allow
-	// writes with a signed authorization policy. Once initialized, the signing key is discarded. This works because the name of the
-	// signing key is included in the authorization policy digest for the NV index, and the authorization policy digest and written
-	// attribute is included in the name of the NV index. Without the private part of the signing key, it is impossible to create a new
-	// NV index with the same name, and so, if this NV index is undefined then it becomes impossible to satisfy the authorization policy
-	// for any sealed key objects we've created already.
+	// someone from being able to create an identical index. One option for this would be to use a NV counter, which have the property
+	// that they can only increment and are initialized with a value larger than the largest count value seen on the TPM. Whilst it
+	// would be possible to recreate a counter with the same name, it wouldn't be possible to recreate one with the same value. Keys
+	// sealed by this package can then execute an assertion that the counter is equal to a certain value. One problem with this is that
+	// the current value needs to be known at key sealing time (as it forms part of the authorization value), and the read lock bit will
+	// prevent the count value from being read from the TPM. Also, the number of counters available is extremely limited, and we already
+	// use one per sealed key.
+	//
+	// Another approach is to use an ordinary NV index that can't be recreated with the same name. To do this, we require the NV index
+	// to be written to and only allow writes with a signed authorization policy. Once initialized, the signing key is discarded. This
+	// works because the name of the signing key is included in the authorization policy digest for the NV index, and the authorization
+	// policy digest and written attribute is included in the name of the NV index. Without the private part of the signing key, it is
+	// impossible to create a new NV index with the same name, and so, if this NV index is undefined then it becomes impossible to
+	// satisfy the authorization policy for any sealed key objects we've created already.
 	//
 	// The issue here though is that the globally defined NV index is created at provisioning time, and it may be possible to seal a new
 	// key to the TPM at any point in the future without provisioning a new global NV index here. In the time between provisioning and
-	// sealing a key to the TPM, a bad actor may have created a new NV index with a policy that only allows writes with a signed
+	// sealing a key to the TPM, an adversary may have created a new NV index with a policy that only allows writes with a signed
 	// authorization, initialized it, but then retained the private part of the key. This allows them to undefine and redefine a new NV
 	// index with the same name in the future in order to remove the read lock bit. To mitigate this, we include another assertion in
-	// the authorization policy that only allows writes for a limited amount of time (sufficient to initialize the index after it is
-	// created), and disallows writes once the TPM's clock has advanced past that time. As the parameters of this assertion are included
-	// in the authorization policy digest, it becomes impossible even for someone with the private part of the key to create and
-	// initialize a NV index with the same name once the TPM's clock has advanced past that point, without performing a clear of the TPM.
+	// the authorization policy that only allows writes during a small time window (sufficient to initialize the index after it is
+	// created), and disallows writes once the TPM's clock has advanced past that window. As the parameters of this assertion are
+	// included in the authorization policy digest, it becomes impossible even for someone with the private part of the key to create
+	// and initialize a NV index with the same name once the TPM's clock has advanced past that point, without performing a clear of the
+	// TPM.
 	//
-	// The signing key name and the time beyond which writes cannot be performed are recorded in another NV index so that it is possible
-	// to use those to determine whether the lock NV index has a valid authorization policy.
+	// The signing key name and the time window during which the index can be initialized are recorded in another NV index so that it is
+	// possible to use those to determine whether the lock NV index has an authorization policy that can never be satisfied and so the
+	// index can not be recreated.
 
 	if existing, err := tpm.CreateResourceContextFromTPM(lockNVHandle); err == nil {
 		if _, err := readAndValidateLockNVIndexPublic(tpm, existing, session); err == nil {
