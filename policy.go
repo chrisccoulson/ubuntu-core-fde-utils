@@ -266,6 +266,9 @@ func ensureLockNVIndex(tpm *tpm2.TPMContext, session tpm2.SessionContext) error 
 		Size:       0}
 	index, err := tpm.NVDefineSpace(tpm.OwnerHandleContext(), nil, public, session)
 	if err != nil {
+		if isNVIndexDefinedError(err) {
+			return &nvIndexDefinedError{public.Index}
+		}
 		return xerrors.Errorf("cannot create NV index: %w", err)
 	}
 
@@ -342,6 +345,9 @@ func ensureLockNVIndex(tpm *tpm2.TPMContext, session tpm2.SessionContext) error 
 		Size:    uint16(len(data))}
 	dataIndex, err := tpm.NVDefineSpace(tpm.OwnerHandleContext(), nil, &dataPublic, session)
 	if err != nil {
+		if isNVIndexDefinedError(err) {
+			return &nvIndexDefinedError{dataPublic.Index}
+		}
 		return xerrors.Errorf("cannot create data NV index: %w", err)
 	}
 

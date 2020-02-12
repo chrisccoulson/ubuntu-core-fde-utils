@@ -239,6 +239,9 @@ func TestProvisionErrorHandling(t *testing.T) {
 	errOwnerAuthFail := AuthFailError{tpm2.HandleOwner}
 	errLockoutAuthFail := AuthFailError{tpm2.HandleLockout}
 
+	errLockNVHandleExists := TPMResourceExistsError{lockNVHandle}
+	errLockNVDataHandleExists := TPMResourceExistsError{lockNVDataHandle}
+
 	authValue := []byte("1234")
 
 	setLockoutAuth := func(t *testing.T) {
@@ -325,6 +328,36 @@ func TestProvisionErrorHandling(t *testing.T) {
 				}
 			},
 			err: errEndorsementAuthFail,
+		},
+		{
+			desc: "ErrLockNVHandleExists",
+			mode: ProvisionModeFull,
+			prepare: func(t *testing.T) {
+				public := tpm2.NVPublic{
+					Index:   lockNVHandle,
+					NameAlg: tpm2.HashAlgorithmSHA256,
+					Attrs:   tpm2.NVTypeOrdinary.WithAttrs(tpm2.AttrNVAuthRead | tpm2.AttrNVAuthWrite),
+					Size:    0}
+				if _, err := tpm.NVDefineSpace(tpm.OwnerHandleContext(), nil, &public, nil); err != nil {
+					t.Fatalf("NVDefineSpace failed: %v", err)
+				}
+			},
+			err: errLockNVHandleExists,
+		},
+		{
+			desc: "ErrLockNVDataHandleExists",
+			mode: ProvisionModeFull,
+			prepare: func(t *testing.T) {
+				public := tpm2.NVPublic{
+					Index:   lockNVDataHandle,
+					NameAlg: tpm2.HashAlgorithmSHA256,
+					Attrs:   tpm2.NVTypeOrdinary.WithAttrs(tpm2.AttrNVAuthRead | tpm2.AttrNVAuthWrite),
+					Size:    0}
+				if _, err := tpm.NVDefineSpace(tpm.OwnerHandleContext(), nil, &public, nil); err != nil {
+					t.Fatalf("NVDefineSpace failed: %v", err)
+				}
+			},
+			err: errLockNVDataHandleExists,
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {

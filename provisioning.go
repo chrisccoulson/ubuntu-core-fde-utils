@@ -243,9 +243,8 @@ func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte)
 
 	// Provision a lock NV index
 	if err := ensureLockNVIndex(tpm.TPMContext, session); err != nil {
-		if isNVIndexDefinedError(err) {
-			// FIXME: This could be lockNVHandle or lockNVDataHandle
-			return TPMResourceExistsError{lockNVHandle}
+		if isNVIndexDefinedWithHandleError(err) {
+			return TPMResourceExistsError{err.(*nvIndexDefinedError).handle}
 		}
 		return xerrors.Errorf("cannot create lock NV index: %w", err)
 	}
