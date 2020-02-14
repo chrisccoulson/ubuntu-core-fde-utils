@@ -58,7 +58,7 @@ func (k *SealedKeyObject) UnsealFromTPM(tpm *TPMConnection, pin string, lock boo
 				}
 				return nil, xerrors.Errorf("cannot create context for SRK: %w", err)
 			} else if ok, err := isObjectPrimaryKeyWithTemplate(tpm.TPMContext, tpm.OwnerHandleContext(), srkContext, &srkTemplate, tpm.HmacSession()); err != nil {
-				return nil, xerrors.Errorf("cannot determine if object at SRK handle is a primary key in the storage hierarchy: %w", err)
+				return nil, xerrors.Errorf("cannot determine if object at 0x%08x is a primary key in the storage hierarchy: %w", srkHandle, err)
 			} else if !ok {
 				return nil, ErrProvisioning
 			}
@@ -97,7 +97,7 @@ func (k *SealedKeyObject) UnsealFromTPM(tpm *TPMConnection, pin string, lock boo
 	}
 
 	if lock {
-		if err := lockAccessUntilTPMReset(tpm.TPMContext, k.data.StaticPolicyData); err != nil {
+		if err := lockAccessToSealedKeysUntilTPMReset(tpm.TPMContext, hmacSession); err != nil {
 			return nil, fmt.Errorf("cannot lock sealed key object from further access: %v", err)
 		}
 	}

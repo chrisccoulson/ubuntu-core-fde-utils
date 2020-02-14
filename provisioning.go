@@ -67,8 +67,10 @@ const (
 
 	// AttrLockoutAuthSet indicates that the lockout hierarchy has an authorization value defined. This
 	// doesn't necessarily mean that the authorization value is the same one that was originally provided
-	// to TPM - it could have been changed outside of our control.
+	// to ProvisionTPM - it could have been changed outside of our control.
 	AttrLockoutAuthSet
+
+	AttrLockNVIndex // The TPM has a valid NV index used for locking access to keys sealed with SealKeyToTPM
 )
 
 const (
@@ -239,6 +241,14 @@ func ProvisionTPM(tpm *TPMConnection, mode ProvisionMode, newLockoutAuth []byte)
 	}
 	tpm.provisionedSrkContext = srkContext
 
+	// Provision a lock NV index
+	if err := ensureLockNVIndex(tpm.TPMContext, session); err != nil {
+		if isNVIndexDefinedWithHandleError(err) {
+			return TPMResourceExistsError{err.(*nvIndexDefinedError).handle}
+		}
+		return xerrors.Errorf("cannot create lock NV index: %w", err)
+	}
+
 	if mode == ProvisionModeWithoutLockout {
 		return nil
 	}
@@ -368,7 +378,7 @@ func ProvisionStatus(tpm *TPMConnection) (ProvisionStatusAttributes, error) {
 			out |= AttrValidSRK
 		}
 	} else if ok, err := isObjectPrimaryKeyWithTemplate(tpm.TPMContext, tpm.OwnerHandleContext(), srk, &srkTemplate, tpm.HmacSession()); err != nil {
-		return 0, xerrors.Errorf("cannot determine if object at SRK handle is a primary key in the storage hierarchy: %w", err)
+		return 0, xerrors.Errorf("cannot determine if object at 0x%08x is a primary key in the storage hierarchy: %w", srkHandle, err)
 	} else if ok {
 		out |= AttrValidSRK
 	}
@@ -390,6 +400,14 @@ func ProvisionStatus(tpm *TPMConnection) (ProvisionStatusAttributes, error) {
 	}
 	if tpm2.PermanentAttributes(props[0].Value)&tpm2.AttrLockoutAuthSet > 0 {
 		out |= AttrLockoutAuthSet
+	}
+
+	if lockIndex, err := tpm.CreateResourceContextFromTPM(lockNVHandle, session); err != nil {
+		if _, unavail := err.(tpm2.ResourceUnavailableError); !unavail {
+			return 0, err
+		}
+	} else if _, err := readAndValidateLockNVIndexPublic(tpm.TPMContext, lockIndex, session); err == nil {
+		out |= AttrLockNVIndex
 	}
 
 	return out, nil

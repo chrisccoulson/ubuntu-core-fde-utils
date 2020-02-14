@@ -46,6 +46,12 @@ func run() int {
 		fmt.Println("** ERROR: TPM does not have a valid SRK **")
 	}
 
+	if status&fdeutil.AttrValidEK > 0 {
+		fmt.Println("Valid EK found in TPM")
+	} else {
+		fmt.Println("** ERROR: TPM does not have a valid EK **")
+	}
+
 	if status&fdeutil.AttrDAParamsOK > 0 {
 		fmt.Println("TPM's DA parameters are correct")
 	} else {
@@ -62,6 +68,12 @@ func run() int {
 		fmt.Println("The lockout hierarchy authorization is set")
 	} else {
 		fmt.Println("** ERROR: The lockout hierarchy authorization is not set **")
+	}
+
+	if status&fdeutil.AttrLockNVIndex > 0 {
+		fmt.Println("Valid lock NV index found in TPM")
+	} else {
+		fmt.Println("** ERROR: TPM does not have a valid lock NV index **")
 	}
 
 	return 0

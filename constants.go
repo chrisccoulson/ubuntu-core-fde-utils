@@ -27,6 +27,8 @@ const (
 	srkHandle tpm2.Handle = 0x81000001
 	ekHandle  tpm2.Handle = 0x81010001
 
+	lockNVHandle tpm2.Handle = 0x01801100
+
 	// SHA-256 is mandatory to exist on every PC-Client TPM
 	// FIXME: Dynamically select algorithms based on what's available on the device
 	defaultSessionHashAlgorithm tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256

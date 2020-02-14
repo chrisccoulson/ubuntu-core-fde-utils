@@ -37,20 +37,6 @@ const (
 	pcrAlgorithm tpm2.HashAlgorithmId = tpm2.HashAlgorithmSHA256
 )
 
-func isNVIndexDefinedError(err error) bool {
-	var tpmError *tpm2.TPMError
-	if !xerrors.As(err, &tpmError) {
-		return false
-	}
-	if tpmError.Code != tpm2.ErrorNVDefined {
-		return false
-	}
-	if tpmError.Command != tpm2.CommandNVDefineSpace {
-		return false
-	}
-	return true
-}
-
 type OSComponentImage interface {
 	fmt.Stringer
 	ReadAll() ([]byte, error)
@@ -250,11 +236,29 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 			}
 			return xerrors.Errorf("cannot create context for SRK: %w", err)
 		}
-		if ok, err := isObjectPrimaryKeyWithTemplate(tpm.TPMContext, tpm.OwnerHandleContext(), srkContext, &srkTemplate, tpm.HmacSession()); err != nil {
+		if ok, err := isObjectPrimaryKeyWithTemplate(tpm.TPMContext, tpm.OwnerHandleContext(), srkContext, &srkTemplate, session); err != nil {
 			return xerrors.Errorf("cannot determine if object at SRK handle is a primary key in the storage hierarchy: %w", err)
 		} else if !ok {
 			return ErrProvisioning
 		}
+	}
+
+	lockIndex, err := tpm.CreateResourceContextFromTPM(lockNVHandle)
+	if err != nil {
+		if _, unavail := err.(tpm2.ResourceUnavailableError); unavail {
+			return ErrProvisioning
+		}
+		return xerrors.Errorf("cannot create context for lock NV index: %w", err)
+	}
+	lockIndexPub, err := readAndValidateLockNVIndexPublic(tpm.TPMContext, lockIndex, session)
+	if err != nil {
+		return xerrors.Errorf("cannot determine if NV index is global lock index: %w", err)
+	} else if lockIndexPub == nil {
+		return ErrProvisioning
+	}
+	lockIndexName, err := lockIndexPub.Name()
+	if err != nil {
+		return xerrors.Errorf("cannot compute name of global lock NV index: %w", err)
 	}
 
 	succeeded := false
@@ -314,7 +318,7 @@ func SealKeyToTPM(tpm *TPMConnection, keyDest, privateDest string, create *Creat
 
 	// Compute the static policy - this never changes for the lifetime of this key file
 	staticPolicyData, authKey, authPolicy, err :=
-		computeStaticPolicy(sealedKeyNameAlg, &staticPolicyComputeParams{pinIndexPub: pinIndexPub})
+		computeStaticPolicy(sealedKeyNameAlg, &staticPolicyComputeParams{pinIndexPub: pinIndexPub, lockIndexName: lockIndexName})
 	if err != nil {
 		return xerrors.Errorf("cannot compute static authorization policy: %w", err)
 	}
@@ -453,6 +457,7 @@ func UpdateKeyAuthPolicy(tpm *TPMConnection, keyPath, privatePath string, params
 		case keyFileError:
 			return InvalidKeyFileError{"integrity check failed: " + e.err.Error()}
 		}
+		// FIXME: Turn the missing lock NV index in to ErrProvisioning
 		return xerrors.Errorf("cannot integrity check key data file: %w", err)
 	}
 

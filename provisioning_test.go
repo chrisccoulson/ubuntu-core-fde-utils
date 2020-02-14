@@ -153,6 +153,7 @@ func TestProvisionNewTPM(t *testing.T) {
 
 			validateEK(t, tpm)
 			validateSRK(t, tpm)
+			validateLockNVIndex(t, tpm.TPMContext)
 
 			// Validate the DA parameters
 			props, err := tpm.GetCapabilityTPMProperties(tpm2.PropertyMaxAuthFail, 3)
@@ -237,6 +238,9 @@ func TestProvisionErrorHandling(t *testing.T) {
 	errEndorsementAuthFail := AuthFailError{tpm2.HandleEndorsement}
 	errOwnerAuthFail := AuthFailError{tpm2.HandleOwner}
 	errLockoutAuthFail := AuthFailError{tpm2.HandleLockout}
+
+	errLockNVHandleExists := TPMResourceExistsError{lockNVHandle}
+	errLockNVDataHandleExists := TPMResourceExistsError{lockNVDataHandle}
 
 	authValue := []byte("1234")
 
@@ -325,6 +329,36 @@ func TestProvisionErrorHandling(t *testing.T) {
 			},
 			err: errEndorsementAuthFail,
 		},
+		{
+			desc: "ErrLockNVHandleExists",
+			mode: ProvisionModeFull,
+			prepare: func(t *testing.T) {
+				public := tpm2.NVPublic{
+					Index:   lockNVHandle,
+					NameAlg: tpm2.HashAlgorithmSHA256,
+					Attrs:   tpm2.NVTypeOrdinary.WithAttrs(tpm2.AttrNVAuthRead | tpm2.AttrNVAuthWrite),
+					Size:    0}
+				if _, err := tpm.NVDefineSpace(tpm.OwnerHandleContext(), nil, &public, nil); err != nil {
+					t.Fatalf("NVDefineSpace failed: %v", err)
+				}
+			},
+			err: errLockNVHandleExists,
+		},
+		{
+			desc: "ErrLockNVDataHandleExists",
+			mode: ProvisionModeFull,
+			prepare: func(t *testing.T) {
+				public := tpm2.NVPublic{
+					Index:   lockNVDataHandle,
+					NameAlg: tpm2.HashAlgorithmSHA256,
+					Attrs:   tpm2.NVTypeOrdinary.WithAttrs(tpm2.AttrNVAuthRead | tpm2.AttrNVAuthWrite),
+					Size:    0}
+				if _, err := tpm.NVDefineSpace(tpm.OwnerHandleContext(), nil, &public, nil); err != nil {
+					t.Fatalf("NVDefineSpace failed: %v", err)
+				}
+			},
+			err: errLockNVDataHandleExists,
+		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {
 			clearTPMWithPlatformAuth(t, tpm)
@@ -367,7 +401,7 @@ func TestRecreateEK(t *testing.T) {
 
 			lockoutAuth := []byte("1234")
 
-			if err := ProvisionTPM(tpm, data.mode, lockoutAuth); err != nil {
+			if err := ProvisionTPM(tpm, ProvisionModeFull, lockoutAuth); err != nil {
 				t.Fatalf("ProvisionTPM failed: %v", err)
 			}
 
@@ -440,7 +474,7 @@ func TestRecreateSRK(t *testing.T) {
 
 			lockoutAuth := []byte("1234")
 
-			if err := ProvisionTPM(tpm, ProvisionModeClear, lockoutAuth); err != nil {
+			if err := ProvisionTPM(tpm, ProvisionModeFull, lockoutAuth); err != nil {
 				t.Fatalf("ProvisionTPM failed: %v", err)
 			}
 
@@ -536,7 +570,10 @@ func TestProvisionWithInvalidEkCert(t *testing.T) {
 
 func TestProvisionStatus(t *testing.T) {
 	tpm, _ := openTPMSimulatorForTesting(t)
-	defer closeTPM(t, tpm)
+	defer func() {
+		clearTPMWithPlatformAuth(t, tpm)
+		closeTPM(t, tpm)
+	}()
 
 	clearTPMWithPlatformAuth(t, tpm)
 
@@ -558,7 +595,24 @@ func TestProvisionStatus(t *testing.T) {
 	if err != nil {
 		t.Errorf("ProvisionStatus failed: %v", err)
 	}
-	expected := AttrValidEK | AttrValidSRK | AttrDAParamsOK | AttrOwnerClearDisabled | AttrLockoutAuthSet
+	expected := AttrValidEK | AttrValidSRK | AttrDAParamsOK | AttrOwnerClearDisabled | AttrLockoutAuthSet | AttrLockNVIndex
+	if status != expected {
+		t.Errorf("Unexpected status %d", status)
+	}
+
+	lockIndex, err := tpm.CreateResourceContextFromTPM(lockNVHandle)
+	if err != nil {
+		t.Fatalf("CreateResourceContextFromTPM failed: %v", err)
+	}
+	if err := tpm.NVUndefineSpace(tpm.OwnerHandleContext(), lockIndex, nil); err != nil {
+		t.Errorf("NVUndefineSpace failed: %v", err)
+	}
+
+	status, err = ProvisionStatus(tpm)
+	if err != nil {
+		t.Errorf("ProvisionStatus failed: %v", err)
+	}
+	expected = AttrValidEK | AttrValidSRK | AttrDAParamsOK | AttrOwnerClearDisabled | AttrLockoutAuthSet
 	if status != expected {
 		t.Errorf("Unexpected status %d", status)
 	}

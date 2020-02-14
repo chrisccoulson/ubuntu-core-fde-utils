@@ -21,6 +21,7 @@ package fdeutil
 
 import (
 	"crypto/rsa"
+	"fmt"
 
 	"github.com/chrisccoulson/go-tpm2"
 
@@ -44,6 +45,24 @@ func isAuthFailError(err error) bool {
 func isLockoutError(err error) bool {
 	var warning *tpm2.TPMWarning
 	return xerrors.As(err, &warning) && warning.Code == tpm2.WarningLockout
+}
+
+type nvIndexDefinedError struct {
+	handle tpm2.Handle
+}
+
+func (e *nvIndexDefinedError) Error() string {
+	return fmt.Sprintf("NV index defined at 0x%08x", e.handle)
+}
+
+func isNVIndexDefinedWithHandleError(err error) bool {
+	var e *nvIndexDefinedError
+	return xerrors.As(err, &e)
+}
+
+func isNVIndexDefinedError(err error) bool {
+	var tpmErr *tpm2.TPMError
+	return xerrors.As(err, &tpmErr) && tpmErr.Code == tpm2.ErrorNVDefined
 }
 
 func createPublicAreaForRSASigningKey(key *rsa.PublicKey) *tpm2.Public {
