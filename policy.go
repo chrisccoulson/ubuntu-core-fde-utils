@@ -50,8 +50,8 @@ type dynamicPolicyComputeParams struct {
 	ubuntuBootParamsPCRAlg     tpm2.HashAlgorithmId
 	secureBootPCRDigests       tpm2.DigestList
 	ubuntuBootParamsPCRDigests tpm2.DigestList
-	policyRevokeIndexPub       *tpm2.NVPublic
-	policyRevokeCount          uint64
+	policyCountIndexName       tpm2.Name
+	policyCount                uint64
 }
 
 type dynamicPolicyData struct {
@@ -59,41 +59,44 @@ type dynamicPolicyData struct {
 	UbuntuBootParamsPCRAlg    tpm2.HashAlgorithmId
 	SecureBootORDigests       tpm2.DigestList
 	UbuntuBootParamsORDigests tpm2.DigestList
-	PolicyRevokeIndexHandle   tpm2.Handle
-	PolicyRevokeCount         uint64
+	PolicyCount               uint64
 	AuthorizedPolicy          tpm2.Digest
 	AuthorizedPolicySignature *tpm2.Signature
 }
 
 type staticPolicyComputeParams struct {
-	pinIndexPub   *tpm2.NVPublic
-	lockIndexName tpm2.Name
+	key                  *rsa.PublicKey
+	pinIndexPub          *tpm2.NVPublic
+	pinIndexAuthPolicies tpm2.DigestList
+	lockIndexName        tpm2.Name
 }
 
 type staticPolicyData struct {
-	Algorithm          tpm2.HashAlgorithmId
-	AuthorizeKeyPublic *tpm2.Public
-	PinIndexHandle     tpm2.Handle
+	Algorithm            tpm2.HashAlgorithmId
+	AuthorizeKeyPublic   *tpm2.Public
+	PinIndexHandle       tpm2.Handle
+	PinIndexAuthPolicies tpm2.DigestList
 }
 
-func incrementPolicyRevocationNvIndex(tpm *tpm2.TPMContext, index tpm2.ResourceContext, key *rsa.PrivateKey, keyPublic *tpm2.Public, hmacSession tpm2.SessionContext) error {
-	nvPub, _, err := tpm.NVReadPublic(index, hmacSession.IncludeAttrs(tpm2.AttrAudit))
+func incrementDynamicPolicyCounter(tpm *tpm2.TPMContext, nvPublic *tpm2.NVPublic, nvAuthPolicies tpm2.DigestList, key *rsa.PrivateKey,
+	keyPublic *tpm2.Public, hmacSession tpm2.SessionContext) error {
+	index, err := tpm2.CreateNVIndexResourceContextFromPublic(nvPublic)
 	if err != nil {
-		return xerrors.Errorf("cannot read public area of NV index: %w", err)
+		return xerrors.Errorf("cannot create context for NV index: %w", err)
 	}
 
 	// Begin a policy session to increment the index.
-	policySession, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, nvPub.NameAlg, nil)
+	policySession, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, nvPublic.NameAlg)
 	if err != nil {
 		return xerrors.Errorf("cannot begin policy session: %w", err)
 	}
 	defer tpm.FlushContext(policySession)
 
-	// Compute a digest for signing with our key
+	// Compute a digest for signing with the update key
 	signDigest := tpm2.HashAlgorithmSHA256
 	h := signDigest.NewHash()
 	h.Write(policySession.NonceTPM())
-	binary.Write(h, binary.BigEndian, int32(0))
+	binary.Write(h, binary.BigEndian, int32(0)) // expiration
 
 	// Sign the digest
 	sig, err := rsa.SignPSS(rand.Reader, key, signDigest.GetHash(), h.Sum(nil), &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash})
@@ -119,10 +122,16 @@ func incrementPolicyRevocationNvIndex(tpm *tpm2.TPMContext, index tpm2.ResourceC
 
 	// Execute the policy assertions
 	if err := tpm.PolicyCommandCode(policySession, tpm2.CommandNVIncrement); err != nil {
-		return xerrors.Errorf("cannot execute PolicyCommandCode assertion: %w", err)
+		return xerrors.Errorf("cannot execute assertion to increment counter: %w", err)
+	}
+	if err := tpm.PolicyNvWritten(policySession, true); err != nil {
+		return xerrors.Errorf("cannot execute assertion to increment counter: %w", err)
 	}
 	if _, _, err := tpm.PolicySigned(keyLoaded, policySession, true, nil, nil, 0, &signature); err != nil {
-		return xerrors.Errorf("cannot execute PolicySigned assertion: %w", err)
+		return xerrors.Errorf("cannot execute assertion to increment counter: %w", err)
+	}
+	if err := tpm.PolicyOR(policySession, nvAuthPolicies); err != nil {
+		return xerrors.Errorf("cannot execute assertion to increment counter: %w", err)
 	}
 
 	// Increment the index.
@@ -133,53 +142,31 @@ func incrementPolicyRevocationNvIndex(tpm *tpm2.TPMContext, index tpm2.ResourceC
 	return nil
 }
 
-func createPolicyRevocationNvIndex(tpm *tpm2.TPMContext, handle tpm2.Handle, key *rsa.PrivateKey, session tpm2.SessionContext) (*tpm2.NVPublic, error) {
-	keyPublic := createPublicAreaForRSASigningKey(&key.PublicKey)
-	keyName, err := keyPublic.Name()
+func readDynamicPolicyCounter(tpm *tpm2.TPMContext, nvPublic *tpm2.NVPublic, nvAuthPolicies tpm2.DigestList, hmacSession tpm2.SessionContext) (uint64, error) {
+	index, err := tpm2.CreateNVIndexResourceContextFromPublic(nvPublic)
 	if err != nil {
-		return nil, xerrors.Errorf("cannot compute name of signing key for incrementing NV index: %w", err)
+		return 0, xerrors.Errorf("cannot create context for NV index: %w", err)
 	}
 
-	nameAlg := tpm2.HashAlgorithmSHA256
-
-	trial, _ := tpm2.ComputeAuthPolicy(nameAlg)
-	trial.PolicyCommandCode(tpm2.CommandNVIncrement)
-	trial.PolicySigned(keyName, nil)
-
-	public := &tpm2.NVPublic{
-		Index:      handle,
-		NameAlg:    nameAlg,
-		Attrs:      tpm2.NVTypeCounter.WithAttrs(tpm2.AttrNVPolicyWrite | tpm2.AttrNVAuthRead),
-		AuthPolicy: trial.GetDigest(),
-		Size:       8}
-
-	context, err := tpm.NVDefineSpace(tpm.OwnerHandleContext(), nil, public, session)
+	policySession, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, nvPublic.NameAlg)
 	if err != nil {
-		return nil, xerrors.Errorf("cannot define NV space: %w", err)
+		return 0, xerrors.Errorf("cannot begin policy session: %w", err)
+	}
+	defer tpm.FlushContext(policySession)
+
+	if err := tpm.PolicyCommandCode(policySession, tpm2.CommandNVRead); err != nil {
+		return 0, xerrors.Errorf("cannot execute assertion to read counter: %w", err)
+	}
+	if err := tpm.PolicyOR(policySession, nvAuthPolicies); err != nil {
+		return 0, xerrors.Errorf("cannot execute assertion to increment counter: %w", err)
 	}
 
-	// NVDefineSpace was integrity protected, so we know that we have an index with the expected public area at the handle we specified
-	// at this point.
-
-	succeeded := false
-	defer func() {
-		if succeeded {
-			return
-		}
-		tpm.NVUndefineSpace(tpm.OwnerHandleContext(), context, session)
-	}()
-
-	// Initialize the index.
-	if err := incrementPolicyRevocationNvIndex(tpm, context, key, keyPublic, session); err != nil {
-		return nil, xerrors.Errorf("cannot initialize new NV index: %w", err)
+	c, err := tpm.NVReadCounter(index, index, policySession, hmacSession.IncludeAttrs(tpm2.AttrAudit))
+	if err != nil {
+		return 0, xerrors.Errorf("cannot read counter: %w", err)
 	}
 
-	// The index has a different name now that it has been written, so update the public area we return so that it can
-	// be used to construct a ResourceContext that will work for it.
-	public.Attrs |= tpm2.AttrNVWritten
-
-	succeeded = true
-	return public, nil
+	return c, nil
 }
 
 func ensureLockNVIndex(tpm *tpm2.TPMContext, session tpm2.SessionContext) error {
@@ -470,23 +457,18 @@ func computePolicyPCRParams(policyAlg, pcrAlg tpm2.HashAlgorithmId, digest tpm2.
 	return pcrDigest, pcrs
 }
 
-func computeStaticPolicy(alg tpm2.HashAlgorithmId, input *staticPolicyComputeParams) (*staticPolicyData, *rsa.PrivateKey, tpm2.Digest, error) {
+func computeStaticPolicy(alg tpm2.HashAlgorithmId, input *staticPolicyComputeParams) (*staticPolicyData, tpm2.Digest, error) {
 	trial, _ := tpm2.ComputeAuthPolicy(alg)
 
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return nil, nil, nil, xerrors.Errorf("cannot generate RSA key pair for policy authorization: %w", err)
-	}
-
-	keyPublic := createPublicAreaForRSASigningKey(&key.PublicKey)
+	keyPublic := createPublicAreaForRSASigningKey(input.key)
 	keyName, err := keyPublic.Name()
 	if err != nil {
-		return nil, nil, nil, xerrors.Errorf("cannot compute name of signing key for policy authorization: %w", err)
+		return nil, nil, xerrors.Errorf("cannot compute name of signing key for dynamic policy authorization: %w", err)
 	}
 
 	pinIndexName, err := input.pinIndexPub.Name()
 	if err != nil {
-		return nil, nil, nil, xerrors.Errorf("cannot compute name of PIN NV index: %w", err)
+		return nil, nil, xerrors.Errorf("cannot compute name of PIN NV index: %w", err)
 	}
 
 	trial.PolicyAuthorize(nil, keyName)
@@ -494,9 +476,10 @@ func computeStaticPolicy(alg tpm2.HashAlgorithmId, input *staticPolicyComputePar
 	trial.PolicyNV(input.lockIndexName, nil, 0, tpm2.OpEq)
 
 	return &staticPolicyData{
-		Algorithm:          alg,
-		AuthorizeKeyPublic: keyPublic,
-		PinIndexHandle:     input.pinIndexPub.Index}, key, trial.GetDigest(), nil
+		Algorithm:            alg,
+		AuthorizeKeyPublic:   keyPublic,
+		PinIndexHandle:       input.pinIndexPub.Index,
+		PinIndexAuthPolicies: input.pinIndexAuthPolicies}, trial.GetDigest(), nil
 }
 
 func computeDynamicPolicy(alg tpm2.HashAlgorithmId, input *dynamicPolicyComputeParams) (*dynamicPolicyData, error) {
@@ -526,14 +509,9 @@ func computeDynamicPolicy(alg tpm2.HashAlgorithmId, input *dynamicPolicyComputeP
 	trial, _ := tpm2.ComputeAuthPolicy(alg)
 	trial.PolicyOR(ensureSufficientORDigests(ubuntuBootParamsORDigests))
 
-	policyRevokeIndexName, err := input.policyRevokeIndexPub.Name()
-	if err != nil {
-		return nil, xerrors.Errorf("cannot compute name of policy revocation NV index: %w", err)
-	}
-
 	operandB := make([]byte, 8)
-	binary.BigEndian.PutUint64(operandB, input.policyRevokeCount)
-	trial.PolicyNV(policyRevokeIndexName, operandB, 0, tpm2.OpUnsignedLE)
+	binary.BigEndian.PutUint64(operandB, input.policyCount)
+	trial.PolicyNV(input.policyCountIndexName, operandB, 0, tpm2.OpUnsignedLE)
 
 	authorizedPolicy := trial.GetDigest()
 
@@ -560,8 +538,7 @@ func computeDynamicPolicy(alg tpm2.HashAlgorithmId, input *dynamicPolicyComputeP
 		UbuntuBootParamsPCRAlg:    input.ubuntuBootParamsPCRAlg,
 		SecureBootORDigests:       secureBootORDigests,
 		UbuntuBootParamsORDigests: ubuntuBootParamsORDigests,
-		PolicyRevokeIndexHandle:   input.policyRevokeIndexPub.Index,
-		PolicyRevokeCount:         input.policyRevokeCount,
+		PolicyCount:               input.policyCount,
 		AuthorizedPolicy:          authorizedPolicy,
 		AuthorizedPolicySignature: &signature}, nil
 }
@@ -590,20 +567,40 @@ func executePolicySessionPCRAssertions(tpm *tpm2.TPMContext, session tpm2.Sessio
 	return nil
 }
 
-func executePolicySession(tpm *TPMConnection, policySession tpm2.SessionContext, staticInput *staticPolicyData,
-	dynamicInput *dynamicPolicyData, pin string) error {
-	if err := executePolicySessionPCRAssertions(tpm.TPMContext, policySession, dynamicInput); err != nil {
+func executePolicySession(tpm *tpm2.TPMContext, policySession tpm2.SessionContext, staticInput *staticPolicyData,
+	dynamicInput *dynamicPolicyData, pin string, hmacSession tpm2.SessionContext) error {
+	if err := executePolicySessionPCRAssertions(tpm, policySession, dynamicInput); err != nil {
 		return xerrors.Errorf("cannot execute PCR assertions: %w", err)
 	}
 
-	policyRevokeContext, err := tpm.CreateResourceContextFromTPM(dynamicInput.PolicyRevokeIndexHandle)
+	if staticInput.PinIndexHandle.Type() != tpm2.HandleTypeNVIndex {
+		return errors.New("invalid handle type for PIN NV index")
+	}
+	pinIndex, err := tpm.CreateResourceContextFromTPM(staticInput.PinIndexHandle)
 	if err != nil {
-		return xerrors.Errorf("cannot create context for dynamic authorization policy revocation NV index: %w", err)
+		return xerrors.Errorf("cannot obtain context for PIN NV index: %w", err)
+	}
+	pinIndexPub, _, err := tpm.NVReadPublic(pinIndex)
+	if err != nil {
+		return xerrors.Errorf("cannot read public area for PIN NV index: %w", err)
+	}
+
+	revocationCheckSession, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, pinIndexPub.NameAlg)
+	if err != nil {
+		return xerrors.Errorf("cannot create session for dynamic authorization policy revocation check: %w", err)
+	}
+	defer tpm.FlushContext(revocationCheckSession)
+
+	if err := tpm.PolicyCommandCode(revocationCheckSession, tpm2.CommandPolicyNV); err != nil {
+		return xerrors.Errorf("cannot execute assertion for dynamic authorization policy revocation check: %w", err)
+	}
+	if err := tpm.PolicyOR(revocationCheckSession, staticInput.PinIndexAuthPolicies); err != nil {
+		return xerrors.Errorf("cannot execute assertion for dynamic authorization policy revocation check: %w", err)
 	}
 
 	operandB := make([]byte, 8)
-	binary.BigEndian.PutUint64(operandB, dynamicInput.PolicyRevokeCount)
-	if err := tpm.PolicyNV(policyRevokeContext, policyRevokeContext, policySession, operandB, 0, tpm2.OpUnsignedLE, tpm.HmacSession()); err != nil {
+	binary.BigEndian.PutUint64(operandB, dynamicInput.PolicyCount)
+	if err := tpm.PolicyNV(pinIndex, pinIndex, policySession, operandB, 0, tpm2.OpUnsignedLE, revocationCheckSession); err != nil {
 		return xerrors.Errorf("dynamic authorization policy revocation check failed: %w", err)
 	}
 
@@ -628,13 +625,8 @@ func executePolicySession(tpm *TPMConnection, policySession tpm2.SessionContext,
 		return xerrors.Errorf("dynamic authorization policy check failed: %w", err)
 	}
 
-	pinIndexContext, err := tpm.CreateResourceContextFromTPM(staticInput.PinIndexHandle)
-	if err != nil {
-		return xerrors.Errorf("cannot obtain context for PIN NV index: %w", err)
-	}
-	pinIndexContext.SetAuthValue([]byte(pin))
-	// Use the HMAC session created when the connection was opened rather than creating a new one.
-	if _, _, err := tpm.PolicySecret(pinIndexContext, policySession, nil, nil, 0, tpm.HmacSession()); err != nil {
+	pinIndex.SetAuthValue([]byte(pin))
+	if _, _, err := tpm.PolicySecret(pinIndex, policySession, nil, nil, 0, hmacSession); err != nil {
 		return xerrors.Errorf("cannot execute PolicySecret assertion: %w", err)
 	}
 
@@ -642,7 +634,7 @@ func executePolicySession(tpm *TPMConnection, policySession tpm2.SessionContext,
 	if err != nil {
 		return xerrors.Errorf("cannot obtain context for lock NV index: %w", err)
 	}
-	if err := tpm.PolicyNV(lockIndex, lockIndex, policySession, nil, 0, tpm2.OpEq, tpm.HmacSession()); err != nil {
+	if err := tpm.PolicyNV(lockIndex, lockIndex, policySession, nil, 0, tpm2.OpEq, hmacSession); err != nil {
 		return xerrors.Errorf("policy lock check failed: %w", err)
 	}
 

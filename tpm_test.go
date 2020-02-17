@@ -28,6 +28,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/binary"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -40,7 +41,7 @@ import (
 	"github.com/chrisccoulson/go-tpm2"
 )
 
-var testCreationParams = CreationParams{PolicyRevocationHandle: 0x0181ffff, PinHandle: 0x0181fff0}
+var testCreationParams = CreationParams{PinHandle: 0x0181fff0}
 
 var (
 	useTpm         = flag.Bool("use-tpm", false, "")
@@ -58,6 +59,11 @@ var (
 
 	testEncodedEkCertChain []byte
 )
+
+func decodeHexString(s string) []byte {
+	b, _ := hex.DecodeString(s)
+	return b
+}
 
 func deleteKey(t *testing.T, tpm *TPMConnection, path string) {
 	if err := DeleteKey(tpm, path); err != nil {

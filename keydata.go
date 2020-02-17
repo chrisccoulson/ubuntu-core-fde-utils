@@ -54,8 +54,7 @@ const (
 
 type privateKeyData struct {
 	Data struct {
-		AuthorizeKeyPrivate     []byte
-		PolicyRevokeIndexPublic *tpm2.NVPublic
+		AuthorizeKeyPrivate []byte
 	}
 	CreationData   *tpm2.CreationData
 	CreationTicket *tpm2.TkCreation
@@ -65,7 +64,6 @@ type keyData struct {
 	KeyPrivate        tpm2.Private
 	KeyPublic         *tpm2.Public
 	AuthModeHint      AuthMode
-	PinIndexKeyName   tpm2.Name
 	StaticPolicyData  *staticPolicyData
 	DynamicPolicyData *dynamicPolicyData
 }
@@ -130,13 +128,13 @@ func readKeyData(buf io.Reader) (*keyData, error) {
 	return &d, nil
 }
 
-func (d *keyData) load(tpm *TPMConnection) (tpm2.ResourceContext, error) {
+func (d *keyData) load(tpm *tpm2.TPMContext, session tpm2.SessionContext) (tpm2.ResourceContext, error) {
 	srkContext, err := tpm.CreateResourceContextFromTPM(srkHandle)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot create context for SRK: %w", err)
 	}
 
-	keyContext, err := tpm.Load(srkContext, d.KeyPrivate, d.KeyPublic, tpm.HmacSession())
+	keyContext, err := tpm.Load(srkContext, d.KeyPrivate, d.KeyPublic, session)
 	if err != nil {
 		invalidObject := false
 		switch e := err.(type) {
@@ -179,16 +177,14 @@ func (d *keyData) writeToFileAtomic(dest string) error {
 	return nil
 }
 
-func (d *keyData) validate(tpm *TPMConnection, privateData *privateKeyData) error {
+func validateKeyData(tpm *tpm2.TPMContext, data *keyData, privateData *privateKeyData, session tpm2.SessionContext) (*tpm2.NVPublic, error) {
 	srkContext, err := tpm.CreateResourceContextFromTPM(srkHandle)
 	if err != nil {
-		return xerrors.Errorf("cannot create context for SRK: %w", err)
+		return nil, xerrors.Errorf("cannot create context for SRK: %w", err)
 	}
 
-	session := tpm.HmacSession()
-
 	// Load the sealed data object in to the TPM for integrity checking
-	keyContext, err := tpm.Load(srkContext, d.KeyPrivate, d.KeyPublic, session)
+	keyContext, err := tpm.Load(srkContext, data.KeyPrivate, data.KeyPublic, session)
 	if err != nil {
 		invalidObject := false
 		switch e := err.(type) {
@@ -201,89 +197,115 @@ func (d *keyData) validate(tpm *TPMConnection, privateData *privateKeyData) erro
 			}
 		}
 		if invalidObject {
-			return keyFileError{errors.New("bad sealed key object or TPM owner changed")}
+			return nil, keyFileError{errors.New("bad sealed key object or TPM owner changed")}
 		}
-		return xerrors.Errorf("cannot load sealed key object in to TPM: %w", err)
+		return nil, xerrors.Errorf("cannot load sealed key object in to TPM: %w", err)
 	}
 	// It's loaded ok, so we know that the private and public parts are consistent.
 	defer tpm.FlushContext(keyContext)
 
-	// Obtain a ResourceContext for the PIN NV index. Go-tpm2 calls TPM2_NV_ReadPublic twice here - the second time
-	// with a session so that we know that the returned ResourceContext corresponds to an actual entity on the TPM.
-	if d.StaticPolicyData.PinIndexHandle.Type() != tpm2.HandleTypeNVIndex {
-		return keyFileError{errors.New("PIN NV index handle is invalid")}
-	}
-	pinIndex, err := tpm.CreateResourceContextFromTPM(d.StaticPolicyData.PinIndexHandle, session.IncludeAttrs(tpm2.AttrAudit))
-	if err != nil {
-		if _, unavail := err.(tpm2.ResourceUnavailableError); unavail {
-			return keyFileError{errors.New("PIN NV index is unavailable")}
-		}
-		return xerrors.Errorf("cannot create context for PIN NV index: %w", err)
-	}
-
-	authKeyName, err := d.StaticPolicyData.AuthorizeKeyPublic.Name()
-	if err != nil {
-		return keyFileError{xerrors.Errorf("cannot compute name of dynamic authorization policy key: %w", err)}
-	}
-	if d.StaticPolicyData.AuthorizeKeyPublic.Type != tpm2.ObjectTypeRSA {
-		return keyFileError{errors.New("public area of dynamic authorization policy signing key has the wrong type")}
-	}
-
 	lockIndex, err := tpm.CreateResourceContextFromTPM(lockNVHandle)
 	if err != nil {
-		return xerrors.Errorf("cannot create context for lock NV index: %v", err)
+		return nil, xerrors.Errorf("cannot create context for lock NV index: %v", err)
 	}
-	lockIndexPub, err := readAndValidateLockNVIndexPublic(tpm.TPMContext, lockIndex, session)
+	lockIndexPub, err := readAndValidateLockNVIndexPublic(tpm, lockIndex, session)
 	if err != nil {
-		return xerrors.Errorf("cannot determine if NV index at 0x%08x is global lock index: %w", lockNVHandle, err)
+		return nil, xerrors.Errorf("cannot determine if NV index at 0x%08x is global lock index: %w", lockNVHandle, err)
 	}
 	if lockIndexPub == nil {
-		return xerrors.Errorf("NV index at 0x%08x is not a valid global lock index", lockNVHandle)
+		return nil, xerrors.Errorf("NV index at 0x%08x is not a valid global lock index", lockNVHandle)
 	}
-	lockIndexName, err := lockIndexPub.Name()
+
+	// Obtain a ResourceContext for the PIN NV index. Go-tpm2 calls TPM2_NV_ReadPublic twice here. The second time is with a session, and
+	// there is also verification that the returned public area is for the specified handle so that we know that the returned
+	// ResourceContext corresponds to an actual entity on the TPM at PinIndexHandle.
+	if data.StaticPolicyData.PinIndexHandle.Type() != tpm2.HandleTypeNVIndex {
+		return nil, keyFileError{errors.New("PIN NV index handle is invalid")}
+	}
+	pinIndex, err := tpm.CreateResourceContextFromTPM(data.StaticPolicyData.PinIndexHandle, session.IncludeAttrs(tpm2.AttrAudit))
 	if err != nil {
-		return xerrors.Errorf("cannot compute name of lock NV index: %w", err)
+		if _, unavail := err.(tpm2.ResourceUnavailableError); unavail {
+			return nil, keyFileError{errors.New("PIN NV index is unavailable")}
+		}
+		return nil, xerrors.Errorf("cannot create context for PIN NV index: %w", err)
+	}
+
+	authKeyName, err := data.StaticPolicyData.AuthorizeKeyPublic.Name()
+	if err != nil {
+		return nil, keyFileError{xerrors.Errorf("cannot compute name of dynamic authorization policy key: %w", err)}
+	}
+	if data.StaticPolicyData.AuthorizeKeyPublic.Type != tpm2.ObjectTypeRSA {
+		return nil, keyFileError{errors.New("public area of dynamic authorization policy signing key has the wrong type")}
 	}
 
 	// Make sure that the static authorization policy data is consistent with the sealed key object's policy.
-	trial, err := tpm2.ComputeAuthPolicy(d.KeyPublic.NameAlg)
+	trial, err := tpm2.ComputeAuthPolicy(data.KeyPublic.NameAlg)
 	if err != nil {
-		return keyFileError{xerrors.Errorf("cannot determine if static authorization policy matches sealed key object: %w", err)}
+		return nil, keyFileError{xerrors.Errorf("cannot determine if static authorization policy matches sealed key object: %w", err)}
 	}
 	trial.PolicyAuthorize(nil, authKeyName)
 	trial.PolicySecret(pinIndex.Name(), nil)
-	trial.PolicyNV(lockIndexName, nil, 0, tpm2.OpEq)
+	trial.PolicyNV(lockIndex.Name(), nil, 0, tpm2.OpEq)
 
-	if !bytes.Equal(trial.GetDigest(), d.KeyPublic.AuthPolicy) {
-		return keyFileError{errors.New("static authorization policy data doesn't match sealed key object")}
+	if !bytes.Equal(trial.GetDigest(), data.KeyPublic.AuthPolicy) {
+		return nil, keyFileError{errors.New("static authorization policy data doesn't match sealed key object")}
 	}
 
-	// Make sure that the name of the key used to initialize the PIN NV index is consistent with the public area of the index.
-	// We've already verified that the NV index is correct in the previous step.
+	// At this point, we know that the sealed object is an object with an authorization policy created by this package and with
+	// matching static authorization policy metadata.
+
 	pinIndexPublic, _, err := tpm.NVReadPublic(pinIndex, session.IncludeAttrs(tpm2.AttrAudit))
 	if err != nil {
-		return xerrors.Errorf("cannot read public area for PIN NV index: %w", err)
-	}
-	if !pinIndexPublic.NameAlg.Supported() {
-		return keyFileError{errors.New("cannot determine if PIN NV index key name is consistent with public area: invalid algorithm")}
-	}
-	policies := pinNvIndexAuthPolicies(pinIndexPublic.NameAlg, d.PinIndexKeyName)
-	trial, _ = tpm2.ComputeAuthPolicy(pinIndexPublic.NameAlg)
-	trial.PolicyOR(policies)
-	if !bytes.Equal(trial.GetDigest(), pinIndexPublic.AuthPolicy) {
-		return keyFileError{errors.New("PIN NV index key name is inconsistent with public area")}
+		return nil, xerrors.Errorf("cannot read public area of PIN NV index: %w", err)
 	}
 
-	// At this point, we know that the public area of the dynamic authorization policy signing key and the PIN NV index are consistent
-	// with the sealed data object.
+	if len(data.StaticPolicyData.PinIndexAuthPolicies) != 5 {
+		return nil, keyFileError{errors.New("unexpected number of OR policy digests for PIN NV index")}
+	}
+
+	trial, err = tpm2.ComputeAuthPolicy(pinIndexPublic.NameAlg)
+	if err != nil {
+		return nil, keyFileError{xerrors.Errorf("cannot determine if PIN NV index has a valid authorization policy: %w", err)}
+	}
+	trial.PolicyCommandCode(tpm2.CommandNVIncrement)
+	trial.PolicyNvWritten(true)
+	trial.PolicySigned(authKeyName, nil)
+	if !bytes.Equal(trial.GetDigest(), data.StaticPolicyData.PinIndexAuthPolicies[1]) {
+		return nil, keyFileError{errors.New("unexpected OR policy digest for PIN NV index")}
+	}
+
+	trial, _ = tpm2.ComputeAuthPolicy(pinIndexPublic.NameAlg)
+	trial.PolicyCommandCode(tpm2.CommandNVChangeAuth)
+	trial.PolicyAuthValue()
+	if !bytes.Equal(trial.GetDigest(), data.StaticPolicyData.PinIndexAuthPolicies[2]) {
+		return nil, keyFileError{errors.New("unexpected OR policy digest for PIN NV index")}
+	}
+
+	trial, _ = tpm2.ComputeAuthPolicy(pinIndexPublic.NameAlg)
+	trial.PolicyCommandCode(tpm2.CommandNVRead)
+	if !bytes.Equal(trial.GetDigest(), data.StaticPolicyData.PinIndexAuthPolicies[3]) {
+		return nil, keyFileError{errors.New("unexpected OR policy digest for PIN NV index")}
+	}
+
+	trial, _ = tpm2.ComputeAuthPolicy(pinIndexPublic.NameAlg)
+	trial.PolicyCommandCode(tpm2.CommandPolicyNV)
+	if !bytes.Equal(trial.GetDigest(), data.StaticPolicyData.PinIndexAuthPolicies[4]) {
+		return nil, keyFileError{errors.New("unexpected OR policy digest for PIN NV index")}
+	}
+
+	trial, _ = tpm2.ComputeAuthPolicy(pinIndexPublic.NameAlg)
+	trial.PolicyOR(data.StaticPolicyData.PinIndexAuthPolicies)
+	if !bytes.Equal(pinIndexPublic.AuthPolicy, trial.GetDigest()) {
+		return nil, keyFileError{errors.New("PIN NV index has unexpected authorization policy")}
+	}
 
 	if privateData == nil {
 		// If we weren't passed a private data structure, we're done.
-		return nil
+		return pinIndexPublic, nil
 	}
 
 	// Verify that the private data structure is bound to the key data structure.
-	h := d.KeyPublic.NameAlg.NewHash()
+	h := data.KeyPublic.NameAlg.NewHash()
 	if err := tpm2.MarshalToWriter(h, privateData.CreationData); err != nil {
 		panic(fmt.Sprintf("cannot marshal creation data: %v", err))
 	}
@@ -293,10 +315,10 @@ func (d *keyData) validate(tpm *TPMConnection, privateData *privateKeyData) erro
 		switch e := err.(type) {
 		case *tpm2.TPMParameterError:
 			if e.Index == 4 {
-				return keyFileError{errors.New("key data file and private data file mismatch: invalid creation ticket")}
+				return nil, keyFileError{errors.New("key data file and private data file mismatch: invalid creation ticket")}
 			}
 		}
-		return xerrors.Errorf("cannot validate creation data for sealed data object: %w", err)
+		return nil, xerrors.Errorf("cannot validate creation data for sealed data object: %w", err)
 	}
 
 	h = crypto.SHA256.New()
@@ -305,42 +327,46 @@ func (d *keyData) validate(tpm *TPMConnection, privateData *privateKeyData) erro
 	}
 
 	if !bytes.Equal(h.Sum(nil), privateData.CreationData.OutsideInfo) {
-		return keyFileError{errors.New("key data file and private data file mismatch: digest doesn't match creation data")}
+		return nil, keyFileError{errors.New("key data file and private data file mismatch: digest doesn't match creation data")}
 	}
 
 	authKeyPrivate, err := x509.ParsePKCS1PrivateKey(privateData.Data.AuthorizeKeyPrivate)
 	if err != nil {
-		return keyFileError{xerrors.Errorf("cannot parse dynamic policy authorization key: %w", err)}
-	}
-
-	if privateData.Data.PolicyRevokeIndexPublic.Index.Type() != tpm2.HandleTypeNVIndex {
-		return keyFileError{errors.New("dynamic authorization policy revocation NV index handle is invalid")}
-	}
-	// Obtain a ResourceContext for the policy revocation NV index. Go-tpm2 calls TPM2_NV_ReadPublic twice here - the second time
-	// with a session so that we know that the returned ResourceContext corresponds to an actual entity on the TPM.
-	policyRevokeIndex, err := tpm.CreateResourceContextFromTPM(privateData.Data.PolicyRevokeIndexPublic.Index, session.IncludeAttrs(tpm2.AttrAudit))
-	if err != nil {
-		if _, unavail := err.(tpm2.ResourceUnavailableError); unavail {
-			return keyFileError{errors.New("dynamic authorization policy revocation NV index is unavailable")}
-		}
-		return xerrors.Errorf("cannot create context for dynamic authorization policy revocation NV index: %w", err)
-	}
-	policyRevokeIndexName, err := privateData.Data.PolicyRevokeIndexPublic.Name()
-	if err != nil {
-		return xerrors.Errorf("cannot compute expected name of dynamic authorization policy revocation NV index: %w", err)
-	}
-	if !bytes.Equal(policyRevokeIndexName, policyRevokeIndex.Name()) {
-		return keyFileError{errors.New("dynamic authorization policy revocation NV index has the wrong name")}
+		return nil, keyFileError{xerrors.Errorf("cannot parse dynamic policy authorization key: %w", err)}
 	}
 
 	authKey := rsa.PublicKey{
-		N: new(big.Int).SetBytes(d.StaticPolicyData.AuthorizeKeyPublic.Unique.RSA()),
-		E: int(d.StaticPolicyData.AuthorizeKeyPublic.Params.RSADetail().Exponent)}
+		N: new(big.Int).SetBytes(data.StaticPolicyData.AuthorizeKeyPublic.Unique.RSA()),
+		E: int(data.StaticPolicyData.AuthorizeKeyPublic.Params.RSADetail().Exponent)}
 	if authKeyPrivate.PublicKey.E != authKey.E || authKeyPrivate.PublicKey.N.Cmp(authKey.N) != 0 {
-		return keyFileError{errors.New("dynamic authorization policy signing private key doesn't match public key")}
+		return nil, keyFileError{errors.New("dynamic authorization policy signing private key doesn't match public key")}
 	}
 
-	return nil
+	return pinIndexPublic, nil
+}
+
+func readAndValidateKeyData(tpm *tpm2.TPMContext, keyFile, privateFile io.Reader, session tpm2.SessionContext) (*keyData, *privateKeyData, *tpm2.NVPublic, error) {
+	// Read the key data
+	data, err := readKeyData(keyFile)
+	if err != nil {
+		return nil, nil, nil, xerrors.Errorf("cannot read key data: %w", err)
+	}
+
+	var privateData *privateKeyData
+	if privateFile != nil {
+		var err error
+		privateData, err = readPrivateData(privateFile)
+		if err != nil {
+			return nil, nil, nil, xerrors.Errorf("cannot read private data file: %w", err)
+		}
+	}
+
+	pinNVPublic, err := validateKeyData(tpm, data, privateData, session)
+	if err != nil {
+		return nil, nil, nil, xerrors.Errorf("key data validation failed: %w", err)
+	}
+
+	return data, privateData, pinNVPublic, nil
 }
 
 func (k *SealedKeyObject) AuthMode2F() AuthMode {
@@ -351,7 +377,7 @@ func LoadSealedKeyObject(path string) (*SealedKeyObject, error) {
 	// Open the key data file
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, InvalidKeyFileError{fmt.Sprintf("cannot open key data file: %v", err)}
+		return nil, xerrors.Errorf("cannot open key data file: %w", err)
 	}
 	defer f.Close()
 
@@ -360,5 +386,5 @@ func LoadSealedKeyObject(path string) (*SealedKeyObject, error) {
 		return nil, InvalidKeyFileError{err.Error()}
 	}
 
-	return &SealedKeyObject{data}, nil
+	return &SealedKeyObject{data: data}, nil
 }
