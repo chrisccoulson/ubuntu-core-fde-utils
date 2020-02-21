@@ -646,7 +646,10 @@ func TestLockAccessAfterUnseal(t *testing.T) {
 	eventLog := "testdata/eventlog3.bin"
 	eventLogPathForTesting = eventLog
 	efivarsPathForTesting = "testdata/efivars1"
+	cmdline := "console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=run"
+
 	replayLogToTPM(t, tpm, tcti, eventLog)
+	replayBootParamsToTPM(t, tpm, cmdline)
 
 	key := make([]byte, 32)
 	rand.Read(key)
@@ -671,7 +674,8 @@ func TestLockAccessAfterUnseal(t *testing.T) {
 						Next: []*OSComponent{
 							&OSComponent{
 								LoadType: DirectLoadWithShimVerify,
-								Image:    FileOSComponent("testdata/mock.efi.signed.2")}}}}}}}
+								Image:    FileOSComponent("testdata/mock.efi.signed.2")}}}}}},
+		KernelCommandlines: []string{cmdline}}
 	if err := SealKeyToTPM(tpm, keyFile, "", &testCreationParams, &params, key); err != nil {
 		t.Fatalf("SealKeyToTPM failed: %v", err)
 	}
@@ -703,6 +707,7 @@ func TestLockAccessAfterUnseal(t *testing.T) {
 
 	resetTPMSimulator(t, tpm, tcti)
 	replayLogToTPM(t, tpm, tcti, eventLog)
+	replayBootParamsToTPM(t, tpm, cmdline)
 
 	keyUnsealed, err = k.UnsealFromTPM(tpm, "", true)
 	if err != nil {
@@ -732,6 +737,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 		creationLogPath string
 		trustedLogPath  string
 		efivars         string
+		cmdline		string
 		params          *PolicyParams
 		err             string
 		errType         reflect.Type
@@ -742,6 +748,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 			creationLogPath: "testdata/eventlog1.bin",
 			trustedLogPath:  "testdata/eventlog3.bin",
 			efivars:         "testdata/efivars1",
+			cmdline:	 "BOOT_IMAGE=/vmlinuz-5.3.0-28-generic root=/dev/mapper/vgubuntu-root ro quiet splash mem_sleep_default=deep vt.handoff=7",
 			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -754,7 +761,11 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 								Next: []*OSComponent{
 									&OSComponent{
 										LoadType: DirectLoadWithShimVerify,
-										Image:    FileOSComponent("testdata/mock.efi.signed.2")}}}}}}},
+										Image:    FileOSComponent("testdata/mock.efi.signed.2")}}}}}},
+				KernelCommandlines: []string{
+					"BOOT_IMAGE=/vmlinuz-5.3.0-28-generic root=/dev/mapper/vgubuntu-root ro quiet splash mem_sleep_default=deep vt.handoff=7",
+					"BOOT_IMAGE=/vmlinuz-5.3.0-27-generic root=/dev/mapper/vgubuntu-root ro quiet splash mem_sleep_default=deep vt.handoff=7",
+					"BOOT_IMAGE=/vmlinuz-5.3.0-26-generic root=/dev/mapper/vgubuntu-root ro quiet splash mem_sleep_default=deep vt.handoff=7"}},
 		},
 		{
 			// Test sealing and unsealing with a UC20 style layout
@@ -762,6 +773,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 			creationLogPath: "testdata/eventlog1.bin",
 			trustedLogPath:  "testdata/eventlog4.bin",
 			efivars:         "testdata/efivars1",
+			cmdline:	 "console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=run",
 			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -781,7 +793,41 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 										Next: []*OSComponent{
 											&OSComponent{
 												LoadType: DirectLoadWithShimVerify,
-												Image:    FileOSComponent("testdata/mock.efi.signed.1")}}}}}}}}},
+												Image:    FileOSComponent("testdata/mock.efi.signed.1")}}}}}}}},
+				KernelCommandlines: []string{
+					"console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=run",
+					"console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=recover"}},
+		},
+		{
+			// Test sealing and unsealing with a UC20 style layout and booting in to an alternate mode
+			desc:            "UC20",
+			creationLogPath: "testdata/eventlog1.bin",
+			trustedLogPath:  "testdata/eventlog4.bin",
+			efivars:         "testdata/efivars1",
+			cmdline:	 "console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=recover",
+			params: &PolicyParams{
+				LoadPaths: []*OSComponent{
+					&OSComponent{
+						LoadType: FirmwareLoad,
+						Image:    FileOSComponent("testdata/mockshim2.efi.signed.1"),
+						Next: []*OSComponent{
+							&OSComponent{
+								LoadType: DirectLoadWithShimVerify,
+								Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+								Next: []*OSComponent{
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1")},
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+										Next: []*OSComponent{
+											&OSComponent{
+												LoadType: DirectLoadWithShimVerify,
+												Image:    FileOSComponent("testdata/mock.efi.signed.1")}}}}}}}},
+				KernelCommandlines: []string{
+					"console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=run",
+					"console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=recover"}},
 		},
 		{
 			// Test sealing before upgrading to a kernel signed with a new key, and then unsealing with the old kernel
@@ -789,6 +835,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 			creationLogPath: "testdata/eventlog1.bin",
 			trustedLogPath:  "testdata/eventlog5.bin",
 			efivars:         "testdata/efivars2",
+			cmdline:	 "console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=run",
 			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -814,7 +861,10 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 												Image:    FileOSComponent("testdata/mock.efi.signed.1")},
 											&OSComponent{
 												LoadType: DirectLoadWithShimVerify,
-												Image:    FileOSComponent("testdata/mock.efi.signed.2")}}}}}}}}},
+												Image:    FileOSComponent("testdata/mock.efi.signed.2")}}}}}}}},
+				KernelCommandlines: []string{
+					"console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=run",
+					"console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=recover"}},
 		},
 		{
 			// Test sealing before upgrading to a kernel signed with a new key, and then unsealing post-upgrade with the new kernel
@@ -822,6 +872,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 			creationLogPath: "testdata/eventlog1.bin",
 			trustedLogPath:  "testdata/eventlog6.bin",
 			efivars:         "testdata/efivars2",
+			cmdline:	 "console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=run",
 			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -847,7 +898,10 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 												Image:    FileOSComponent("testdata/mock.efi.signed.1")},
 											&OSComponent{
 												LoadType: DirectLoadWithShimVerify,
-												Image:    FileOSComponent("testdata/mock.efi.signed.2")}}}}}}}}},
+												Image:    FileOSComponent("testdata/mock.efi.signed.2")}}}}}}}},
+				KernelCommandlines: []string{
+					"console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=run",
+					"console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=recover"}},
 		},
 		{
 			// Test sealing before applying a UEFI signature DB update and then unsealing before the update is applied
@@ -855,6 +909,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 			creationLogPath: "testdata/eventlog1.bin",
 			trustedLogPath:  "testdata/eventlog4.bin",
 			efivars:         "testdata/efivars1",
+			cmdline:	 "console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=run",
 			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -875,7 +930,10 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 											&OSComponent{
 												LoadType: DirectLoadWithShimVerify,
 												Image:    FileOSComponent("testdata/mock.efi.signed.1")}}}}}}}},
-				SecureBootDbKeystores: []string{"testdata/updates1"}},
+				SecureBootDbKeystores: []string{"testdata/updates1"},
+				KernelCommandlines: []string{
+					"console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=run",
+					"console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=recover"}},
 		},
 		{
 			// Test sealing before applying a UEFI signature DB update and then unsealing post-update
@@ -883,6 +941,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 			creationLogPath: "testdata/eventlog1.bin",
 			trustedLogPath:  "testdata/eventlog5.bin",
 			efivars:         "testdata/efivars1",
+			cmdline:	 "console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=run",
 			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -903,13 +962,17 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 											&OSComponent{
 												LoadType: DirectLoadWithShimVerify,
 												Image:    FileOSComponent("testdata/mock.efi.signed.1")}}}}}}}},
-				SecureBootDbKeystores: []string{"testdata/updates1"}},
+				SecureBootDbKeystores: []string{"testdata/updates1"},
+				KernelCommandlines: []string{
+					"console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=run",
+					"console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=recover"}},
 		},
 		{
-			desc:            "PolicyFail",
+			desc:            "PolicyFailSecureBoot",
 			creationLogPath: "testdata/eventlog1.bin",
 			trustedLogPath:  "testdata/eventlog5.bin",
 			efivars:         "testdata/efivars2",
+			cmdline:	 "console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=run",
 			params: &PolicyParams{
 				LoadPaths: []*OSComponent{
 					&OSComponent{
@@ -929,9 +992,46 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 										Next: []*OSComponent{
 											&OSComponent{
 												LoadType: DirectLoadWithShimVerify,
-												Image:    FileOSComponent("testdata/mock.efi.signed.2")}}}}}}}}},
+												Image:    FileOSComponent("testdata/mock.efi.signed.2")}}}}}}}},
+				KernelCommandlines: []string{
+					"console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=run",
+					"console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=recover"}},
 			err: "invalid key data file: encountered an error whilst executing the authorization policy assertions: cannot execute PCR " +
 				"assertions: cannot execute PolicyOR assertion after PolicyPCR assertion against PCR7: TPM returned an error for parameter 1 " +
+				"whilst executing command TPM_CC_PolicyOR: TPM_RC_VALUE (value is out of range or is not correct for the context)",
+			errType: reflect.TypeOf(InvalidKeyFileError{}),
+		},
+		{
+			desc:            "PolicyFailCommandline",
+			creationLogPath: "testdata/eventlog1.bin",
+			trustedLogPath:  "testdata/eventlog4.bin",
+			efivars:         "testdata/efivars1",
+			cmdline:	 "console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=run init=/bin/sh",
+			params: &PolicyParams{
+				LoadPaths: []*OSComponent{
+					&OSComponent{
+						LoadType: FirmwareLoad,
+						Image:    FileOSComponent("testdata/mockshim2.efi.signed.1"),
+						Next: []*OSComponent{
+							&OSComponent{
+								LoadType: DirectLoadWithShimVerify,
+								Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+								Next: []*OSComponent{
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1")},
+									&OSComponent{
+										LoadType: DirectLoadWithShimVerify,
+										Image:    FileOSComponent("testdata/mock.efi.signed.1"),
+										Next: []*OSComponent{
+											&OSComponent{
+												LoadType: DirectLoadWithShimVerify,
+												Image:    FileOSComponent("testdata/mock.efi.signed.1")}}}}}}}},
+				KernelCommandlines: []string{
+					"console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=run",
+					"console=ttyS0 console=tty1 panic=-1 systemd.gpt_auto=0 snapd_recovery_mode=recover"}},
+			err: "invalid key data file: encountered an error whilst executing the authorization policy assertions: cannot execute PCR " +
+				"assertions: cannot execute PolicyOR assertion after PolicyPCR assertion against PCR12: TPM returned an error for parameter 1 " +
 				"whilst executing command TPM_CC_PolicyOR: TPM_RC_VALUE (value is out of range or is not correct for the context)",
 			errType: reflect.TypeOf(InvalidKeyFileError{}),
 		},
@@ -961,6 +1061,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 
 			resetTPMSimulator(t, tpm, tcti)
 			replayLogToTPM(t, tpm, tcti, data.trustedLogPath)
+			replayBootParamsToTPM(t, tpm, data.cmdline)
 
 			k, err := LoadSealedKeyObject(keyFile)
 			if err != nil {

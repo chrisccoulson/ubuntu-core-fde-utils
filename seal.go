@@ -118,6 +118,8 @@ type PolicyParams struct {
 	// depends on sbkeysync being available in one of the shell search paths, and assumes that updates are
 	// applied with the "--no-default-keystores" option.
 	SecureBootDbKeystores []string
+
+	KernelCommandlines []string
 }
 
 func computeSealedKeyDynamicAuthPolicy(tpm *tpm2.TPMContext, alg, signAlg tpm2.HashAlgorithmId, authKey *rsa.PrivateKey,
@@ -143,12 +145,10 @@ func computeSealedKeyDynamicAuthPolicy(tpm *tpm2.TPMContext, alg, signAlg tpm2.H
 		if err != nil {
 			return nil, xerrors.Errorf("cannot compute secure boot policy digests: %w", err)
 		}
-		_, pcrValues, err := tpm.PCRRead(tpm2.PCRSelectionList{
-			tpm2.PCRSelection{Hash: pcrAlgorithm, Select: tpm2.PCRSelectionData{ubuntuBootParamsPCR}}})
+		ubuntuBootParamsDigests, err = computeUbuntuBootParamsDigests(pcrAlgorithm, params)
 		if err != nil {
-			return nil, xerrors.Errorf("cannot read current PCR values: %w", err)
+			return nil, xerrors.Errorf("cannot compute Ubuntu boot params digests: %w", err)
 		}
-		ubuntuBootParamsDigests = append(ubuntuBootParamsDigests, pcrValues[pcrAlgorithm][ubuntuBootParamsPCR])
 	} else {
 		_, pcrValues, err := tpm.PCRRead(tpm2.PCRSelectionList{
 			tpm2.PCRSelection{Hash: pcrAlgorithm, Select: tpm2.PCRSelectionData{secureBootPCR, ubuntuBootParamsPCR}}})
