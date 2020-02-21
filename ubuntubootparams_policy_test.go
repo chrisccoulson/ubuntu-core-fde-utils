@@ -14,7 +14,7 @@ func replayBootParamsToTPM(t *testing.T, tpm *TPMConnection, cmdline string) {
 	if err := cmdlineEvent.EncodeMeasuredBytes(&buf); err != nil {
 		t.Fatalf("Cannot encode commandline: %v", err)
 	}
-	if _, err := tpm.PCREvent(ubuntuBootParamsPCR, buf.Bytes(), nil); err != nil {
+	if _, err := tpm.PCREvent(tpm.PCRHandleContext(ubuntuBootParamsPCR), buf.Bytes(), nil); err != nil {
 		t.Fatalf("PCREvent failed: %v", err)
 	}
 }
