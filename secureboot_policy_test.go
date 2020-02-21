@@ -395,7 +395,7 @@ func replayLogToTPM(t *testing.T, tpm *TPMConnection, tcti *tpm2.TctiMssim, logP
 		for alg, digest := range event.Digests {
 			digests = append(digests, tpm2.TaggedHash{HashAlg: tpm2.HashAlgorithmId(alg), Digest: tpm2.Digest(digest)})
 		}
-		if err := tpm.PCRExtend(tpm2.Handle(event.PCRIndex), digests, nil); err != nil {
+		if err := tpm.PCRExtend(tpm.PCRHandleContext(int(event.PCRIndex)), digests, nil); err != nil {
 			t.Fatalf("PCRExtend failed: %v", err)
 		}
 	}

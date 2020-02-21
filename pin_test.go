@@ -31,11 +31,11 @@ func TestChangePIN(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestChangePIN_")

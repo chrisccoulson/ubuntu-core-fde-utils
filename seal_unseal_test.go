@@ -38,11 +38,11 @@ func TestCreateAndUnseal(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestCreateAndUnseal_")
@@ -77,11 +77,11 @@ func TestCreateDoesntReplace(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestCreateDoesntReplace_")
@@ -149,11 +149,11 @@ func TestUpdateAndUnseal(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestUpdateAndUnseal_")
@@ -213,11 +213,11 @@ func TestUnsealWithPin(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestUnsealWithPin_")
@@ -258,11 +258,11 @@ func TestUnsealRevoked(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestUnsealRevoked_")
@@ -321,11 +321,11 @@ func TestUnsealWithWrongPin(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestUnsealWithWrongPin_")
@@ -365,11 +365,11 @@ func TestUnsealPolicyFail(t *testing.T) {
 	tpm, _ := openTPMSimulatorForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestUnsealPolicyFail_")
@@ -385,7 +385,7 @@ func TestUnsealPolicyFail(t *testing.T) {
 	}
 	defer deleteKey(t, tpm, keyFile)
 
-	if _, err := tpm.PCREvent(7, tpm2.Event("foo"), nil); err != nil {
+	if _, err := tpm.PCREvent(tpm.PCRHandleContext(7), tpm2.Event("foo"), nil); err != nil {
 		t.Errorf("PCREvent failed: %v", err)
 	}
 
@@ -411,11 +411,11 @@ func TestUnsealLockout(t *testing.T) {
 	tpm := openTPMForTesting(t)
 	defer closeTPM(t, tpm)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestUnsealLockout_")
@@ -432,14 +432,14 @@ func TestUnsealLockout(t *testing.T) {
 	defer deleteKey(t, tpm, keyFile)
 
 	// Put the TPM in DA lockout mode
-	if err := tpm.DictionaryAttackParameters(tpm2.HandleLockout, 0, 7200, 86400, nil); err != nil {
+	if err := tpm.DictionaryAttackParameters(tpm.LockoutHandleContext(), 0, 7200, 86400, nil); err != nil {
 		t.Errorf("DictionaryAttackParameters failed: %v", err)
 	}
 	defer func() {
-		if err := tpm.DictionaryAttackParameters(tpm2.HandleLockout, 32, 7200, 86400, nil); err != nil {
+		if err := tpm.DictionaryAttackParameters(tpm.LockoutHandleContext(), 32, 7200, 86400, nil); err != nil {
 			t.Errorf("DictionaryAttackParameters failed: %v", err)
 		}
-		if err := tpm.DictionaryAttackLockReset(tpm2.HandleLockout, nil); err != nil {
+		if err := tpm.DictionaryAttackLockReset(tpm.LockoutHandleContext(), nil); err != nil {
 			t.Errorf("DictionaryAttackLockReset failed: %v", err)
 		}
 	}()
@@ -459,10 +459,7 @@ func TestUnsealLockout(t *testing.T) {
 }
 
 func TestSealWithProvisioningError(t *testing.T) {
-	tpm := openTPMForTesting(t)
-	defer closeTPM(t, tpm)
-
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestSealWithProvisioningError_")
@@ -474,12 +471,14 @@ func TestSealWithProvisioningError(t *testing.T) {
 	keyFile := tmpDir + "/keydata"
 
 	prepare := func(t *testing.T) {
-		if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+		tpm := openTPMForTesting(t)
+		defer closeTPM(t, tpm)
+		if err := ProvisionTPM(tpm, ProvisionModeFull, nil); err != nil {
 			t.Fatalf("Failed to provision TPM for test: %v", err)
 		}
 	}
 
-	run := func(t *testing.T) {
+	run := func(t *testing.T, tpm *TPMConnection) {
 		err = SealKeyToTPM(tpm, keyFile, "", &testCreationParams, nil, key)
 		if err == nil {
 			t.Fatalf("SealKeyToTPM should have failed")
@@ -491,35 +490,45 @@ func TestSealWithProvisioningError(t *testing.T) {
 
 	t.Run("NoSRK", func(t *testing.T) {
 		prepare(t)
-		srkContext, _ := tpm.WrapHandle(srkHandle)
-		if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkContext.Handle(), nil); err != nil {
+		tpm := openTPMForTesting(t)
+		defer closeTPM(t, tpm)
+		srkContext, err := tpm.CreateResourceContextFromTPM(srkHandle)
+		if err != nil {
+			t.Fatalf("No SRK context: %v", err)
+		}
+		if _, err := tpm.EvictControl(tpm.OwnerHandleContext(), srkContext, srkContext.Handle(), nil); err != nil {
 			t.Fatalf("EvictControl failed: %v", err)
 		}
-		run(t)
+		run(t, tpm)
 	})
 
 	t.Run("InvalidSRK", func(t *testing.T) {
 		prepare(t)
-		srkContext, _ := tpm.WrapHandle(srkHandle)
+		tpm := openTPMForTesting(t)
+		defer closeTPM(t, tpm)
+		srkContext, err := tpm.CreateResourceContextFromTPM(srkHandle)
+		if err != nil {
+			t.Fatalf("No SRK context: %v", err)
+		}
 		priv, pub, _, _, _, err := tpm.Create(srkContext, nil, &srkTemplate, nil, nil, nil)
 		if err != nil {
 			t.Fatalf("Create failed: %v", err)
 		}
 
-		fakeSrkContext, _, err := tpm.Load(srkContext, priv, pub, nil)
+		fakeSrkContext, err := tpm.Load(srkContext, priv, pub, nil)
 		if err != nil {
 			t.Fatalf("Load failed: %v", err)
 		}
 		defer flushContext(t, tpm, fakeSrkContext)
 
-		if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkContext.Handle(), nil); err != nil {
+		if _, err := tpm.EvictControl(tpm.OwnerHandleContext(), srkContext, srkContext.Handle(), nil); err != nil {
 			t.Fatalf("EvictControl failed: %v", err)
 		}
-		if _, err := tpm.EvictControl(tpm2.HandleOwner, fakeSrkContext, srkHandle, nil); err != nil {
+		if _, err := tpm.EvictControl(tpm.OwnerHandleContext(), fakeSrkContext, srkHandle, nil); err != nil {
 			t.Fatalf("EvictControl failed: %v", err)
 		}
 
-		run(t)
+		run(t, tpm)
 	})
 }
 
@@ -531,13 +540,13 @@ func TestUnsealProvisioningError(t *testing.T) {
 	}()
 
 	prepare := func(t *testing.T) {
-		if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+		if err := ProvisionTPM(tpm, ProvisionModeFull, nil); err != nil {
 			t.Fatalf("Failed to provision TPM for test: %v", err)
 		}
 	}
 	prepare(t)
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestUnsealProvisioningError_")
@@ -555,12 +564,11 @@ func TestUnsealProvisioningError(t *testing.T) {
 		if err := os.Remove(keyFile); err != nil {
 			t.Errorf("Remove failed: %v", err)
 		}
-		pinContext, _ := tpm.WrapHandle(testCreationParams.PinHandle)
-		policyRevokeContext, _ := tpm.WrapHandle(testCreationParams.PolicyRevocationHandle)
-		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, pinContext, nil); err != nil {
-			t.Errorf("NVUndefineSpace failed: %v", err)
+		pinContext, err := tpm.CreateResourceContextFromTPM(testCreationParams.PinHandle)
+		if err != nil {
+			t.Errorf("No PIN NV index: %v", err)
 		}
-		if err := tpm.NVUndefineSpace(tpm2.HandleOwner, policyRevokeContext, nil); err != nil {
+		if err := tpm.NVUndefineSpace(tpm.OwnerHandleContext(), pinContext, nil); err != nil {
 			t.Errorf("NVUndefineSpace failed: %v", err)
 		}
 	}()
@@ -582,8 +590,11 @@ func TestUnsealProvisioningError(t *testing.T) {
 
 	t.Run("NoSRK", func(t *testing.T) {
 		prepare(t)
-		srkContext, _ := tpm.WrapHandle(srkHandle)
-		if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkContext.Handle(), nil); err != nil {
+		srkContext, err := tpm.CreateResourceContextFromTPM(srkHandle)
+		if err != nil {
+			t.Fatalf("No SRK context: %v", err)
+		}
+		if _, err := tpm.EvictControl(tpm.OwnerHandleContext(), srkContext, srkContext.Handle(), nil); err != nil {
 			t.Fatalf("EvictControl failed: %v", err)
 		}
 		run(t)
@@ -591,22 +602,25 @@ func TestUnsealProvisioningError(t *testing.T) {
 
 	t.Run("InvalidSRK", func(t *testing.T) {
 		prepare(t)
-		srkContext, _ := tpm.WrapHandle(srkHandle)
+		srkContext, err := tpm.CreateResourceContextFromTPM(srkHandle)
+		if err != nil {
+			t.Fatalf("No SRK context: %v", err)
+		}
 		priv, pub, _, _, _, err := tpm.Create(srkContext, nil, &srkTemplate, nil, nil, nil)
 		if err != nil {
 			t.Fatalf("Create failed: %v", err)
 		}
 
-		fakeSrkContext, _, err := tpm.Load(srkContext, priv, pub, nil)
+		fakeSrkContext, err := tpm.Load(srkContext, priv, pub, nil)
 		if err != nil {
 			t.Fatalf("Load failed: %v", err)
 		}
 		defer flushContext(t, tpm, fakeSrkContext)
 
-		if _, err := tpm.EvictControl(tpm2.HandleOwner, srkContext, srkContext.Handle(), nil); err != nil {
+		if _, err := tpm.EvictControl(tpm.OwnerHandleContext(), srkContext, srkContext.Handle(), nil); err != nil {
 			t.Fatalf("EvictControl failed: %v", err)
 		}
-		if _, err := tpm.EvictControl(tpm2.HandleOwner, fakeSrkContext, srkHandle, nil); err != nil {
+		if _, err := tpm.EvictControl(tpm.OwnerHandleContext(), fakeSrkContext, srkHandle, nil); err != nil {
 			t.Fatalf("EvictControl failed: %v", err)
 		}
 
@@ -625,7 +639,7 @@ func TestLockAccessAfterUnseal(t *testing.T) {
 
 	resetTPMSimulator(t, tpm, tcti)
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
@@ -637,7 +651,7 @@ func TestLockAccessAfterUnseal(t *testing.T) {
 	replayLogToTPM(t, tpm, tcti, eventLog)
 	replayBootParamsToTPM(t, tpm, cmdline)
 
-	key := make([]byte, 64)
+	key := make([]byte, 32)
 	rand.Read(key)
 
 	tmpDir, err := ioutil.TempDir("", "_TestLockAccessAfterUnseal_")
@@ -685,8 +699,9 @@ func TestLockAccessAfterUnseal(t *testing.T) {
 	if err == nil {
 		t.Fatalf("UnsealFromTPM should have failed")
 	}
-	if _, ok := err.(InvalidKeyFileError); !ok || err.Error() != "invalid key data file: the authorization policy check failed "+
-		"during unsealing" {
+	if _, ok := err.(InvalidKeyFileError); !ok || err.Error() != "invalid key data file: encountered an error whilst executing the "+
+		"authorization policy assertions: policy lock check failed: TPM returned an error whilst executing command TPM_CC_PolicyNV: "+
+		"TPM_RC_NV_LOCKED (NV access locked)" {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
@@ -713,7 +728,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 		efivarsPathForTesting = ""
 	}()
 
-	if err := ProvisionTPM(tpm, ProvisionModeFull, nil, nil); err != nil {
+	if err := ProvisionTPM(tpm, ProvisionModeFull, nil); err != nil {
 		t.Fatalf("Failed to provision TPM for test: %v", err)
 	}
 
@@ -1028,7 +1043,7 @@ func TestCreateAndUnsealWithParams(t *testing.T) {
 			eventLogPathForTesting = data.creationLogPath
 			efivarsPathForTesting = data.efivars
 
-			key := make([]byte, 64)
+			key := make([]byte, 32)
 			rand.Read(key)
 
 			tmpDir, err := ioutil.TempDir("", "_TestCreateAndUnsealWithParams_"+data.desc+"_")

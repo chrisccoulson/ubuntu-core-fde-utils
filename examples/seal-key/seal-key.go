@@ -55,7 +55,6 @@ var masterKeyFile string
 var keyFile string
 var privFile string
 var pinIndex string
-var policyRevocationIndex string
 var ownerAuth string
 var kernels pathList
 var grubs pathList
@@ -67,7 +66,6 @@ func init() {
 	flag.StringVar(&keyFile, "key-file", "", "")
 	flag.StringVar(&privFile, "priv-file", "", "")
 	flag.StringVar(&pinIndex, "pin-index", "", "")
-	flag.StringVar(&policyRevocationIndex, "policy-revocation-index", "", "")
 	flag.StringVar(&ownerAuth, "auth", "", "")
 	flag.Var(&kernels, "with-kernel", "")
 	flag.Var(&grubs, "with-grub", "")
@@ -116,10 +114,6 @@ func run() int {
 			fmt.Fprintf(os.Stderr, "Missing -pin-index\n")
 			return 1
 		}
-		if policyRevocationIndex == "" {
-			fmt.Fprintf(os.Stderr, "Missing -policy-revocation-index\n")
-			return 1
-		}
 
 		var in *os.File
 		if masterKeyFile == "-" {
@@ -135,18 +129,11 @@ func run() int {
 		}
 
 		var pinHandle tpm2.Handle
-		var policyRevokeHandle tpm2.Handle
 		if h, err := hex.DecodeString(pinIndex); err != nil {
 			fmt.Fprintf(os.Stderr, "Invalid -pin-index: %v\n", err)
 			return 1
 		} else {
 			pinHandle = tpm2.Handle(binary.BigEndian.Uint32(h))
-		}
-		if h, err := hex.DecodeString(policyRevocationIndex); err != nil {
-			fmt.Fprintf(os.Stderr, "Invalid -policy-revocation-index: %v\n", err)
-			return 1
-		} else {
-			policyRevokeHandle = tpm2.Handle(binary.BigEndian.Uint32(h))
 		}
 
 		key, err := ioutil.ReadAll(in)
@@ -155,7 +142,8 @@ func run() int {
 			return 1
 		}
 
-		createParams := fdeutil.CreationParams{PolicyRevocationHandle: policyRevokeHandle, PinHandle: pinHandle, OwnerAuth: []byte(ownerAuth)}
+		createParams := fdeutil.CreationParams{PinHandle: pinHandle}
+		tpm.OwnerHandleContext().SetAuthValue([]byte(ownerAuth))
 
 		if err := fdeutil.SealKeyToTPM(tpm, keyFile, privFile, &createParams, policyParams, key); err != nil {
 			fmt.Fprintf(os.Stderr, "Cannot seal key to TPM: %v\n", err)

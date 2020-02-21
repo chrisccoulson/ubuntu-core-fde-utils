@@ -72,7 +72,8 @@ type TPMConnection struct {
 	verifiedEkCertChain      []*x509.Certificate
 	verifiedDeviceAttributes *TPMDeviceAttributes
 	ekContext                tpm2.ResourceContext
-	hmacSession              tpm2.ResourceContext
+	provisionedSrkContext    tpm2.ResourceContext
+	hmacSession              tpm2.SessionContext
 }
 
 // VerifiedEkCertChain returns the verified certificate chain for the endorsement key certificate obtained from this TPM. It was
@@ -104,11 +105,11 @@ func (t *TPMConnection) EkContext() (tpm2.ResourceContext, error) {
 // for which the endorsement certificate was issued. If the connection was created with ConnectToDefaultTPM, the session may be
 // salted with a value protected by the public part of the endorsement key if one exists or one is able to be created, but as the key
 // is not associated with a verified credential, there is no guarantee that only the TPM is able to retrieve the session key.
-func (t *TPMConnection) HmacSession() *tpm2.Session {
+func (t *TPMConnection) HmacSession() tpm2.SessionContext {
 	if t.hmacSession == nil {
 		return nil
 	}
-	return &tpm2.Session{Context: t.hmacSession, Attrs: tpm2.AttrContinueSession}
+	return t.hmacSession.WithAttrs(tpm2.AttrContinueSession)
 }
 
 func (t *TPMConnection) Close() error {
@@ -116,16 +117,14 @@ func (t *TPMConnection) Close() error {
 	return t.TPMContext.Close()
 }
 
-func (t *TPMConnection) createTransientEkContext(endorsementAuth []byte) (tpm2.ResourceContext, error) {
-	endorsement, _ := t.WrapHandle(tpm2.HandleEndorsement)
-	sessionContext, err := t.StartAuthSession(nil, endorsement, tpm2.SessionTypeHMAC, nil, tpm2.HashAlgorithmSHA256, endorsementAuth)
+func createTransientEkContext(tpm *tpm2.TPMContext) (tpm2.ResourceContext, error) {
+	session, err := tpm.StartAuthSession(nil, tpm.EndorsementHandleContext(), tpm2.SessionTypeHMAC, nil, tpm2.HashAlgorithmSHA256)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot start auth session: %w", err)
 	}
-	defer t.FlushContext(sessionContext)
+	defer tpm.FlushContext(session)
 
-	context, _, _, _, _, _, err :=
-		t.CreatePrimary(tpm2.HandleEndorsement, nil, &ekTemplate, nil, nil, &tpm2.Session{Context: sessionContext})
+	context, _, _, _, _, err := tpm.CreatePrimary(tpm.EndorsementHandleContext(), nil, &ekTemplate, nil, nil, session)
 	return context, err
 }
 
@@ -189,13 +188,14 @@ func (e verificationError) Error() string {
 	return e.err.Error()
 }
 
-func (t *TPMConnection) init(endorsementAuth []byte) error {
+func (t *TPMConnection) init() error {
 	// Allow init to be called more than once by flushing the previous session
 	if t.hmacSession != nil && t.hmacSession.Handle() != tpm2.HandleUnassigned {
-		if err := t.FlushContext(t.hmacSession); err != nil {
-			return xerrors.Errorf("cannot flush existing HMAC session: %w", err)
-		}
+		t.FlushContext(t.hmacSession)
+		t.hmacSession = nil
 	}
+	t.ekContext = nil
+	t.provisionedSrkContext = nil
 
 	// Acquire an unverified ResourceContext for the EK. If there is no object at the persistent EK index, then attempt to create
 	// a transient EK with the supplied authorization.
@@ -206,14 +206,14 @@ func (t *TPMConnection) init(endorsementAuth []byte) error {
 	//
 	// Without verification against the EK certificate, ekContext isn't yet safe to use for secret sharing with the TPM.
 	ekContext, err := func() (tpm2.ResourceContext, error) {
-		rc, err := t.WrapHandle(ekHandle)
+		rc, err := t.CreateResourceContextFromTPM(ekHandle)
 		if err == nil {
 			return rc, nil
 		}
 		if _, unavail := err.(tpm2.ResourceUnavailableError); !unavail {
 			return nil, err
 		}
-		if rc, err := t.createTransientEkContext(endorsementAuth); err == nil {
+		if rc, err := createTransientEkContext(t.TPMContext); err == nil {
 			return rc, nil
 		}
 		return nil, err
@@ -244,7 +244,7 @@ func (t *TPMConnection) init(endorsementAuth []byte) error {
 			if ekContext.Handle().Type() == tpm2.HandleTypeTransient {
 				return nil, err
 			}
-			transientEkContext, err2 := t.createTransientEkContext(endorsementAuth)
+			transientEkContext, err2 := createTransientEkContext(t.TPMContext)
 			if err2 != nil {
 				return nil, err
 			}
@@ -267,10 +267,10 @@ func (t *TPMConnection) init(endorsementAuth []byte) error {
 		// If we don't have a verified EK certificate and ekContext is a persistent object, just do a sanity check that the public area
 		// returned from the TPM has the expected properties. If it doesn't, then attempt to create a transient EK with the provided
 		// authorization value.
-		if ok, err := isObjectPrimaryKeyWithTemplate(t.TPMContext, tpm2.HandleEndorsement, ekContext, &ekTemplate, nil); err != nil {
+		if ok, err := isObjectPrimaryKeyWithTemplate(t.TPMContext, t.EndorsementHandleContext(), ekContext, &ekTemplate, nil); err != nil {
 			return xerrors.Errorf("cannot determine if object is a primary key in the endorsement hierarchy: %w", err)
 		} else if !ok {
-			rc, err := t.createTransientEkContext(endorsementAuth)
+			rc, err := createTransientEkContext(t.TPMContext)
 			if err == nil {
 				defer t.FlushContext(rc)
 			}
@@ -287,7 +287,7 @@ func (t *TPMConnection) init(endorsementAuth []byte) error {
 		Algorithm: tpm2.SymAlgorithmAES,
 		KeyBits:   tpm2.SymKeyBitsU{Data: uint16(128)},
 		Mode:      tpm2.SymModeU{Data: tpm2.SymModeCFB}}
-	sessionContext, err := t.StartAuthSession(ekContext, nil, tpm2.SessionTypeHMAC, &symmetric, defaultSessionHashAlgorithm, nil)
+	session, err := t.StartAuthSession(ekContext, nil, tpm2.SessionTypeHMAC, &symmetric, defaultSessionHashAlgorithm, nil)
 	if err != nil {
 		return xerrors.Errorf("cannot create HMAC session: %w", err)
 	}
@@ -296,12 +296,11 @@ func (t *TPMConnection) init(endorsementAuth []byte) error {
 		if succeeded {
 			return
 		}
-		t.FlushContext(sessionContext)
+		t.FlushContext(session)
 	}()
 
 	if len(t.verifiedEkCertChain) > 0 {
-		session := tpm2.Session{Context: sessionContext, Attrs: tpm2.AttrContinueSession | tpm2.AttrAudit}
-		_, err = t.GetRandom(20, &session)
+		_, err = t.GetRandom(20, session.WithAttrs(tpm2.AttrContinueSession|tpm2.AttrAudit))
 		if err != nil {
 			if isAuthFailError(err) {
 				return verificationError{errors.New("endorsement key proof of ownership check failed")}
@@ -315,12 +314,12 @@ func (t *TPMConnection) init(endorsementAuth []byte) error {
 	if ekIsPersistent {
 		t.ekContext = ekContext
 	}
-	t.hmacSession = sessionContext
+	t.hmacSession = session
 	return nil
 }
 
 func readEkCertFromTPM(tpm *tpm2.TPMContext) ([]byte, error) {
-	ekCertIndex, err := tpm.WrapHandle(ekCertHandle)
+	ekCertIndex, err := tpm.CreateResourceContextFromTPM(ekCertHandle)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot create context: %w", err)
 	}
@@ -806,7 +805,7 @@ func ConnectToDefaultTPM() (*TPMConnection, error) {
 		t.Close()
 	}()
 
-	if err := t.init(nil); err != nil {
+	if err := t.init(); err != nil {
 		var unavailErr tpm2.ResourceUnavailableError
 		var verifyErr verificationError
 		if !xerrors.As(err, &unavailErr) && !xerrors.As(err, &verifyErr) {
@@ -854,6 +853,7 @@ func SecureConnectToDefaultTPM(ekCertDataReader io.Reader, endorsementAuth []byt
 	if err != nil {
 		return nil, err
 	}
+	tpm.EndorsementHandleContext().SetAuthValue(endorsementAuth)
 
 	succeeded := false
 	defer func() {
@@ -895,7 +895,7 @@ func SecureConnectToDefaultTPM(ekCertDataReader io.Reader, endorsementAuth []byt
 	t.verifiedEkCertChain = chain
 	t.verifiedDeviceAttributes = attrs
 
-	if err := t.init(endorsementAuth); err != nil {
+	if err := t.init(); err != nil {
 		var unavailErr tpm2.ResourceUnavailableError
 		if xerrors.As(err, &unavailErr) {
 			return nil, ErrProvisioning

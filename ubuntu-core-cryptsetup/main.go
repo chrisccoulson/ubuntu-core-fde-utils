@@ -50,6 +50,28 @@ const (
 	recoveryReasonPinFail
 )
 
+const systemdCryptsetupPath = "/lib/systemd/systemd-cryptsetup"
+
+type execError struct {
+	path string
+	err  error
+}
+
+func (e *execError) Error() string {
+	return fmt.Sprintf("%s failed: %s", e.path, e.err)
+}
+
+func (e *execError) Unwrap() error {
+	return e.err
+}
+
+func wrapExecError(cmd *exec.Cmd, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &execError{path: cmd.Path, err: err}
+}
+
 func activate(volume, sourceDevice string, key []byte, options []string) error {
 	keyFilePath, err := func() (string, error) {
 		f, err := ioutil.TempFile("/run", "ubuntu-core-cryptsetup.")
@@ -70,7 +92,7 @@ func activate(volume, sourceDevice string, key []byte, options []string) error {
 	}
 	defer os.Remove(keyFilePath)
 
-	cmd := exec.Command("/lib/systemd/systemd-cryptsetup", "attach", volume, sourceDevice, keyFilePath, strings.Join(options, ","))
+	cmd := exec.Command(systemdCryptsetupPath, "attach", volume, sourceDevice, keyFilePath, strings.Join(options, ","))
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, "SYSTEMD_LOG_TARGET=console")
 	stdout, err := cmd.StdoutPipe()
@@ -105,7 +127,7 @@ func activate(volume, sourceDevice string, key []byte, options []string) error {
 		<-done
 	}
 
-	return cmd.Wait()
+	return wrapExecError(cmd, cmd.Wait())
 }
 
 func askPassword(sourceDevice, msg string) (string, error) {
@@ -118,7 +140,7 @@ func askPassword(sourceDevice, msg string) (string, error) {
 	cmd.Stdout = &out
 	cmd.Stdin = os.Stdin
 	if err := cmd.Run(); err != nil {
-		return "", xerrors.Errorf("cannot run systemd-ask-password: %w", err)
+		return "", wrapExecError(cmd, err)
 	}
 	result, err := out.ReadString('\n')
 	if err != nil {
@@ -263,7 +285,7 @@ func activateWithTPM(volume, sourceDevice, keyFilePath, ekCertFilePath, pinFileP
 				if !reprovisionAttempted {
 					reprovisionAttempted = true
 					fmt.Fprintf(os.Stderr, "TPM is not provisioned correctly - attempting automatic recovery...\n")
-					if err := fdeutil.ProvisionTPM(tpm, fdeutil.ProvisionModeWithoutLockout, nil, nil); err == nil {
+					if err := fdeutil.ProvisionTPM(tpm, fdeutil.ProvisionModeWithoutLockout, nil); err == nil {
 						fmt.Fprintf(os.Stderr, " ...automatic recovery succeeded. Retrying key unseal operation now\n")
 						goto RetryUnseal
 					} else {
@@ -373,6 +395,8 @@ func run() int {
 		fmt.Fprintf(os.Stderr, "Cannot activate device %s with TPM: %v\n", sourceDevice, err)
 
 		var ikfe fdeutil.InvalidKeyFileError
+		var ee1 *execError
+		var ee2 *exec.ExitError
 		var ecve fdeutil.EkCertVerificationError
 		var tpmve fdeutil.TPMVerificationError
 		var pe *os.PathError
@@ -381,6 +405,11 @@ func run() int {
 
 		switch {
 		case xerrors.As(err, &ikfe):
+			recoveryReason = recoveryReasonInvalidKeyFile
+		case xerrors.As(err, &ee1) && xerrors.As(ee1, &ee2) && ee1.path == systemdCryptsetupPath:
+			// systemd-cryptsetup only provides 2 exit codes - success or fail - so we don't know
+			// the reason it failed yet. If activation with the recovery key is successful, then it's
+			// safe to assume that it failed because the key unsealed from the TPM is incorrect.
 			recoveryReason = recoveryReasonInvalidKeyFile
 		case xerrors.Is(err, fdeutil.ErrProvisioning):
 			recoveryReason = recoveryReasonProvisioningError
